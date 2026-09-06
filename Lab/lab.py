@@ -78,6 +78,12 @@ def cmd_textbook(args):
     print(json.dumps(memory.textbook(con), indent=2))
 
 
+def cmd_ui(args):
+    from . import ui_server
+    from .config import DB_PATH
+    ui_server.serve(db_path=args.db or DB_PATH, port=args.port, host=args.host)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="Lab", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -102,6 +108,11 @@ def main():
 
     s = sub.add_parser("textbook", help="print the inherited object (registry + open questions)")
     s.set_defaults(fn=cmd_textbook)
+
+    s = sub.add_parser("ui", help="serve the read-only lab dashboard")
+    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--host", default="127.0.0.1")
+    s.set_defaults(fn=cmd_ui)
 
     args = ap.parse_args()
     args.fn(args)
