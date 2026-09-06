@@ -96,6 +96,7 @@ Command-line flags understood by the sim (all optional):
                         # so a scripted render never captures your keystrokes (M/P/1-3 would change the run)
 -SWPolicy="host:port=Lumen|host:port=Tecton"   # external policy servers (run_sim: --policy); '|' and '=' only, no ',' or ';'
 -SWPolicyTimeoutMs=200  -SWPolicyShare=1.0     # run_sim: --policy-timeout / --policy-share; see docs/POLICY_API.md
+-SWSet="Settings.bLeviathan=1"                  # river predator (off by default; DESIGN.md §4); live: control "set Settings.bLeviathan=1" then "reset"
 -SWPolicyFile=Saved/policy_servers.txt         # server list file polled every 3 s while running (run_sim: --policy-file); edit it to add/remove servers
 -SWControlFile=Saved/control.txt               # live control file polled every 2 s (run_sim: --control-file): append "drought=on", "set Lumen.MaxAge=200", "reset seed=3" ... (docs/CONTROL_FILE.md)
 ```

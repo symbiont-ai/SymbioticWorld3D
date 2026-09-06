@@ -164,6 +164,11 @@ void ASWHUD::DrawTitle(const ASWWorldManager& M)
 	{
 		Line += TEXT("   ctrl");   // at least one control-file command was executed this run (docs/CONTROL_FILE.md)
 	}
+	if (S.bLeviathan)
+	{
+		// Predation deaths so far (deaths.csv carries them individually, cause = "predation").
+		Line += FString::Printf(TEXT("   predation %d"), M.GetDeathsPredation());
+	}
 	DrawLine(30.f, Y + 2.f, Line, ColDim);
 }
 

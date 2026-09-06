@@ -57,6 +57,12 @@ namespace SWProc
 	// Organisms. Local +X is forward, +Z up, origin between the feet.
 	void BuildLumen(FRandomStream& Rng, FMeshData& Out);
 	void BuildTecton(FRandomStream& Rng, FMeshData& Out);
+	// Leviathan: the river predator. NOT an organism — no genome, no learning, no
+	// ESWSpecies entry; it belongs to the environment, like the drought. Local +X is
+	// forward, +Z up, and the origin sits ON THE SPINE rather than between the feet
+	// (it swims): the actor puts that origin below the water surface, so the dorsal
+	// ridge cuts the surface when it rises.
+	void BuildLeviathan(FRandomStream& Rng, FMeshData& Out);
 	// Resource node: cluster of small glowing stones.
 	void BuildGlowCluster(FRandomStream& Rng, float Radius, FMeshData& Out);
 

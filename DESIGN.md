@@ -74,6 +74,22 @@ performs that comparison across seeds.
 - Drought: multiplies regen by `DroughtRegenMultiplier` and effective
   capacity by `DroughtCapacityMultiplier`; stock above the new capacity
   decays toward it.
+- **Leviathan** (river predation, contributed 2026-09-06, off by default). A
+  perturbation of the environment, not a species: no genome, no learner, no
+  `ESWSpecies` entry, no new action, so the external policy protocol is
+  unchanged. `Settings.bLeviathan` spawns `LeviathanCount` animals that patrol
+  the river channel at `LeviathanSpeed` uu/s on the fixed substep and kill any
+  organism within `LeviathanStrikeRadius` (horizontal) whose position is in the
+  water (`FSWPercept::bOnLand` false, widened by `LeviathanWaterMargin`), at
+  most one kill per `LeviathanStrikeCooldown` s per animal. Kills are logged in
+  `deaths.csv` with cause `predation` and counted in the HUD title. Movement
+  and surfacing (`LeviathanSubmersion`, `LeviathanBreachRise`,
+  `LeviathanSurfaceInterval`, `LeviathanSurfaceDuration`) are visual and use
+  their own `LookSeed` stream; `Look.LeviathanBody/Glow/Scale/GlowScale` style
+  it. Selection pressure it creates: staying out of the channel, which both the
+  built-in bandit and an external policy can learn from the existing `on_land`
+  percept and the `avoid` action. With `bLeviathan` false every run is
+  byte-identical to the pre-predator build (verified seed 7, 120 s).
 - Signals: a signalling Lumen broadcasts its nearest known resource location
   to same-species neighbours within `NeighbourRange · (0.5 + social)`;
   receivers accept with probability `social`.

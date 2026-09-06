@@ -10,6 +10,7 @@
 
 class ASWAgent;
 class ASWResourcePatch;
+class ASWLeviathan;
 
 USTRUCT()
 struct FSWSpeciesStats
@@ -53,6 +54,8 @@ public:
 	const FSWLookSettings& GetLook() const { return Look; }
 	// Height an organism stands at, from the terrain field (pure function; no traces).
 	float GetGroundZ(float X, float Y) const;
+	// How far the drought has currently lowered the water (0 when not in drought).
+	float GetDroughtWaterDrop() const;
 	void SetEnvironment(class ASWEnvironment* Env) { Environment = Env; }
 	class ASWEnvironment* GetEnvironment() const { return Environment; }
 
@@ -103,6 +106,8 @@ public:
 	int32 GetBirths() const { return Births; }
 	int32 GetDeaths() const { return Deaths; }
 	int32 GetDeathsStarvation() const { return DeathsStarvation; }
+	int32 GetDeathsPredation() const { return DeathsPredation; }
+	const TArray<ASWLeviathan*>& GetLeviathans() const { return Leviathans; }
 	float GetResourceTotal(int32 Type) const { return Type == 0 ? ResourceTotalA : ResourceTotalB; }
 	float GetResourceCapacity(int32 Type) const { return Type == 0 ? ResourceCapA : ResourceCapB; }
 	int32 GetLivingCount() const { return Agents.Num(); }
@@ -125,6 +130,7 @@ public:
 protected:
 	UPROPERTY() TArray<ASWAgent*> Agents;
 	UPROPERTY() TArray<ASWResourcePatch*> Patches;
+	UPROPERTY() TArray<ASWLeviathan*> Leviathans;
 	UPROPERTY() ASWAgent* SelectedAgent = nullptr;
 	UPROPERTY() class ASWEnvironment* Environment = nullptr;
 
@@ -139,6 +145,7 @@ protected:
 	int32 Births = 0;
 	int32 Deaths = 0;
 	int32 DeathsStarvation = 0;
+	int32 DeathsPredation = 0;
 	float ResourceTotalA = 0.f, ResourceTotalB = 0.f;
 	float ResourceCapA = 0.f, ResourceCapB = 0.f;
 	float NeutralBirthTimer = 0.f;
@@ -162,6 +169,9 @@ protected:
 	void StepWorld(float Dt);
 	void SpawnFounders();
 	void SpawnPatches();
+	void SpawnLeviathans();
+	// Advances every leviathan and reaps the organisms they took (cause "predation").
+	void LeviathanStep(float Dt);
 	ASWAgent* SpawnAgent(ESWSpecies Species, const FSWGenome& Genome, const FVector& Loc, int32 ParentId, int32 Generation, float Energy);
 	FSWGenome MakeFounderGenome();
 	FSWGenome MakeChildGenome(const FSWGenome& Parent);
