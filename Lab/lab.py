@@ -12,6 +12,7 @@ consolidation -> lab report + transcript in Lab/reports/.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 
 from . import datasci, db, evidence, evolution, memory, report, runner, seed_content
@@ -119,7 +120,8 @@ def main():
 
     s = sub.add_parser("session", help="run a research session")
     s.add_argument("--meetings", type=int, default=2)
-    s.add_argument("--llm", choices=["ollama", "mock", "claude"], default="ollama")
+    s.add_argument("--llm", choices=["ollama", "mock", "claude", "openrouter"],
+                   default=os.environ.get("LAB_LLM", "ollama"))
     s.add_argument("--ingest", nargs="*", help="run directories to ingest first")
     s.set_defaults(fn=cmd_session)
 

@@ -136,6 +136,7 @@ function streamUrl(){
   // Same host as this page by default (dashboard :8765 beside the stream :80);
   // override with ?stream=<url> when they run on different machines.
   return new URLSearchParams(location.search).get("stream")
+      || S.stream_url
       || `http://${location.hostname}/?AFKDetection=false&HoveringMouse=true`;
 }
 

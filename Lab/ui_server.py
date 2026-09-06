@@ -10,6 +10,7 @@ and /figs/* (Vega's PNGs). The page polls /api/state, so it live-updates while
 a session or the sim machine is writing to the same database.
 """
 import json
+import os
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -49,6 +50,8 @@ def snapshot(db_path):
     finally:
         con.close()
     out["figs"] = sorted(p.name for p in FIG_DIR.glob("*.png")) if FIG_DIR.exists() else []
+    # World-tab stream default when dashboard and sim run on different machines
+    out["stream_url"] = os.environ.get("LAB_STREAM_URL", "")
     return out
 
 

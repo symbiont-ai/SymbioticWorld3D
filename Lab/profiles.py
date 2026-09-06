@@ -19,6 +19,7 @@ class Profile:
         self.role = d["role"]
         self.domains = d.get("domains", [])
         self.temperature = float(d.get("temperature", 0.7))
+        self.model = d.get("model", "")   # per-scientist model id (OpenRouter backend)
         self.veto_rights = bool(d.get("veto_rights", False))
         self.non_voting = bool(d.get("non_voting", False))
         self.priors = d.get("priors", [])
