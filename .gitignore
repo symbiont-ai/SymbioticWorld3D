@@ -47,3 +47,7 @@ Content/Collections/
 .claude/worktrees/
 *.log
 .idea/
+
+# Symbiotic Lab
+Lab/lab.sqlite
+Saved/
