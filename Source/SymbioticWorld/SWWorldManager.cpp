@@ -93,6 +93,7 @@ void ASWWorldManager::BeginPlay()
 	Super::BeginPlay();
 	ApplyCommandLineOverrides();
 	InitPolicyServers();   // -SWPolicy entries + the server list file (docs/POLICY_API.md)
+	InitControlFile();     // live control file: existing lines are skipped, new ones executed (docs/CONTROL_FILE.md)
 	StartRun();
 }
 
@@ -161,6 +162,12 @@ void ASWWorldManager::ApplyCommandLineOverrides()
 	{
 		Settings.PolicyServerFile = PolicyFile.TrimStartAndEnd().TrimQuotes();
 	}
+	// Live control file watched while the sim runs (run_sim: --control-file). Also reachable as -SWSet Settings.ControlFile=...
+	FString ControlFile;
+	if (FParse::Value(FCommandLine::Get(), TEXT("SWControlFile="), ControlFile))
+	{
+		Settings.ControlFile = ControlFile.TrimStartAndEnd().TrimQuotes();
+	}
 	bool bAuto = false;
 	if (FParse::Bool(FCommandLine::Get(), TEXT("SWAutoSelect="), bAuto) && bAuto)
 	{
@@ -220,27 +227,36 @@ bool ASWWorldManager::SetStructPropertyByName(UScriptStruct* StructType, void* S
 	return true;
 }
 
-void ASWWorldManager::ApplyParameterOverrides(const FString& Spec)
+int32 ASWWorldManager::ApplyParameterOverrides(const FString& Spec, int32* OutRequested)
 {
 	TArray<FString> Items;
 	Spec.ParseIntoArray(Items, TEXT(";"), true);
+	int32 Requested = 0, Applied = 0;
 	for (FString Item : Items)
 	{
 		Item.TrimStartAndEndInline();
+		if (Item.IsEmpty()) continue;
+		Requested++;
 		FString Key, Value;
-		if (!Item.Split(TEXT("="), &Key, &Value)) continue;
+		if (!Item.Split(TEXT("="), &Key, &Value)) { UE_LOG(LogSymbioticWorld, Warning, TEXT("SWSet: '%s' is not Scope.Field=value"), *Item); continue; }
+		Key.TrimStartAndEndInline();
+		Value.TrimStartAndEndInline();
 		FString Scope, Name;
 		if (!Key.Split(TEXT("."), &Scope, &Name)) { Scope = TEXT("Settings"); Name = Key; }
 		Scope = Scope.ToLower();
-		if (Scope == TEXT("settings"))     SetStructPropertyByName(FSWRunSettings::StaticStruct(),   &Settings,     Name, Value);
-		else if (Scope == TEXT("lumen"))   SetStructPropertyByName(FSWSpeciesParams::StaticStruct(), &LumenParams,  Name, Value);
-		else if (Scope == TEXT("tecton"))  SetStructPropertyByName(FSWSpeciesParams::StaticStruct(), &TectonParams, Name, Value);
+		bool bOk = false;
+		if (Scope == TEXT("settings"))     bOk = SetStructPropertyByName(FSWRunSettings::StaticStruct(),   &Settings,     Name, Value);
+		else if (Scope == TEXT("lumen"))   bOk = SetStructPropertyByName(FSWSpeciesParams::StaticStruct(), &LumenParams,  Name, Value);
+		else if (Scope == TEXT("tecton"))  bOk = SetStructPropertyByName(FSWSpeciesParams::StaticStruct(), &TectonParams, Name, Value);
 		else if (Scope == TEXT("genome") || Scope == TEXT("founder"))
-			SetStructPropertyByName(FSWGenome::StaticStruct(), &Settings.FounderGenome, Name, Value);
+			bOk = SetStructPropertyByName(FSWGenome::StaticStruct(), &Settings.FounderGenome, Name, Value);
 		else if (Scope == TEXT("look"))
-			SetStructPropertyByName(FSWLookSettings::StaticStruct(), &Look, Name, Value);
+			bOk = SetStructPropertyByName(FSWLookSettings::StaticStruct(), &Look, Name, Value);
 		else UE_LOG(LogSymbioticWorld, Warning, TEXT("SWSet: unknown scope '%s' (use Settings/Lumen/Tecton/Genome/Look)"), *Scope);
+		if (bOk) Applied++;
 	}
+	if (OutRequested) *OutRequested = Requested;
+	return Applied;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +277,7 @@ void ASWWorldManager::StartRun()
 	ExtDecisions[0] = ExtDecisions[1] = ExtFallbacks[0] = ExtFallbacks[1] = 0;
 	ExternalCount = 0;
 	StepCounter = 0;
+	ControlCommandsExecuted = 0;   // a control command that resets counts for the run it created (incremented after the reset)
 	InitialLumenTarget = Settings.InitialLumen;
 	InitialTectonTarget = Settings.InitialTecton;
 
@@ -296,13 +313,20 @@ void ASWWorldManager::ResetRun()
 
 void ASWWorldManager::CycleMode()
 {
+	ESWLearningMode Next = ESWLearningMode::LearningOff;
 	switch (Settings.Mode)
 	{
-	case ESWLearningMode::LearningOff:       Settings.Mode = ESWLearningMode::LearningOn; break;
-	case ESWLearningMode::LearningOn:        Settings.Mode = ESWLearningMode::LearningEvolution; break;
-	case ESWLearningMode::LearningEvolution: Settings.Mode = ESWLearningMode::NeutralControl; break;
-	default:                                 Settings.Mode = ESWLearningMode::LearningOff; break;
+	case ESWLearningMode::LearningOff:       Next = ESWLearningMode::LearningOn; break;
+	case ESWLearningMode::LearningOn:        Next = ESWLearningMode::LearningEvolution; break;
+	case ESWLearningMode::LearningEvolution: Next = ESWLearningMode::NeutralControl; break;
+	default:                                 Next = ESWLearningMode::LearningOff; break;
 	}
+	SetMode(Next);
+}
+
+void ASWWorldManager::SetMode(ESWLearningMode NewMode)
+{
+	Settings.Mode = NewMode;
 	ResetRun();
 }
 
@@ -456,6 +480,10 @@ void ASWWorldManager::Tick(float DeltaSeconds)
 	// PrepareDecision() and ResolveDecision() (both happen inside one substep) and never inside the
 	// fixed-step loop below. Without any server this is a timestamp check every PolicyFilePollSec.
 	PollPolicyFile(false);
+	// Live control file: same placement and the same rules (wall clock, between frames, never inside a substep,
+	// no seeded draws). Polled while paused too, so "pause=off" works. Without a file this is one stat every
+	// ControlFilePollSec; without new lines nothing in the sim changes.
+	PollControlFile();
 	if (PolicyClient.HasServers())
 	{
 		PolicyClient.Tick();
@@ -1127,6 +1155,253 @@ void ASWWorldManager::RebindPolicies(const TArray<int32>& OldToNew, const bool b
 	for (ASWAgent* A : PendingSpawns) Visit(A);
 	ExternalCount = 0;
 	for (const ASWAgent* A : Agents) if (IsValid(A) && A->IsAlive() && A->IsExternal()) ExternalCount++;
+}
+
+// ---------------------------------------------------------------------------
+// Live control file (docs/CONTROL_FILE.md)
+// ---------------------------------------------------------------------------
+
+void ASWWorldManager::InitControlFile()
+{
+	ControlFilePath.Empty();
+	ControlFileStamp = FDateTime::MinValue();
+	ControlFileSize = -1;
+	ControlFileCursor = 0;
+	ControlFileNextPoll = 0.0;
+	LatestNote.Empty();
+	const FString FileSetting = Settings.ControlFile.TrimStartAndEnd();
+	if (FileSetting.IsEmpty())
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("control file: disabled (Settings.ControlFile is empty)"));
+		return;
+	}
+	ControlFilePath = FPaths::IsRelative(FileSetting) ? FPaths::Combine(FPaths::ProjectDir(), FileSetting) : FileSetting;
+	ControlFilePath = FPaths::ConvertRelativePathToFull(ControlFilePath);
+	FPaths::NormalizeFilename(ControlFilePath);
+
+	IFileManager& FM = IFileManager::Get();
+	ControlFileSize = FM.FileSize(*ControlFilePath);   // -1 when absent
+	ControlFileStamp = ControlFileSize >= 0 ? FM.GetTimeStamp(*ControlFilePath) : FDateTime::MinValue();
+	const float PollSec = FMath::Max(Settings.ControlFilePollSec, 0.25f);
+	TArray<FString> Existing;
+	if (ReadControlLines(Existing))
+	{
+		ControlFileCursor = Existing.Num();
+		UE_LOG(LogSymbioticWorld, Log, TEXT("control file: %s, %d existing lines ignored, watching (polled every %.1f s)"), *ControlFilePath, ControlFileCursor, PollSec);
+	}
+	else
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("control file: %s not present, watching (polled every %.1f s; one command per line, see docs/CONTROL_FILE.md)"), *ControlFilePath, PollSec);
+	}
+}
+
+bool ASWWorldManager::ReadControlLines(TArray<FString>& OutLines) const
+{
+	OutLines.Reset();
+	FString Content;
+	if (ControlFilePath.IsEmpty() || !FFileHelper::LoadFileToString(Content, *ControlFilePath)) return false;
+	// Only newline-terminated lines count: a line that is still being appended (no newline yet) is left for the
+	// next poll, so the cursor never lands in the middle of a command. A trailing CR is dropped by the trim at execution.
+	int32 Start = 0;
+	for (int32 i = 0; i < Content.Len(); ++i)
+	{
+		if (Content[i] == TEXT('\n'))
+		{
+			OutLines.Add(Content.Mid(Start, i - Start));
+			Start = i + 1;
+		}
+	}
+	return true;
+}
+
+void ASWWorldManager::PollControlFile()
+{
+	if (ControlFilePath.IsEmpty()) return;
+	const double Now = FPlatformTime::Seconds();
+	if (Now < ControlFileNextPoll) return;
+	ControlFileNextPoll = Now + FMath::Max(Settings.ControlFilePollSec, 0.25f);
+
+	IFileManager& FM = IFileManager::Get();
+	const int64 Size = FM.FileSize(*ControlFilePath);
+	const FDateTime Stamp = Size >= 0 ? FM.GetTimeStamp(*ControlFilePath) : FDateTime::MinValue();
+	if (Size == ControlFileSize && Stamp == ControlFileStamp) return;   // pure stat: nothing else happens
+	ControlFileSize = Size;
+	ControlFileStamp = Stamp;
+
+	TArray<FString> Lines;
+	if (!ReadControlLines(Lines))
+	{
+		if (ControlFileCursor != 0)
+		{
+			UE_LOG(LogSymbioticWorld, Log, TEXT("control file: %s removed; cursor reset from %d to 0, still watching"), *ControlFilePath, ControlFileCursor);
+			ControlFileCursor = 0;
+		}
+		ControlFileSeen.Reset();
+		return;
+	}
+	// A rewrite that keeps the line count (truncate + append inside one poll window) is invisible to the
+	// cursor alone: if any already-consumed line changed, the file is new content and starts from line 1.
+	{
+		const int32 Common = FMath::Min(ControlFileCursor, FMath::Min(ControlFileSeen.Num(), Lines.Num()));
+		for (int32 i = 0; i < Common; ++i)
+		{
+			if (!Lines[i].Equals(ControlFileSeen[i]))
+			{
+				UE_LOG(LogSymbioticWorld, Log, TEXT("control file: %s rewritten (line %d changed); cursor reset to 0"), *ControlFilePath, i + 1);
+				ControlFileCursor = 0;
+				break;
+			}
+		}
+	}
+	if (Lines.Num() < ControlFileCursor)
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("control file: %s shrank from %d to %d lines; cursor reset to %d (existing lines are not re-executed)"), *ControlFilePath, ControlFileCursor, Lines.Num(), Lines.Num());
+		ControlFileCursor = Lines.Num();
+		ControlFileSeen = Lines;
+		return;
+	}
+	// Execute every new line once, in file order. The cursor moves before each command, so nothing is replayed.
+	while (ControlFileCursor < Lines.Num())
+	{
+		FString Line = Lines[ControlFileCursor++];
+		Line.TrimStartAndEndInline();   // also drops a trailing CR
+		if (Line.IsEmpty() || Line.StartsWith(TEXT("#"))) continue;
+		ExecuteControlCommand(Line);
+	}
+	ControlFileSeen = Lines;
+}
+
+FString ASWWorldManager::ExecuteControlCommand(const FString& Line)
+{
+	bool bAccepted = false;
+	const FString Result = RunControlCommand(Line, bAccepted);
+	if (bAccepted) ControlCommandsExecuted++;
+	UE_LOG(LogSymbioticWorld, Log, TEXT("control: %s -> %s"), *Line, *Result);
+	// After a reset the logger belongs to the new run, so reset/mode rows land in the run they created.
+	Logger.LogCommand(SimTime, Line, Result);
+	return Result;
+}
+
+FString ASWWorldManager::RunControlCommand(const FString& InLine, bool& bOutAccepted)
+{
+	bOutAccepted = false;
+	FString Line = InLine.TrimStartAndEnd();
+	if (Line.IsEmpty()) return TEXT("rejected: empty line");
+
+	// Keyword = everything before the first '=' or space, case-insensitive; the rest is the argument.
+	int32 Eq = INDEX_NONE, Sp = INDEX_NONE;
+	Line.FindChar(TEXT('='), Eq);
+	Line.FindChar(TEXT(' '), Sp);
+	int32 Cut = Line.Len();
+	if (Eq != INDEX_NONE) Cut = FMath::Min(Cut, Eq);
+	if (Sp != INDEX_NONE) Cut = FMath::Min(Cut, Sp);
+	const FString Key = Line.Left(Cut).TrimStartAndEnd().ToLower();
+	FString Arg = Cut < Line.Len() ? Line.Mid(Cut + 1) : FString();
+	Arg.TrimStartAndEndInline();
+	bool bHasEq = Eq != INDEX_NONE && Eq == Cut;
+	if (!bHasEq && Arg.StartsWith(TEXT("=")))   // "drought = on": spaces around '=' are tolerated
+	{
+		bHasEq = true;
+		Arg.RightChopInline(1);
+		Arg.TrimStartAndEndInline();
+	}
+
+	auto OnOff = [](const FString& V, bool& bOut, bool& bToggle) -> bool
+	{
+		const FString L = V.ToLower();
+		bToggle = false;
+		if (L == TEXT("on") || L == TEXT("1") || L == TEXT("true"))        { bOut = true;  return true; }
+		if (L == TEXT("off") || L == TEXT("0") || L == TEXT("false"))      { bOut = false; return true; }
+		if (L == TEXT("toggle"))                                            { bToggle = true; return true; }
+		return false;
+	};
+
+	if (Key == TEXT("note"))
+	{
+		// Everything after "note=" verbatim (may contain '#', '=', ','). Kept for the HUD / GetLatestNote().
+		if (!bHasEq) return TEXT("rejected: note needs '=': note=<text>");
+		LatestNote = Arg;
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: note recorded (%d chars)"), Arg.Len());
+	}
+
+	// Inline "# comment" (a '#' preceded by a space) is dropped for every other command.
+	{
+		const int32 Hash = Arg.Find(TEXT(" #"));
+		if (Hash != INDEX_NONE) { Arg.LeftInline(Hash); Arg.TrimStartAndEndInline(); }
+	}
+
+	if (Key == TEXT("drought"))
+	{
+		bool bWant = false, bToggle = false;
+		if (!bHasEq || !OnOff(Arg, bWant, bToggle)) return TEXT("rejected: drought=on|off|toggle");
+		if (!bToggle && bWant == bDrought) { bOutAccepted = true; return FString::Printf(TEXT("ok: drought already %s"), bDrought ? TEXT("on") : TEXT("off")); }
+		ToggleDrought();   // the P key's path (ASWPlayerController::OnToggleDrought)
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: drought %s at t=%.1f"), bDrought ? TEXT("on") : TEXT("off"), SimTime);
+	}
+	if (Key == TEXT("pause"))
+	{
+		bool bWant = false, bToggle = false;
+		if (!bHasEq || !OnOff(Arg, bWant, bToggle) || bToggle) return TEXT("rejected: pause=on|off");
+		if (bWant == bPaused) { bOutAccepted = true; return FString::Printf(TEXT("ok: already %s"), bPaused ? TEXT("paused") : TEXT("running")); }
+		TogglePause();     // the Space key's path (ASWPlayerController::OnTogglePause)
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: %s at t=%.1f"), bPaused ? TEXT("paused") : TEXT("running"), SimTime);
+	}
+	if (Key == TEXT("speed"))
+	{
+		if (!bHasEq || Arg.IsEmpty() || !Arg.IsNumeric()) return TEXT("rejected: speed=<float>");
+		const float Want = FCString::Atof(*Arg);
+		if (!FMath::IsFinite(Want) || Want < 0.f) return TEXT("rejected: speed must be >= 0");
+		SetTimeScale(Want);   // the 1/2/3 keys' path (ASWPlayerController::OnSpeed1/10/50); clamps to [0, 1000]
+		bOutAccepted = true;
+		return FMath::IsNearlyEqual(Want, TimeScale) ? FString::Printf(TEXT("ok: speed %.2fx"), TimeScale)
+		                                             : FString::Printf(TEXT("ok: speed %.2fx (requested %.2f, clamped)"), TimeScale, Want);
+	}
+	if (Key == TEXT("set"))
+	{
+		if (bHasEq || Arg.IsEmpty()) return TEXT("rejected: set <Scope.Field>=<value> (Scope: Settings, Lumen, Tecton, Genome, Look)");
+		int32 Requested = 0;
+		const int32 Applied = ApplyParameterOverrides(Arg, &Requested);   // the -SWSet path, on the live objects
+		if (Applied == 0) return FString::Printf(TEXT("rejected: 0/%d field(s) set (see the SWSet warning above)"), Requested);
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: %d/%d field(s) set"), Applied, Requested);
+	}
+	if (Key == TEXT("reset"))
+	{
+		const FString Prev = RunId;
+		const float PrevT = SimTime;
+		if (!Arg.IsEmpty())
+		{
+			FString SeedKey, SeedVal;
+			if (bHasEq || !Arg.Split(TEXT("="), &SeedKey, &SeedVal) || SeedKey.TrimStartAndEnd().ToLower() != TEXT("seed"))
+				return TEXT("rejected: reset | reset seed=<int>");
+			SeedVal.TrimStartAndEndInline();
+			if (SeedVal.IsEmpty() || !SeedVal.IsNumeric() || SeedVal.Contains(TEXT("."))) return TEXT("rejected: reset seed=<int>");
+			Settings.Seed = FCString::Atoi(*SeedVal);
+		}
+		ResetRun();   // the R key's path (ASWPlayerController::OnResetRun)
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: run %s ended at t=%.1f; started %s (seed %d, mode %s)"), *Prev, PrevT, *RunId, Settings.Seed, SWModeName(Settings.Mode));
+	}
+	if (Key == TEXT("mode"))
+	{
+		const FString M = Arg.ToUpper();
+		ESWLearningMode NewMode = ESWLearningMode::LearningEvolution;
+		if (!bHasEq || M.Len() != 1) return TEXT("rejected: mode=A|B|C|N");
+		else if (M == TEXT("A")) NewMode = ESWLearningMode::LearningOff;
+		else if (M == TEXT("B")) NewMode = ESWLearningMode::LearningOn;
+		else if (M == TEXT("C")) NewMode = ESWLearningMode::LearningEvolution;
+		else if (M == TEXT("N")) NewMode = ESWLearningMode::NeutralControl;
+		else return TEXT("rejected: mode=A|B|C|N");
+		const FString Prev = RunId;
+		const float PrevT = SimTime;
+		SetMode(NewMode);   // the M key's path ends here too (CycleMode -> SetMode -> ResetRun)
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: run %s ended at t=%.1f; started %s (mode %s, seed %d)"), *Prev, PrevT, *RunId, SWModeName(Settings.Mode), Settings.Seed);
+	}
+	return TEXT("rejected: unknown command (drought | speed | pause | set | reset | mode | note)");
 }
 
 namespace

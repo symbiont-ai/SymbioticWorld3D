@@ -66,6 +66,16 @@ public:
 	void ToggleDrought();
 	bool IsDrought() const { return bDrought; }
 	void CycleMode();   // A -> B -> C -> N -> A, then resets the run
+	void SetMode(ESWLearningMode NewMode);   // switch mode and reset the run (CycleMode and the control file both end here)
+
+	// ---- Live control file (docs/CONTROL_FILE.md) ----
+	// Executes one command line (grammar in docs/CONTROL_FILE.md) through the same functions the keys use
+	// (ToggleDrought / SetTimeScale / TogglePause / ApplyParameterOverrides / ResetRun / SetMode), logs
+	// "control: <line> -> <result>" and appends a row to <run dir>/commands.csv. Returns the result text.
+	FString ExecuteControlCommand(const FString& Line);
+	bool HasControlFile() const { return !ControlFilePath.IsEmpty(); }
+	int32 GetControlCommandsExecuted() const { return ControlCommandsExecuted; }   // accepted commands this run (HUD "ctrl")
+	const FString& GetLatestNote() const { return LatestNote; }                    // last "note=" text, empty until one arrives
 
 	// ---- Simulation services used by agents ----
 	FRandomStream& GetRng() { return Rng; }
@@ -159,8 +169,9 @@ protected:
 	void ApplyCommandLineOverrides();
 	// -SWSet="Settings.PatchRegenPerSec=5;Lumen.ReproThreshold=85;Tecton.MaxAge=400"
 	// Sets any numeric/bool UPROPERTY on Settings / LumenParams / TectonParams
-	// by name via reflection, so parameter sweeps need no recompile.
-	void ApplyParameterOverrides(const FString& Spec);
+	// by name via reflection, so parameter sweeps need no recompile. Returns the
+	// number of fields set; OutRequested (optional) receives the number of items in Spec.
+	int32 ApplyParameterOverrides(const FString& Spec, int32* OutRequested = nullptr);
 	bool SetStructPropertyByName(UScriptStruct* StructType, void* StructPtr, const FString& Name, const FString& Value);
 	// -SWShot=5,60,120 : request a screenshot (Saved/Screenshots) at these sim times.
 	TArray<float> ScreenshotTimes;
@@ -202,6 +213,24 @@ protected:
 	bool ReadPolicyFile(TArray<FSWPolicyServerSpec>& Out) const;   // false = file absent; bad lines logged and skipped
 	void ApplyPolicyServerSet(const TArray<FSWPolicyServerSpec>& Desired, const FString& Source);
 	void RebindPolicies(const TArray<int32>& OldToNew, const bool bSpeciesChanged[2], int32& OutBound, int32& OutUnbound);
+
+	// Live control file (Settings.ControlFile), watched on the WALL clock from Tick(), before the fixed-step loop,
+	// never from a substep. The file is an append-only command log: the line count at startup is the cursor and
+	// those lines are ignored; on every size/mtime change the lines beyond the cursor are executed once, in
+	// order. Only newline-terminated lines count, so a line still being written is picked up on the next poll.
+	// A shrunken or removed file resets the cursor. Nothing here draws from the seeded stream.
+	FString ControlFilePath;                            // resolved absolute path, empty = not watching
+	double ControlFileNextPoll = 0.0;                   // wall clock (FPlatformTime)
+	FDateTime ControlFileStamp;                         // last seen modification time (MinValue = absent)
+	int64 ControlFileSize = -1;                         // last seen size (-1 = absent)
+	int32 ControlFileCursor = 0;                        // newline-terminated lines already consumed
+	TArray<FString> ControlFileSeen;                    // lines as last read: a rewrite that changes a consumed line resets the cursor
+	int32 ControlCommandsExecuted = 0;                  // accepted commands since StartRun (a reset command counts for the run it created)
+	FString LatestNote;
+	void InitControlFile();                             // BeginPlay: resolve the path, count and skip existing lines
+	void PollControlFile();                             // Tick: stat, read on change, execute new lines
+	bool ReadControlLines(TArray<FString>& OutLines) const;   // newline-terminated lines, untrimmed; false = file absent
+	FString RunControlCommand(const FString& Line, bool& bOutAccepted);   // the grammar; no logging
 	void NeutralBirthStep(float Dt);
 	void LogTick(float Dt);
 	FVector RandomArenaPoint(float Margin);

@@ -460,6 +460,15 @@ struct FSWRunSettings
 	// A missing file means "no file servers". Empty = do not watch. Also settable as -SWPolicyFile=path.
 	UPROPERTY(EditAnywhere) FString PolicyServerFile = TEXT("Saved/policy_servers.txt");
 	UPROPERTY(EditAnywhere) float PolicyFilePollSec = 3.0f;  // wall-clock seconds between stats of the file (never inside a substep)
+
+	// ---- Live control file (docs/CONTROL_FILE.md) ----
+	// An append-only command log polled on the wall clock from the manager's Tick, never inside a substep and
+	// never touching the seeded stream. Lines present at startup are ignored; every line appended afterwards is
+	// executed once, in order: drought=on|off|toggle, speed=<x>, pause=on|off, set <Scope.Field>=<value>,
+	// reset [seed=<n>], mode=A|B|C|N, note=<text>. Executed lines go to <run dir>/commands.csv. Relative paths
+	// are under the project directory. Empty = do not watch. Also settable as -SWControlFile=path.
+	UPROPERTY(EditAnywhere) FString ControlFile = TEXT("Saved/control.txt");
+	UPROPERTY(EditAnywhere) float ControlFilePollSec = 2.0f;   // wall-clock seconds between stats of the file
 };
 
 // Snapshot of what one agent can perceive when it decides. Filled by the

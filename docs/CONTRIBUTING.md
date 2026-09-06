@@ -33,6 +33,8 @@ verification numbers from §6.
 | test my agent without the sim | A | `Tools/policy_client_check.py` (one live exchange), `Tools/policy_replay.py` on a `--record` file or `docs/samples/decide_sample.jsonl` (see `docs/POLICY_API.md`, "Offline development") |
 | join a world that is already running | A | ask the host to add `your-ip:9000=Species` to `Saved/policy_servers.txt` (polled every 3 s; `Tools/policy_probe.py --write` finds you), see `docs/POLICY_API.md`, "Adding servers while the sim runs" |
 | ask a new question of existing runs | A (Python) | `Analysis/analyze_run.py`, CSVs from the host |
+| perturb a world that is already running (drought, speed, pause, a parameter, reset, mode) without a restart | neither: control file | `python3 Tools/control.py "drought=on"` appends to `Saved/control.txt`, executed within 2 s and logged to the run's `commands.csv`; grammar and live vs reset-only settings in `docs/CONTROL_FILE.md` |
+| run controlled experiments on the host from another machine (C vs N across seeds, summaries, live view) | neither: HTTP | host runs `python Tools/experiment_service.py`; you use `python3 Tools/scientist_client.py --host <host-ip> runs --mode C N --seeds 1 2 3 --wait`; `docs/SCIENTIST_API.md` |
 | change a parameter or the look for one run | neither: `--set` | `Tools/run_sim.py --set "Settings.X=..;Lumen.Y=..;Look.Z=.."`, field names in `SWTypes.h` |
 | sweep parameters | neither: `--set` | `Tools/sweep.py` |
 | add an action, a percept field, a gene, a perturbation | B | `SWTypes.h`, `SWAgent.*`, `SWWorldManager.*`, `SWLogger.*`, `SWHUD.cpp`, `DESIGN.md` (§5 recipes) |
@@ -50,10 +52,11 @@ Source/SymbioticWorld/
   SWAgent.h/.cpp        ASWAgent: Step, Decide, PrepareDecision, BuildFeasibleMask, ResolveDecision, ApplyAction
   SWWorldManager.h/.cpp ASWWorldManager: seeded Rng, StartRun, Tick -> StepWorld, BuildPercept, TryReproduce,
                         NeutralBirthStep, stats, ApplyCommandLineOverrides / ApplyParameterOverrides (-SWSet),
-                        PolicyExchange, BuildHelloLine, BuildDecideLine
+                        PolicyExchange, BuildHelloLine, BuildDecideLine, PollControlFile / ExecuteControlCommand
+                        (the live control file, docs/CONTROL_FILE.md)
   SWResourcePatch.*     ASWResourcePatch: logistic regrowth, Take; type 0 = Resource A (Lumen), 1 = B (Tecton)
   SWTraceField.*        FSWTraceField: decaying grid (Trace X / Trace Y), Deposit, Sample, Gradient
-  SWLogger.*            FSWRunLogger: agents/births/deaths/population CSV schemas
+  SWLogger.*            FSWRunLogger: agents/births/deaths/population/commands CSV schemas
   SWPolicyClient.*      FSWPolicyClient: TCP client for external policy servers
   SWHUD.*               canvas HUD: title, stat cards, species panels, inspector, minimap, drought banner
   SWPlayerController.*  key bindings (names in Config/DefaultInput.ini)
@@ -74,6 +77,13 @@ Tools/
                         appends "host:port=Both" lines for the server list file (--write Saved/policy_servers.txt)
   policy_servers.example.txt   template for Saved/policy_servers.txt, the file the running sim polls every 3 s
                         to add / change / remove servers without a restart (docs/POLICY_API.md)
+  control.py            appends validated commands (drought / speed / pause / set / reset / mode / note) to the live
+                        control file Saved/control.txt; --tail N shows the newest run's commands.csv (docs/CONTROL_FILE.md)
+  experiment_service.py HTTP/JSON service for scientist agents on other machines (port 8800, no auth, LAN only):
+                        POST /runs queues headless runs through run_sim.py one at a time, GET /runs/<id> returns the
+                        run summary (analyze_run statistics + Welch C vs N per job), /live, /control, /notes;
+                        jobs persist in Saved/experiments/ (docs/SCIENTIST_API.md)
+  scientist_client.py   stdlib client + CLI for the experiment service (submit_runs, wait, get_run, live, control, note)
   make_materials.py, make_valley_map.py, migrate_ed.py, import_assets.py, fetch_polyhaven.py,
   fix_foliage_materials.py, registry_dump.py   content generation / asset import (host only)
   start_stream_server.bat   Pixel Streaming signalling server
@@ -81,6 +91,8 @@ Analysis/
   analyze_run.py        lifetime learning, inheritance, per-generation means, C vs N Welch test, summary PNG
 docs/
   POLICY_API.md         the policy protocol (hello / decide / actions / log, fallback rules)
+  CONTROL_FILE.md       the live control file: path, append-only semantics, grammar, live vs reset-only settings, commands.csv
+  SCIENTIST_API.md      the experiment service: endpoints, run summary fields, control grammar, C vs N recipe, caveats
   CONTRIBUTING.md       this file
   samples/decide_sample.jsonl   a recorded decide/actions trace for policy_replay.py
   SPEC_TEXT.txt, plates/   the hack-day spec and concept plates
@@ -367,7 +379,7 @@ drought test needs step 2.
 - Never edit `SWTypes.h` without the matching `DESIGN.md` edit in the same change; never rename a mode or
   redefine the reward. Terminology per §4.
 - Run the Python checks you can: the syntax gate for the stdlib tools is
-  `python3 -c "import ast,sys; [ast.parse(open(f).read(), feature_version=(3,9)) for f in sys.argv[1:]]" Tools/policy_server.py Tools/policy_replay.py Tools/policy_client_check.py`,
+  `python3 -c "import ast,sys; [ast.parse(open(f).read(), feature_version=(3,9)) for f in sys.argv[1:]]" Tools/policy_server.py Tools/policy_replay.py Tools/policy_client_check.py Tools/control.py`,
   then `python3 Tools/policy_replay.py --agent my --file docs/samples/decide_sample.jsonl` (exit 0),
   `Tools/policy_client_check.py` against a running `Tools/policy_server.py`, and `Analysis/analyze_run.py` on any
   run dir you have. Headless runs via `Tools/run_sim.py` are allowed on the host and do not need a build.

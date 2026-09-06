@@ -9,6 +9,7 @@ class ASWAgent;
 //   agents.csv      per-agent rows every AgentLogInterval logical seconds
 //   births.csv      one row per birth: parent/child ids and both genomes
 //   population.csv  per-species summary every 5 logical seconds
+//   commands.csv    one row per control-file command executed (docs/CONTROL_FILE.md), written at once
 // Columns follow Appendix A of the spec, extended with mode, context bin and
 // the explore flag so a run can be audited offline (Analysis/analyze_run.py).
 class FSWRunLogger
@@ -32,6 +33,10 @@ public:
 	                   int32 Births, int32 Deaths, float ResourceA, float ResourceB, bool bDrought,
 	                   float TraceXMean, float TraceYMean, int32 ExtDecisions, int32 ExtFallbacks);
 
+	// Control-file command (docs/CONTROL_FILE.md): run_id,sim_time,wall_utc,command,result. Appended immediately
+	// (not buffered) so the audit trail survives a crash; command and result are CSV-quoted.
+	void LogCommand(float SimTime, const FString& Command, const FString& Result);
+
 	void Flush();
 
 	const FString& GetDirectory() const { return Directory; }
@@ -42,7 +47,7 @@ private:
 	int32 Seed = 0;
 	ESWLearningMode Mode = ESWLearningMode::LearningEvolution;
 	FString Directory;
-	FString AgentsPath, BirthsPath, DeathsPath, PopulationPath;
+	FString AgentsPath, BirthsPath, DeathsPath, PopulationPath, CommandsPath;
 	TArray<FString> AgentsBuf, BirthsBuf, DeathsBuf, PopulationBuf;
 
 	void Append(const FString& Path, TArray<FString>& Buf);

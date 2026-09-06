@@ -120,6 +120,14 @@ One seeded `FRandomStream` per run. The world advances in fixed
 step size. Same seed + same mode ⇒ same run (up to floating-point order,
 which is fixed because iteration order is deterministic).
 
+Live control file (`Settings.ControlFile`, `Settings.ControlFilePollSec`;
+`docs/CONTROL_FILE.md`): commands appended to that file while the sim runs are
+executed between frames at wall-clock poll times, through the same functions
+as the keys (drought toggle, time scale, pause, `-SWSet` reflection, reset,
+mode), never inside a substep and never drawing from the seeded stream. A run
+that received no command is unchanged by the watch; a run that did is
+reproducible only from its `commands.csv`, not from seed + mode alone.
+
 ## 6. Known balance state (2026-09-05)
 
 Original default `PatchRegenPerSec = 1.6`: mode B/C, 300–600 s, Lumen

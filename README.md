@@ -97,6 +97,7 @@ Command-line flags understood by the sim (all optional):
 -SWPolicy="host:port=Lumen|host:port=Tecton"   # external policy servers (run_sim: --policy); '|' and '=' only, no ',' or ';'
 -SWPolicyTimeoutMs=200  -SWPolicyShare=1.0     # run_sim: --policy-timeout / --policy-share; see docs/POLICY_API.md
 -SWPolicyFile=Saved/policy_servers.txt         # server list file polled every 3 s while running (run_sim: --policy-file); edit it to add/remove servers
+-SWControlFile=Saved/control.txt               # live control file polled every 2 s (run_sim: --control-file): append "drought=on", "set Lumen.MaxAge=200", "reset seed=3" ... (docs/CONTROL_FILE.md)
 ```
 
 `-SWSet` reaches any numeric/bool/colour/string field of `FSWRunSettings` (scope `Settings`),
@@ -199,6 +200,24 @@ time. Allow `node.exe` on private networks when Windows Firewall asks. The strea
 encoded on the host GPU (NVENC on NVIDIA); hackathon wifi that isolates clients from each
 other blocks it, in which case fall back to screen sharing.
 
+To perturb the running world from a script or a second terminal instead of its keyboard (drought,
+speed, pause, any `--set` parameter, reset, mode), append lines to `Saved/control.txt`:
+`python Tools/control.py "drought=on"`; every executed command is logged to the run's `commands.csv`.
+Grammar and which settings take effect live: `docs/CONTROL_FILE.md`.
+
+## Scientist agents: experiment service
+
+`python Tools/experiment_service.py` (host, port 8800, no authentication: LAN only) turns the
+closed loop into a JSON API for scientist agents on other machines: `POST /runs` queues headless
+runs (mode x seeds, `--set` overrides, one at a time next to the demo), `GET /runs/<id>` returns
+each run's statistics (population, lifetime bandit-table drift, parent/child correlation,
+per-generation means, and a Welch test of C vs N end-of-run mean α when a job has both modes),
+`GET /runs/<id>/files/population.csv` the raw logs, `GET /live` the running world's latest
+population rows, `POST /control` appends a validated line to `Saved/control.txt`, `POST /notes`
+keeps a shared notebook. Client: `python3 Tools/scientist_client.py --host <host-ip> runs --mode C N
+--seeds 1 2 3 --duration 600 --wait`. Endpoints, summary fields, control grammar and an
+experiment recipe: `docs/SCIENTIST_API.md`.
+
 ## What is verified (2026-09-05)
 
 | Claim | Evidence |
@@ -234,7 +253,10 @@ Content/Maps/Valley  empty startup level
 Tools/               run_sim.py (launcher), sweep.py (parameter sweeps), make_valley_map.py,
                      policy_server.py (reference agents: random / bandit / heuristic / tracefollower / MyAgent stub),
                      policy_client_check.py (one fake exchange), policy_replay.py (offline replay of a --record file),
-                     policy_probe.py (finds servers on the wifi, writes the server list file), policy_servers.example.txt
+                     policy_probe.py (finds servers on the wifi, writes the server list file), policy_servers.example.txt,
+                     control.py (appends validated commands to the live control file, --tail shows what ran; docs/CONTROL_FILE.md),
+                     experiment_service.py (HTTP API for scientist agents: queued runs, summaries, live view, control, notes),
+                     scientist_client.py (stdlib client + CLI for it; docs/SCIENTIST_API.md)
 .claude/             agents/implementer.md, agents/tester.md, skills/phase (Manager Loop)
 Analysis/            analyze_run.py
 ```
