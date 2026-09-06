@@ -25,6 +25,10 @@ METRICS = [
     "alpha_gen_slope", "epsilon_gen_slope", "env_effect_gen_slope",
     "trace_y_end_mean", "total_births", "total_deaths",
     "resource_A_end", "resource_B_end",
+    "lumen_deaths_predation", "tecton_deaths_predation",
+    "lumen_deaths_starvation", "tecton_deaths_starvation",
+    "lumen_predation_frac", "tecton_predation_frac",
+    "drought_fraction",
 ]
 
 

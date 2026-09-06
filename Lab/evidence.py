@@ -54,6 +54,28 @@ def compute_run_stats(run):
             out.append(("drought_fraction", float((pop["drought_state"] == 1).mean()),
                         _prov(run, "fraction of logged time under drought")))
 
+    # Death causes (deaths.csv 'cause': starvation / age / predation since the
+    # Leviathan merge). Data-driven: minted only when the column exists, so
+    # pre-predator runs ingest unchanged. No interpretation here — the counts
+    # are the observable; what they mean is the scientists' argument to have.
+    dd = run.get("deaths")
+    if dd is not None and not dd.empty and "cause" in dd.columns and "species" in dd.columns:
+        for sp in ("Lumen", "Tecton"):
+            g = dd[dd["species"] == sp]
+            if g.empty:
+                continue
+            s = sp.lower()
+            n_pred = int((g["cause"] == "predation").sum())
+            n_starve = int((g["cause"] == "starvation").sum())
+            out += [
+                (f"{s}_deaths_predation", float(n_pred),
+                 _prov(run, f"{sp} deaths by predation, of {len(g)} {sp} deaths")),
+                (f"{s}_deaths_starvation", float(n_starve),
+                 _prov(run, f"{sp} deaths by starvation, of {len(g)} {sp} deaths")),
+                (f"{s}_predation_frac", n_pred / len(g),
+                 _prov(run, f"share of {sp} deaths caused by predation")),
+            ]
+
     ll = analyze_run.lifetime_learning(run["agents"])
     if not ll.empty:
         for sp in ("Lumen", "Tecton"):
