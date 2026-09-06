@@ -11,6 +11,7 @@ Examples
   python Tools/run_sim.py --mode C --seed 1 --duration 600 --set "Settings.PatchRegenPerSec=5;Lumen.ReproThreshold=85"
   python Tools/run_sim.py --mode C --seed 1 --duration 45 --speed 1 --windowed --shot 4,40 --no-logs
   python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --policy "10.228.152.5:9000=Lumen"   # a collaborator's Python agents drive the Lumen
+  python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --policy-file Saved/policy_servers.txt   # servers added/removed by editing that file while it runs
 
 Each run writes Saved/SymbioticWorld/<run_id>/ and the script prints the
 directory when the process exits. -SWDuration makes the sim quit itself.
@@ -30,7 +31,7 @@ SAVED = ROOT / "Saved/SymbioticWorld"
 
 
 def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=None, no_logs=False, auto_select=False, cam=None, offscreen=False, stream=None,
-            policy=None, policy_timeout=None, policy_share=None):
+            policy=None, policy_timeout=None, policy_share=None, policy_file=None):
     before = {p.name for p in SAVED.iterdir()} if SAVED.exists() else set()
     exe = EDITOR if windowed else EDITOR_CMD
     cmd = [str(exe), str(UPROJECT), "-game", "-log", "-unattended", "-nosound",
@@ -65,6 +66,12 @@ def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=N
         cmd.append(f"-SWPolicyTimeoutMs={int(policy_timeout)}")
     if policy_share is not None:
         cmd.append(f"-SWPolicyShare={policy_share}")
+    if policy_file is not None:
+        # Server list file watched while the sim runs (docs/POLICY_API.md, "Adding servers while the sim runs").
+        # Relative paths are resolved under the project directory by the sim; the default is Saved/policy_servers.txt.
+        if "," in str(policy_file):
+            sys.exit("--policy-file: the path must not contain ',' (UE stops parsing the value there)")
+        cmd.append(f"-SWPolicyFile={policy_file}")
     cmd += extra
     t0 = time.time()
     print(">>", " ".join(cmd), flush=True)
@@ -97,6 +104,8 @@ def main():
                     help='external policy servers, e.g. "10.0.0.5:9000=Lumen|10.0.0.7:9000=Tecton" (Species: Lumen, Tecton, Both); see docs/POLICY_API.md')
     ap.add_argument("--policy-timeout", type=int, default=None, metavar="MS", help="ms to wait for a server's reply per substep (default 200); on timeout the built-in bandit decides")
     ap.add_argument("--policy-share", type=float, default=None, metavar="FRAC", help="fraction of a served species assigned to its server, decided per organism at birth (default 1.0)")
+    ap.add_argument("--policy-file", default=None, metavar="PATH",
+                    help="server list file polled while the sim runs (one host:port=Species per line, # comments; default Saved/policy_servers.txt under the project); edit it to add or remove servers without a restart")
     ap.add_argument("extra", nargs="*", help="extra engine args (put them after --)")
     args = ap.parse_args()
 
@@ -107,7 +116,7 @@ def main():
         for s in args.seed:
             produced += run_one(m.upper(), s, args.duration, args.speed, args.windowed, args.extra,
                                 args.set_spec, args.shot, args.no_logs, args.auto_select, args.cam, args.offscreen, args.stream,
-                                args.policy, args.policy_timeout, args.policy_share)
+                                args.policy, args.policy_timeout, args.policy_share, args.policy_file)
     if args.analyze and produced:
         subprocess.run([sys.executable, str(ROOT / "Analysis/analyze_run.py"), *map(str, produced)], cwd=str(ROOT))
 
