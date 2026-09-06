@@ -348,6 +348,38 @@ bool FSWPolicyClient::HandleSideMessage(FSWPolicyServer& S, const TSharedPtr<FJs
 		UE_LOG(LogSymbioticWorld, Log, TEXT("[%s] %s"), *S.Name, *Msg->GetStringField(TEXT("text")));
 		return true;
 	}
+	if (Type == TEXT("scientists"))
+	{
+		// Embodied field team (Lab observe --embody): replace the ping set.
+		// Malformed entries are skipped; an empty/missing team clears the set.
+		// Nothing here touches the simulation or the seeded stream.
+		TArray<FSWScientistPing> Pings;
+		const TArray<TSharedPtr<FJsonValue>>* Team = nullptr;
+		if (Msg->TryGetArrayField(TEXT("team"), Team))
+		{
+			for (const TSharedPtr<FJsonValue>& V : *Team)
+			{
+				const TSharedPtr<FJsonObject>* Obj = nullptr;
+				if (!V.IsValid() || !V->TryGetObject(Obj)) continue;
+				FSWScientistPing P;
+				double Xd = 0.0, Yd = 0.0;
+				if (!(*Obj)->TryGetStringField(TEXT("name"), P.Name) ||
+					!(*Obj)->TryGetNumberField(TEXT("x"), Xd) ||
+					!(*Obj)->TryGetNumberField(TEXT("y"), Yd) ||
+					P.Name.IsEmpty() || Pings.Num() >= 16)
+				{
+					continue;
+				}
+				P.X = static_cast<float>(Xd);
+				P.Y = static_cast<float>(Yd);
+				Pings.Add(P);
+			}
+		}
+		ScientistPings = MoveTemp(Pings);
+		ScientistStamp++;
+		ScientistLastWall = FPlatformTime::Seconds();
+		return true;
+	}
 	if (Type == TEXT("actions"))
 	{
 		S.Stale++;   // an actions reply outside (or after) its exchange window

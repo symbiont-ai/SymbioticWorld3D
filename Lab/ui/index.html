@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symbiotic Lab</title>
+<style>
+  :root{
+    --bg:#0b1016; --panel:#121a24; --panel2:#0e151d; --line:#1e2a38;
+    --text:#cfdae6; --dim:#7a8ba0; --cyan:#3fd1ff; --amber:#ff9d2e;
+    --green:#37d67a; --red:#ff5d5d; --violet:#b98cff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 "SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+  header{display:flex;align-items:baseline;gap:16px;padding:14px 20px;
+         border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+  header h1{font-size:16px;margin:0;color:var(--cyan);letter-spacing:.06em}
+  header .meta{color:var(--dim);font-size:12px}
+  nav{display:flex;gap:4px;margin-left:auto}
+  nav button{background:none;border:1px solid var(--line);color:var(--dim);
+             padding:5px 12px;border-radius:6px;cursor:pointer;font:inherit;font-size:12px}
+  nav button.on{color:var(--cyan);border-color:var(--cyan)}
+  main{padding:18px 20px;max-width:1150px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:14px 16px;margin-bottom:14px}
+  .card h3{margin:0 0 8px;font-size:13px;color:var(--dim);font-weight:600;
+           text-transform:uppercase;letter-spacing:.08em}
+  .agent{font-weight:700}
+  .Vesper{color:#5fd8ff}.Bastion{color:#ff9d2e}.Mendel{color:#b98cff}
+  .Ada{color:#8be9b6}.Fisher{color:#e0d06a}.Karla{color:#ff7d7d}
+  .Archie{color:#9aa7b6}.Vega{color:#6a8bd0}
+  .turn{padding:8px 10px;border-left:2px solid var(--line);margin:8px 0;background:var(--panel2);border-radius:0 8px 8px 0}
+  .round{display:inline-block;font-size:10px;letter-spacing:.1em;color:var(--bg);
+         background:var(--dim);border-radius:4px;padding:1px 7px;margin-right:8px;vertical-align:1px}
+  .round.EVIDENCE{background:var(--cyan)} .round.HYPOTHESES{background:var(--green)}
+  .round.CRUX{background:var(--amber)} .round.DISSENT{background:var(--red)}
+  .round.DESIGN,.round.CONSERVATION-REVIEW{background:var(--violet)} .round.REVIEW{background:var(--red)}
+  .round.MINUTES{background:#5a6b7d}
+  .chip{display:inline-block;border:1px solid var(--line);border-radius:12px;
+        padding:1px 9px;margin:2px 3px;font-size:12px}
+  .chip.agree{border-color:var(--green);color:var(--green)}
+  .chip.disagree{border-color:var(--red);color:var(--red)}
+  .chip.abstain{color:var(--dim)}
+  .status{font-size:11px;border-radius:4px;padding:1px 7px;letter-spacing:.05em}
+  .status.law{background:var(--cyan);color:var(--bg)}
+  .status.supported{background:var(--green);color:var(--bg)}
+  .status.conjecture{background:#2a3a4d;color:var(--text)}
+  .status.refuted,.status.vetoed,.status.fail,.status.opposite,.status.rejected,.status.assessment-failed{background:var(--red);color:var(--bg)}
+  .status.caveat{background:var(--amber);color:var(--bg)}
+  .status.queued,.status.awaiting-sim,.status.debating,.status.assessing,.status.introducing{background:#3a2f18;color:var(--amber)}
+  .status.done,.status.pass{background:var(--green);color:var(--bg)}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  th,td{padding:5px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{color:var(--dim);font-weight:600}
+  .ev{color:var(--cyan);font-size:11.5px}
+  .dim{color:var(--dim)} .num{font-variant-numeric:tabular-nums}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  img.fig{max-width:100%;border:1px solid var(--line);border-radius:8px;margin:6px 0;background:#fff}
+  .bar{height:8px;background:var(--panel2);border-radius:4px;overflow:hidden;min-width:70px}
+  .bar>i{display:block;height:100%;background:var(--cyan)}
+  .empty{color:var(--dim);padding:30px;text-align:center}
+  .claim{color:var(--text)}
+  details summary{cursor:pointer;color:var(--dim)}
+  .world{display:grid;grid-template-columns:1fr 330px;gap:12px;align-items:start}
+  .world iframe{width:100%;height:calc(100vh - 110px);min-height:420px;border:1px solid var(--line);
+                border-radius:10px;background:#000}
+  .side{max-height:calc(100vh - 110px);overflow-y:auto}
+  .tick{font-size:12px;padding:2px 0;border-bottom:1px dotted var(--line)}
+  .tick b{color:var(--cyan)}
+  @media(max-width:800px){.grid2,.world{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>SYMBIOTIC LAB</h1>
+  <span class="meta" id="meta">connecting…</span>
+  <nav id="nav"></nav>
+</header>
+<main id="main"><div class="empty">loading…</div></main>
+<script>
+const TABS = ["World","Conversation","Experiments","Registry","Conservation","Data","Lab"];
+let S = null, tab = "World";
+
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const ag = n => `<span class="agent ${esc(n)}">${esc(n)}</span>`;
+const st = s => `<span class="status ${esc(s)}">${esc(s)}</span>`;
+const J = s => { try { return JSON.parse(s); } catch { return null; } };
+
+function nav(){
+  document.getElementById("nav").innerHTML = TABS.map(t =>
+    `<button class="${t===tab?"on":""}" onclick="tab='${t}';render()">${t}</button>`).join("");
+}
+
+function renderTurn(t){
+  const p = J(t.payload);
+  let body = "";
+  if (t.round === "EVIDENCE" && Array.isArray(p)) {
+    body = p.map(f => `<div>${esc(f.text)} <span class="ev">[${(f.evidence_ids||[]).join(", ")}]</span></div>`).join("");
+    if (!p.length) body = `<span class="dim">presented nothing this round</span>`;
+  } else if (t.round === "HYPOTHESES" && p && p.proposals) {
+    body = p.proposals.map(x => `<div>proposes: <span class="claim">“${esc(x.claim)}”</span>
+      <div class="dim">mechanism: ${esc(x.mechanism)} · scope: ${esc(x.scope)}</div></div>`).join("");
+  } else if (t.round === "CRUX" && p) {
+    body = `would change their mind on seeing: <b>${esc(p.observable)}</b>
+      <span class="dim">(metric ${esc(p.metric)}, measurable: ${p.measurable})</span>`;
+  } else if (t.round === "DISSENT" && p) {
+    body = esc(p.text);
+  } else if ((t.round === "REVIEW" || t.round === "CONSERVATION-REVIEW") && p) {
+    body = (p.approve ? `<span class="agent Ada">approved</span>` : `<span class="agent Karla">VETO</span>`)
+      + (p.objections||[]).map(o => `<div class="dim">• ${esc(o)}</div>`).join("");
+  } else if (t.round === "DESIGN" && p) {
+    body = `<div class="dim">drafted a protocol — see Experiments tab</div>`;
+  } else if (t.round === "MINUTES" && p) {
+    body = `<i>${esc(p.summary)}</i>`;
+  } else {
+    body = `<details><summary>raw</summary><pre>${esc(JSON.stringify(p, null, 1))}</pre></details>`;
+  }
+  return `<div class="turn"><span class="round ${esc(t.round)}">${esc(t.round)}</span>${ag(t.agent)} — ${body}</div>`;
+}
+
+function stancesFor(mid){
+  const rows = S.stances.filter(s => s.meeting_id === mid);
+  const byH = {};
+  rows.forEach(s => (byH[s.hypothesis_id] = byH[s.hypothesis_id] || []).push(s));
+  return Object.entries(byH).map(([h, ss]) => {
+    const card = S.hypotheses.find(x => x.id === h);
+    return `<div style="margin:6px 0"><b>${h}</b> <span class="dim">“${esc((card||{}).claim||"").slice(0,90)}…”</span><br>`
+      + ss.map(s => `<span class="chip ${s.stance}" title="${esc(s.reason)} [${esc(s.evidence_ids)}]">
+          ${esc(s.agent)} ${s.stance} ${(+s.confidence).toFixed(2)}${s.downgraded?" ⤵":""}</span>`).join("")
+      + `</div>`;
+  }).join("");
+}
+
+function streamUrl(){
+  // Same host as this page by default (dashboard :8765 beside the stream :80);
+  // override with ?stream=<url> when they run on different machines.
+  return new URLSearchParams(location.search).get("stream")
+      || `http://${location.hostname}/?AFKDetection=false&HoveringMouse=true`;
+}
+
+function worldSide(){
+  const m = S.meetings[S.meetings.length - 1];
+  const live = (S.evidence || []).filter(e => e.stat.startsWith("live_")).slice(0, 10);
+  const fig = S.figs[S.figs.length - 1];
+  const exps = [...S.experiments].reverse().slice(0, 3);
+  return `
+    <div class="card"><h3>Live telemetry <span class="dim">(policy bridge)</span></h3>
+      ${live.length ? live.map(e => `<div class="tick"><b>${esc(e.id)}</b>
+          ${esc(e.stat.replace("live_",""))} = ${(+e.value).toFixed(3)}</div>`).join("")
+        : `<span class="dim">not attached — run <b>python -m Lab.lab observe</b> and launch the
+           sim with <b>--policy</b> (docs/POLICY_API.md)</span>`}</div>
+    <div class="card"><h3>Latest minutes</h3>
+      ${m && m.minutes ? `<span class="dim">meeting ${m.id}:</span> <i>${esc(m.minutes)}</i>`
+                       : `<span class="dim">no meetings yet</span>`}</div>
+    <div class="card"><h3>Experiments</h3>
+      ${exps.length ? exps.map(e => `<div class="tick">${e.id} ${st(e.status)}
+          ${e.verdict ? st(e.verdict) : ""}</div>`).join("")
+        : `<span class="dim">none yet</span>`}</div>
+    ${fig ? `<div class="card"><h3>Vega's latest</h3>
+      <img class="fig" src="/figs/${esc(fig)}" alt="${esc(fig)}"></div>` : ""}`;
+}
+
+function vWorld(){
+  return `<div class="world">
+    <div><iframe id="world-frame" src="${esc(streamUrl())}"
+      allow="autoplay; fullscreen" title="Symbiotic World live stream"></iframe>
+      <div class="dim" style="margin-top:4px;font-size:12px">Live world via Pixel Streaming —
+        <a style="color:var(--cyan)" href="${esc(streamUrl())}" target="_blank">open full screen</a>.
+        If the frame stays black, the stream host may not be running or blocks embedding.</div></div>
+    <div class="side" id="world-side">${worldSide()}</div>
+  </div>`;
+}
+
+function vConversation(){
+  const ms = [...S.meetings].reverse();
+  if (!ms.length) return `<div class="empty">no meetings yet — run a session</div>`;
+  return ms.map(m => {
+    const turns = S.transcript.filter(t => t.meeting_id === m.id).map(renderTurn).join("");
+    return `<div class="card"><h3>Meeting ${m.id} · ${esc(m.kind)} · <span class="dim">${esc(m.started_at)}</span></h3>
+      ${turns}
+      <h3 style="margin-top:12px">Stance ledger</h3>${stancesFor(m.id) || '<span class="dim">no stances</span>'}
+      ${m.minutes ? `<h3 style="margin-top:12px">Minutes</h3><i class="dim">${esc(m.minutes)}</i>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function vExperiments(){
+  if (!S.experiments.length) return `<div class="empty">no experiments yet</div>`;
+  return [...S.experiments].reverse().map(e => {
+    const p = J(e.protocol) || {}, r = J(e.metric_result);
+    const preds = S.predictions.filter(x => x.experiment_id === e.id);
+    const card = S.hypotheses.find(h => h.id === e.hypothesis_id) || {};
+    let result = "";
+    if (r && r.kind === "assessment")
+      result = `mean <b>${(+r.mean).toFixed(3)}</b> vs criterion ≥ ${r.criteria_min}`;
+    else if (r && "diff" in r)
+      result = `treatment <b class="num">${(+r.treatment_mean).toFixed(3)}</b> vs control
+        <b class="num">${(+r.control_mean).toFixed(3)}</b> (Δ ${(+r.diff).toFixed(3)}, threshold ${r.threshold}) → ${esc(r.actual)}`;
+    return `<div class="card">
+      <h3>${e.id} · ${st(e.status)} ${e.verdict ? st(e.verdict) : ""} ${p.kind==="assessment"?'<span class="dim">stage-1 assessment</span>':""}</h3>
+      <div>on <b>${e.hypothesis_id}</b> <span class="dim">“${esc(card.claim||"")}”</span></div>
+      <div class="dim">metric <b>${esc(p.metric)}</b> · arms [${esc(p.intervention_mode)}${p.intervention_set?` + ${esc(p.intervention_set)}`:""}]
+        vs [${esc(p.control_mode)}${p.control_set?` + ${esc(p.control_set)}`:""}] · seeds ${(p.seeds||[]).join(",")} · ${p.duration}s
+        · expected if true: ${esc(p.direction_if_claim_true)}</div>
+      ${result ? `<div style="margin-top:6px">${result}</div>` : ""}
+      ${preds.length ? `<table style="margin-top:8px"><tr><th>agent</th><th>preregistered</th><th>conf</th><th>Brier</th></tr>` +
+        preds.map(x => `<tr><td>${ag(x.agent)}</td><td>${esc(x.predicted)}</td>
+          <td class="num">${(+x.confidence).toFixed(2)}</td>
+          <td class="num">${x.brier==null?'<span class="dim">—</span>':
+            (+x.brier).toFixed(2)+(x.predicted===x.actual?" ✓":" ✗")}</td></tr>`).join("") + `</table>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function vRegistry(){
+  const rows = S.hypotheses.map(h => `<tr><td>${h.id}</td><td>${st(h.status)}</td>
+    <td class="claim">${esc(h.claim)}</td><td class="dim">${esc(h.proposer)}</td></tr>`).join("");
+  const oq = S.open_questions.map(q => `<li><span class="dim">${q.id} (${q.status})</span> ${esc(q.text)}</li>`).join("");
+  const disputes = S.disputes.map(d => {
+    const sides = J(d.sides) || {};
+    return `<li><b>${d.id}</b> on ${d.hypothesis_id}:
+      <span class="agent Ada">${(sides.agree||[]).join(", ")}</span> vs
+      <span class="agent Karla">${(sides.disagree||[]).join(", ")}</span> — ${st(d.resolution)}
+      ${d.experiment_id ? `<span class="dim">(${d.experiment_id})</span>` : ""}</li>`;
+  }).join("");
+  return `<div class="card"><h3>The textbook — the inherited object</h3>
+      <table><tr><th>id</th><th>status</th><th>claim</th><th>proposer</th></tr>${rows}</table></div>
+    <div class="grid2">
+      <div class="card"><h3>Disputes</h3><ul>${disputes || '<span class="dim">none</span>'}</ul></div>
+      <div class="card"><h3>Open questions</h3><ul>${oq}</ul></div>
+    </div>`;
+}
+
+function vConservation(){
+  if (!S.programs.length) return `<div class="empty">no species endangered so far</div>`;
+  return S.programs.map(p => {
+    const card = S.hypotheses.find(h => h.id === p.card_id) || {};
+    const stages = ["debating","assessing","introducing","done"];
+    const idx = stages.indexOf(p.status);
+    return `<div class="card"><h3>${p.id} · ${esc(p.species)} · ${st(p.status)}</h3>
+      <div class="claim">“${esc(card.claim||"")}”</div>
+      <div style="display:flex;gap:6px;margin:10px 0">${stages.map((s,i) =>
+        `<span class="chip" style="${i<=idx&&idx>=0?"border-color:var(--cyan);color:var(--cyan)":""}">${i+1}. ${s}</span>`).join("")}</div>
+      <div class="dim">stage 1 assessment: ${p.assessment_exp||"—"} · stage 2 introduction: ${p.introduction_exp||"—"}</div>
+      <div class="dim" style="margin-top:6px">Stage 1 checks resource headroom in code before any animals are introduced;
+        stage 2 boosts founders vs an unmodified control, with preregistered predictions.</div>
+    </div>`;
+  }).join("");
+}
+
+function vData(){
+  const figs = S.figs.map(f => `<img class="fig" src="/figs/${esc(f)}" alt="${esc(f)}">`).join("");
+  const fc = S.forecasts.length ? `<table><tr><th>run</th><th>metric</th><th>horizon</th>
+      <th>forecast</th><th>band</th><th>actual</th></tr>` +
+    S.forecasts.map(f => `<tr><td class="dim">${esc(f.run_id)}</td><td>${esc(f.metric)}</td>
+      <td class="num">${(+f.horizon).toFixed(0)}s</td><td class="num">${(+f.predicted).toFixed(2)}</td>
+      <td class="num dim">[${(+f.lower).toFixed(2)}, ${(+f.upper).toFixed(2)}]</td>
+      <td class="num">${f.actual==null?"—":(+f.actual).toFixed(2)}</td></tr>`).join("") + "</table>" : "";
+  return `<div class="card"><h3>Data annex — ${ag("Vega")} <span class="dim">(non-voting: the scientists never see this tab's contents)</span></h3>
+    ${figs || '<span class="dim">no figures yet</span>'}</div>
+    ${fc ? `<div class="card"><h3>Trend forecasts (least squares, ±2σ band)</h3>${fc}</div>` : ""}`;
+}
+
+function vLab(){
+  const cred = S.credibility.map(c => `<tr><td>${ag(c.agent)}</td><td class="dim">${esc(c.domain)}</td>
+    <td class="num">${(+c.weight).toFixed(2)}</td>
+    <td><div class="bar"><i style="width:${Math.min(100,c.weight*50)}%"></i></div></td>
+    <td class="num dim">${c.n_scored}</td></tr>`).join("");
+  const gens = {};
+  S.agent_params.forEach(a => (gens[a.generation] = gens[a.generation] || []).push(a));
+  const evo = Object.keys(gens).sort((a,b)=>a-b).map(g =>
+    `<h3 style="margin-top:10px">Generation ${g}</h3><table>
+      <tr><th>agent</th><th>temperature</th><th>base conf</th><th>fitness (mean Brier)</th></tr>` +
+    gens[g].map(a => `<tr><td>${ag(a.agent)}</td><td class="num">${(+a.temperature).toFixed(2)}</td>
+      <td class="num">${(+a.base_confidence).toFixed(2)}</td>
+      <td class="num">${a.fitness==null?"—":(+a.fitness).toFixed(2)}</td></tr>`).join("") + "</table>").join("");
+  return `<div class="grid2">
+    <div class="card"><h3>Credibility — vote weight per domain</h3>
+      <table><tr><th>agent</th><th>domain</th><th>w</th><th></th><th>scored</th></tr>${cred}</table></div>
+    <div class="card"><h3>Lab evolution — generation ${S.generation}</h3>
+      <div class="dim">Below-median agents mutate temperament toward the fittest each generation.</div>${evo}</div>
+  </div>`;
+}
+
+function render(){
+  nav();
+  if (!S) return;
+  const views = {World:vWorld, Conversation:vConversation, Experiments:vExperiments,
+                 Registry:vRegistry, Conservation:vConservation, Data:vData, Lab:vLab};
+  // Never re-render the stream iframe on a poll — update only the side panel.
+  if (tab === "World" && document.getElementById("world-frame")) {
+    document.getElementById("world-side").innerHTML = worldSide();
+  } else {
+    document.getElementById("main").innerHTML = views[tab]();
+  }
+  document.getElementById("meta").textContent =
+    `gen ${S.generation} · ${S.meetings.length} meetings · ${S.experiments.length} experiments · ${S.runs.length} runs`;
+}
+
+async function tick(){
+  try {
+    const r = await fetch("/api/state");
+    S = await r.json();
+    if (S.empty) { document.getElementById("main").innerHTML =
+      `<div class="empty">no lab database yet — run <b>python -m Lab.lab session</b></div>`; return; }
+    render();
+  } catch (e) {
+    document.getElementById("meta").textContent = "disconnected — retrying";
+  }
+}
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>
