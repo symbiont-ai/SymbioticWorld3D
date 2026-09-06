@@ -16,48 +16,105 @@ FSWPolicyClient::~FSWPolicyClient()
 	Shutdown();
 }
 
-int32 FSWPolicyClient::Configure(const FString& Spec, int32 InTimeoutMs)
+bool FSWPolicyClient::ParseServerEntry(const FString& InEntry, FSWPolicyServerSpec& Out, FString& OutError)
 {
-	Shutdown();
-	Servers.Reset();
-	TimeoutMs = FMath::Clamp(InTimeoutMs, 1, 60000);
+	const FString Entry = InEntry.TrimStartAndEnd();
+	FString HostPort, SpeciesStr;
+	if (!Entry.Split(TEXT("="), &HostPort, &SpeciesStr))
+	{
+		OutError = TEXT("needs host:port=Lumen|Tecton|Both");
+		return false;
+	}
+	FString Host, PortStr;
+	if (!HostPort.Split(TEXT(":"), &Host, &PortStr, ESearchCase::IgnoreCase, ESearchDir::FromEnd))
+	{
+		OutError = TEXT("needs host:port");
+		return false;
+	}
+	Out.Host = Host.TrimStartAndEnd();
+	Out.Port = FCString::Atoi(*PortStr.TrimStartAndEnd());
+	Out.Name = FString::Printf(TEXT("%s:%d"), *Out.Host, Out.Port);
+	const FString Sp = SpeciesStr.TrimStartAndEnd().ToLower();
+	Out.bLumen = Sp == TEXT("lumen") || Sp == TEXT("both");
+	Out.bTecton = Sp == TEXT("tecton") || Sp == TEXT("both");
+	if (Out.Host.IsEmpty() || Out.Port <= 0 || Out.Port > 65535 || (!Out.bLumen && !Out.bTecton))
+	{
+		OutError = FString::Printf(TEXT("bad host/port/species (host '%s', port %d, species '%s'; species must be Lumen, Tecton or Both)"), *Out.Host, Out.Port, *Sp);
+		return false;
+	}
+	return true;
+}
 
+int32 FSWPolicyClient::ParseServerList(const FString& Spec, TArray<FSWPolicyServerSpec>& Out)
+{
+	int32 Added = 0;
 	TArray<FString> Entries;
 	Spec.ParseIntoArray(Entries, TEXT("|"), true);
 	for (FString Entry : Entries)
 	{
 		Entry.TrimStartAndEndInline();
 		if (Entry.IsEmpty()) continue;
-		FString HostPort, SpeciesStr;
-		if (!Entry.Split(TEXT("="), &HostPort, &SpeciesStr))
+		FSWPolicyServerSpec S;
+		FString Err;
+		if (!ParseServerEntry(Entry, S, Err))
 		{
-			UE_LOG(LogSymbioticWorld, Warning, TEXT("SWPolicy: entry '%s' needs host:port=Lumen|Tecton|Both"), *Entry);
+			UE_LOG(LogSymbioticWorld, Warning, TEXT("SWPolicy: entry '%s' skipped: %s"), *Entry, *Err);
 			continue;
 		}
-		FString Host, PortStr;
-		if (!HostPort.Split(TEXT(":"), &Host, &PortStr, ESearchCase::IgnoreCase, ESearchDir::FromEnd))
+		Out.Add(S);
+		Added++;
+	}
+	return Added;
+}
+
+int32 FSWPolicyClient::ApplyServerSet(const TArray<FSWPolicyServerSpec>& Desired, TArray<int32>& OutOldToNew)
+{
+	const double Now = FPlatformTime::Seconds();
+	OutOldToNew.Init(-1, Servers.Num());
+	TArray<FSWPolicyServer> NewServers;
+	NewServers.Reserve(Desired.Num());
+	for (const FSWPolicyServerSpec& Spec : Desired)
+	{
+		// Already present (case-insensitive host:port): keep socket, stats and timers, refresh the species.
+		int32 OldIdx = INDEX_NONE;
+		for (int32 i = 0; i < Servers.Num(); ++i)
 		{
-			UE_LOG(LogSymbioticWorld, Warning, TEXT("SWPolicy: entry '%s' needs host:port"), *Entry);
+			if (OutOldToNew[i] < 0 && Servers[i].Name.Equals(Spec.Name, ESearchCase::IgnoreCase)) { OldIdx = i; break; }
+		}
+		if (OldIdx != INDEX_NONE)
+		{
+			FSWPolicyServer& S = Servers[OldIdx];
+			if (S.bLumen != Spec.bLumen || S.bTecton != Spec.bTecton)
+			{
+				S.bLumen = Spec.bLumen;
+				S.bTecton = Spec.bTecton;
+				UE_LOG(LogSymbioticWorld, Log, TEXT("PolicyServer %s: now controls %s"), *S.Name, S.SpeciesLabel());
+			}
+			OutOldToNew[OldIdx] = NewServers.Num();
+			NewServers.Add(S);
+			S.Socket = nullptr;   // ownership moved to the copy in NewServers
 			continue;
 		}
 		FSWPolicyServer S;
-		S.Host = Host.TrimStartAndEnd();
-		S.Port = FCString::Atoi(*PortStr);
-		S.Name = FString::Printf(TEXT("%s:%d"), *S.Host, S.Port);
-		SpeciesStr = SpeciesStr.TrimStartAndEnd().ToLower();
-		S.bLumen = SpeciesStr == TEXT("lumen") || SpeciesStr == TEXT("both");
-		S.bTecton = SpeciesStr == TEXT("tecton") || SpeciesStr == TEXT("both");
-		if (S.Port <= 0 || (!S.bLumen && !S.bTecton))
-		{
-			UE_LOG(LogSymbioticWorld, Warning, TEXT("SWPolicy: bad entry '%s' (port %d, species '%s')"), *Entry, S.Port, *SpeciesStr);
-			continue;
-		}
-		S.NextConnectAttempt = 0.0;
-		S.LastReportTime = FPlatformTime::Seconds();
-		Servers.Add(S);
-		UE_LOG(LogSymbioticWorld, Log, TEXT("PolicyServer %s: configured for %s (timeout %d ms)"), *S.Name,
-			S.bLumen && S.bTecton ? TEXT("Lumen+Tecton") : (S.bLumen ? TEXT("Lumen") : TEXT("Tecton")), TimeoutMs);
+		S.Host = Spec.Host;
+		S.Port = Spec.Port;
+		S.Name = Spec.Name;
+		S.bLumen = Spec.bLumen;
+		S.bTecton = Spec.bTecton;
+		S.NextConnectAttempt = 0.0;   // first attempt on the next Tick(), like a launch-time server
+		S.LastReportTime = Now;
+		NewServers.Add(S);
+		UE_LOG(LogSymbioticWorld, Log, TEXT("PolicyServer %s: configured for %s (timeout %d ms)"), *S.Name, S.SpeciesLabel(), TimeoutMs);
 	}
+	for (int32 i = 0; i < Servers.Num(); ++i)
+	{
+		if (OutOldToNew[i] >= 0) continue;
+		FSWPolicyServer& S = Servers[i];
+		UE_LOG(LogSymbioticWorld, Log, TEXT("PolicyServer %s: removed from the set. %d requests, %d replies, %d timeouts, %d stale, mean round trip %.2f ms"),
+			*S.Name, S.Requests, S.Replies, S.Timeouts, S.Stale, S.MeanRoundTripMs());
+		CloseSocket(S);
+	}
+	Servers = MoveTemp(NewServers);
 	return Servers.Num();
 }
 
@@ -90,9 +147,10 @@ int32 FSWPolicyClient::NumConnected() const
 	return N;
 }
 
-void FSWPolicyClient::SetHello(const FString& InHelloLine)
+void FSWPolicyClient::SetHello(const FString& InHelloLine, bool bSendNow)
 {
 	HelloLine = InHelloLine;
+	if (!bSendNow) return;
 	for (FSWPolicyServer& S : Servers)
 	{
 		if (S.bConnected && SendLine(S, HelloLine))
@@ -172,6 +230,19 @@ void FSWPolicyClient::Disconnect(FSWPolicyServer& S, const TCHAR* Reason)
 	S.bAwaitingReply = false;
 	S.RecvBuf.Reset();
 	S.NextConnectAttempt = FPlatformTime::Seconds() + ReconnectSeconds;
+}
+
+void FSWPolicyClient::CloseSocket(FSWPolicyServer& S)
+{
+	if (S.Socket)
+	{
+		S.Socket->Close();
+		if (ISocketSubsystem* SS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)) SS->DestroySocket(S.Socket);
+		S.Socket = nullptr;
+	}
+	S.bConnected = false;
+	S.bAwaitingReply = false;
+	S.RecvBuf.Reset();
 }
 
 void FSWPolicyClient::Tick()

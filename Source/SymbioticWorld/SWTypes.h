@@ -454,6 +454,12 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) FString PolicyServers;
 	UPROPERTY(EditAnywhere) int32 PolicyTimeoutMs = 200;    // per-substep wait for a reply; on timeout the built-in bandit decides
 	UPROPERTY(EditAnywhere) float PolicyShare = 1.0f;       // fraction of a served species assigned to the server, decided per organism at birth (seeded stream)
+	// Server list file, watched on the wall clock while the sim runs (docs/POLICY_API.md, "Adding servers while
+	// the sim runs"): one "host:port=Species" per line, '#' comments. Its entries are added to PolicyServers
+	// (same host:port: the file line wins for the species). Relative paths are under the project directory.
+	// A missing file means "no file servers". Empty = do not watch. Also settable as -SWPolicyFile=path.
+	UPROPERTY(EditAnywhere) FString PolicyServerFile = TEXT("Saved/policy_servers.txt");
+	UPROPERTY(EditAnywhere) float PolicyFilePollSec = 3.0f;  // wall-clock seconds between stats of the file (never inside a substep)
 };
 
 // Snapshot of what one agent can perceive when it decides. Filled by the

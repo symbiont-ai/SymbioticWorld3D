@@ -96,6 +96,7 @@ Command-line flags understood by the sim (all optional):
                         # so a scripted render never captures your keystrokes (M/P/1-3 would change the run)
 -SWPolicy="host:port=Lumen|host:port=Tecton"   # external policy servers (run_sim: --policy); '|' and '=' only, no ',' or ';'
 -SWPolicyTimeoutMs=200  -SWPolicyShare=1.0     # run_sim: --policy-timeout / --policy-share; see docs/POLICY_API.md
+-SWPolicyFile=Saved/policy_servers.txt         # server list file polled every 3 s while running (run_sim: --policy-file); edit it to add/remove servers
 ```
 
 `-SWSet` reaches any numeric/bool/colour/string field of `FSWRunSettings` (scope `Settings`),
@@ -155,14 +156,20 @@ replays a recording against your class offline (mask violations, action distribu
 timing), and the repo ships a 300-exchange sample. See "Offline development on a Mac" in
 `docs/POLICY_API.md`.
 
-On the host:
+On the host, while the sim runs (no restart): add one line per server to
+`Saved/policy_servers.txt` and save. The sim polls the file every 3 s, connects new servers,
+closes removed ones and rebinds organisms (`docs/POLICY_API.md`, "Adding servers while the
+sim runs"; template `Tools/policy_servers.example.txt`). `Tools/policy_probe.py` finds the
+servers on the wifi and can append them for you:
 
 ```bash
-python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --windowed --policy "10.228.152.5:9000=Lumen|10.228.152.7:9000=Tecton"
+python Tools/policy_probe.py --write Saved/policy_servers.txt   # scans the host's own /24 for port 9000, appends "host:port=Both" lines
+python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --windowed                     # the default file is watched automatically
+python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --windowed --policy "10.228.152.5:9000=Lumen|10.228.152.7:9000=Tecton"   # launch-time alternative
 ```
 
 Species per server: `Lumen`, `Tecton` or `Both`; several servers share one world. The
-HUD title shows `ext N/M` (externally driven organisms / total), the inspector shows
+HUD title shows `ext N/M` (organisms currently bound to a server / total), the inspector shows
 `policy: external host:port`, and the UE log prints connect / hello / timeout lines
 once per state change plus a round-trip summary every 10 s. Allow `UnrealEditor.exe`
 through Windows Firewall on private networks if the host cannot reach a Mac.
@@ -177,10 +184,16 @@ fetch Epic's signalling server with the engine's script
 
 ```bash
 Tools\start_stream_server.bat
-python Tools/run_sim.py --mode C --seed 1 --windowed --speed 1 --duration 36000 --stream
+Tools\stream_keepalive.bat
 ```
 
-Viewers open `http://<host LAN IP>/` and click to start. Mouse and keyboard from the
+`stream_keepalive.bat` runs `run_sim.py --stream --offscreen` for the day and relaunches it
+after any exit (create `Saved\stop_stream` to stop the loop). Viewers open
+`http://<host LAN IP>/?AFKDetection=false&HoveringMouse=true` and click to start. The two
+parameters matter: the player page's idle timeout disconnects a still viewer after 120 s and
+that disconnect has aborted the Pixel Streaming media layer three times (exit 0xC0000409,
+no crash report); hovering-mouse mode makes clicks select organisms instead of grabbing the
+camera. Mouse and keyboard from the
 browser reach the sim (select, follow, drought, speed, camera), so agree on one driver at a
 time. Allow `node.exe` on private networks when Windows Firewall asks. The stream is
 encoded on the host GPU (NVENC on NVIDIA); hackathon wifi that isolates clients from each
@@ -220,7 +233,8 @@ Config/              legacy input mappings, renderer settings (Lumen GI, VSM, TS
 Content/Maps/Valley  empty startup level
 Tools/               run_sim.py (launcher), sweep.py (parameter sweeps), make_valley_map.py,
                      policy_server.py (reference agents: random / bandit / heuristic / tracefollower / MyAgent stub),
-                     policy_client_check.py (one fake exchange), policy_replay.py (offline replay of a --record file)
+                     policy_client_check.py (one fake exchange), policy_replay.py (offline replay of a --record file),
+                     policy_probe.py (finds servers on the wifi, writes the server list file), policy_servers.example.txt
 .claude/             agents/implementer.md, agents/tester.md, skills/phase (Manager Loop)
 Analysis/            analyze_run.py
 ```

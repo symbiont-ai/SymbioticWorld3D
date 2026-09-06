@@ -34,6 +34,9 @@ Raw engine flags: `-SWPolicy="host:port=Species|host:port=Species"` (Species = `
 organism at birth** with the seeded stream (a draw only happens when share < 1, or when two
 servers serve the same species and one has to be picked). The rest stay built-in.
 
+Servers can also be added, changed or removed **while the sim runs** by editing a text file;
+see "Adding servers while the sim runs" below. `-SWPolicy` is the launch-time alternative.
+
 ## Messages
 
 ### 1. `hello` (sim -> server), once per connection and again on every run reset
@@ -137,6 +140,63 @@ per species), and the UE log reports connect / disconnect / timeout / recovery *
 change**, plus a throughput line every 10 s. `agents.csv` has a final `policy` column
 (`builtin` or `ext:host:port`). The inspector shows `policy: external host:port` or
 `policy: builtin`; the title block shows `ext N/M` (external organisms / total).
+
+## Adding servers while the sim runs
+
+The sim watches a **server list file** and applies every change without a restart. This is the
+normal way to bring a collaborator's server into a running world; `-SWPolicy` is the launch-time
+alternative (both can be used together).
+
+* **Path:** `Settings.PolicyServerFile`, default `Saved/policy_servers.txt`, relative to the
+  project directory (`<repo>/`). Change it with `-SWPolicyFile=<path>`, `run_sim.py --policy-file
+  <path>`, or `--set "Settings.PolicyServerFile=<path>"`; an empty value turns the watch off.
+  Template: `Tools/policy_servers.example.txt`.
+* **Format:** one server per line, `host:port=Species` with `Species` = `Lumen`, `Tecton` or `Both`
+  (case-insensitive). `#` starts a comment, blank lines are ignored, whitespace is trimmed. A malformed
+  line is logged once (with its line number) and skipped; the rest of the file still applies. The same
+  `host:port` twice in the file: the later line wins.
+* **Poll:** every `Settings.PolicyFilePollSec` seconds (default 3) of **wall** time, from the
+  manager's per-frame tick, never inside a logical substep and never touching the seeded stream. The
+  file is only re-read when its size or modification time changed. A missing file means "no file
+  servers" (logged once at start as `Policy file not present, watching <path> (polled every 3.0 s; ...)`); a file that
+  disappears later drops its servers.
+* **Effective set** = the `-SWPolicy` entries plus the file entries. The same `host:port` in both:
+  the file's species wins. Every change is logged as one line,
+  `Policy servers: +10.0.0.5:9000=Lumen -10.0.0.7:9000=Tecton ~10.0.0.9:9000=Both (file <path>); ...`
+  (`+` added, `-` removed, `~` species changed), with the number of organisms bound and unbound.
+* **What happens on a change**, applied between two substeps so no organism switches policy
+  mid-decision: a new server gets a connection (same connect / reconnect-every-5-s behaviour as a
+  launch-time server; it receives the `hello` on connect); a removed server is closed and every
+  organism bound to it goes back to its built-in bandit at once (no fallback is counted: fallbacks
+  count only decisions a bound server failed to answer); an organism bound to a server whose species mapping no longer covers it is
+  unbound the same way; unbound organisms of a species whose server set changed are assigned with the
+  **same rule as at birth** (`PolicyShare`, choice among several servers). That rule draws from the
+  seeded stream only when there is a real choice (share < 1, or more than one server for the species),
+  exactly as at birth, so a run without any server stays byte-identical. Servers that were already
+  connected keep their connection and their organisms; they are not sent a new `hello` (a `hello`
+  means "new run" to a server; every server still gets one on a run reset). Consequence: adding a
+  second server for a species that already has one gives the newcomer only organisms born from then
+  on. To move a species, edit the old line's species (for example `Both` -> `Tecton`): its Lumen
+  are unbound at the next poll and assigned to the Lumen server(s). Verified on a live stream: a
+  line appended at 15:23:17 was connected and answering within one second; removing it unbound its
+  organisms within three seconds while viewers stayed connected.
+* The HUD title's `ext N/M` is the number of organisms currently bound to a server; the UE log prints
+  `Policy servers: K configured, C connected; bound organisms N/M (...)` every 10 s while the set is
+  non-empty.
+
+Finding the servers on the wifi, `Tools/policy_probe.py` (stdlib only):
+
+```bash
+python3 Tools/policy_probe.py                                       # scan this machine's own /24 for port 9000
+python3 Tools/policy_probe.py --subnet 10.228.152 --port 9000        # a given /24, another port
+python3 Tools/policy_probe.py --write Saved/policy_servers.txt       # append what it found to the server file (no duplicates)
+```
+
+It connects to every address of the /24 (1.5 s timeout), and for each open port does a real `hello` +
+one-organism `decide` exchange. Hosts that answer with a valid, feasible action are printed as
+ready-to-paste lines, `10.228.152.5:9000=Both   # replied in 0.6 ms`; open ports that do not speak
+the protocol are listed separately with the reason. `--species Lumen|Tecton|Both` sets the species
+on the printed lines; `--write` appends only `host:port`s that the file does not list yet.
 
 ## Timing advice
 
