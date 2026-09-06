@@ -5,6 +5,7 @@
 #include "SWTypes.h"
 #include "SWLogger.h"
 #include "SWTraceField.h"
+#include "SWPolicyClient.h"
 #include "SWWorldManager.generated.h"
 
 class ASWAgent;
@@ -103,6 +104,14 @@ public:
 	FString GetLogDirectory() const { return Logger.GetDirectory(); }
 	float GetLastStepMs() const { return LastStepMs; }
 
+	// ---- External policy servers (docs/POLICY_API.md) ----
+	bool HasPolicyServers() const { return PolicyClient.HasServers(); }
+	const FSWPolicyClient& GetPolicyClient() const { return PolicyClient; }
+	int32 GetExternalCount() const { return ExternalCount; }            // living organisms assigned to a server
+	FString GetPolicyName(const ASWAgent& A) const;                      // "builtin" or "ext:host:port" (CSV / HUD)
+	int32 GetExtDecisions(ESWSpecies S) const { return ExtDecisions[static_cast<int32>(S)]; }
+	int32 GetExtFallbacks(ESWSpecies S) const { return ExtFallbacks[static_cast<int32>(S)]; }
+
 protected:
 	UPROPERTY() TArray<ASWAgent*> Agents;
 	UPROPERTY() TArray<ASWResourcePatch*> Patches;
@@ -161,6 +170,18 @@ protected:
 	bool bAutoSelect = false;
 	void RecomputeStats();
 	void ComputeSpeciesStats(ESWSpecies S, FSWSpeciesStats& Out) const;
+
+	// External policy: one connection per server; per substep one "decide" request per server for
+	// every assigned organism whose decision is due, then ResolveDecision() on each with the reply.
+	FSWPolicyClient PolicyClient;
+	int32 ExtDecisions[2] = { 0, 0 };   // per species: decisions taken from a server
+	int32 ExtFallbacks[2] = { 0, 0 };   // per species: server-assigned decisions the built-in bandit had to make
+	int32 ExternalCount = 0;
+	int32 StepCounter = 0;              // substeps since StartRun (echoed by replies to detect stale ones)
+	void AssignPolicy(ASWAgent* A);     // at birth, with the seeded stream when PolicyShare < 1
+	void PolicyExchange();
+	FString BuildHelloLine() const;
+	FString BuildDecideLine(int32 ServerIdx, const TArray<ASWAgent*>& Due) const;
 	void NeutralBirthStep(float Dt);
 	void LogTick(float Dt);
 	FVector RandomArenaPoint(float Margin);

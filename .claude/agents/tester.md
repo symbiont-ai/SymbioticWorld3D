@@ -16,7 +16,7 @@ create files only under `Saved/` and the scratchpad.
    the implementer had in memory (skip only if a UnrealEditor process is
    running; then say so):
    ```
-   "C:/Program Files/Epic Games/UE_5.7/Engine/Build/BatchFiles/Build.bat" SymbioticWorldEditor Win64 Development -Project="<repo>/SymbioticWorld.uproject" -WaitMutex -NoHotReload
+   Tools/build.bat   (refuses while any UnrealEditor process runs; never call Build.bat directly)
    ```
    A build that fails is an automatic FAIL.
 2. **Reproduce the implementer's evidence** with the exact commands in their

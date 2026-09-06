@@ -296,20 +296,58 @@ void ASWAgent::Decide()
 		const float DEnergy = (Energy - EnergyAtDecision) / FMath::Max(S.RewardScale, 1e-3f);
 		LastReward = S.WeightEnergy * DEnergy + S.WeightNovelty * NoveltyThisInterval + S.WeightInteraction * InteractionThisInterval;
 		Bandit.Update(CurrentContext, CurrentAction, LastReward, EffectiveAlpha());
+		LastRewardContext = CurrentContext;
+		bLastRewardValid = true;
+	}
+	else
+	{
+		bLastRewardValid = false;
 	}
 	NoveltyThisInterval = 0.f;
 	InteractionThisInterval = 0.f;
 
-	// 2) Sense, gate, select.
-	Manager->BuildPercept(this, Percept);
-	CurrentContext = Percept.EnergyBin();
-	const uint32 Mask = BuildFeasibleMask();
-	LastFeasibleMask = Mask;
-	CurrentAction = Bandit.Select(CurrentContext, Mask, Genome.Epsilon, Manager->GetRng(), bLastExplored);
-
+	// 2) Sense, gate.
+	PrepareDecision();
 	EnergyAtDecision = Energy;
 	bHasPendingUpdate = true;
 	DecisionCount++;
+
+	// 3) Select. An organism assigned to a policy server leaves the choice open: the manager
+	//    batches every due organism into one request per server after this substep's agent
+	//    loop and calls ResolveDecision() with the reply (or without one). CurrentAction keeps
+	//    the finished action until then; nothing is applied in between.
+	if (PolicyServer >= 0)
+	{
+		bAwaitingExternal = true;
+		return;
+	}
+	ResolveDecision(nullptr);
+}
+
+void ASWAgent::PrepareDecision()
+{
+	Manager->BuildPercept(this, Percept);
+	CurrentContext = Percept.EnergyBin();
+	LastFeasibleMask = BuildFeasibleMask();
+}
+
+bool ASWAgent::ResolveDecision(const ESWAction* ExternalAction)
+{
+	const FSWRunSettings& S = Manager->GetSettings();
+	bAwaitingExternal = false;
+
+	const bool bUseExternal = ExternalAction != nullptr && FSWContextualBandit::IsFeasible(LastFeasibleMask, *ExternalAction);
+	if (bUseExternal)
+	{
+		CurrentAction = *ExternalAction;
+		bLastExplored = false;
+	}
+	else
+	{
+		// Built-in tabular contextual bandit: epsilon-greedy over the feasible set.
+		CurrentAction = Bandit.Select(CurrentContext, LastFeasibleMask, Genome.Epsilon, Manager->GetRng(), bLastExplored);
+	}
+	bLastActionExternal = bUseExternal;
 
 	// Modify: one deposit per decision. Lumen writes Trace X (information), Tecton writes Trace Y (soil).
 	if (CurrentAction == ESWAction::Modify)
@@ -330,6 +368,12 @@ void ASWAgent::Decide()
 			ExploreTimer = Manager->GetRng().FRandRange(2.f, 6.f);
 		}
 	}
+	return bUseExternal;
+}
+
+bool ASWAgent::HasFreshSignal() const
+{
+	return bHasSignal && Manager && (Manager->GetSimTime() - SignalTime) < 12.f;
 }
 
 uint32 ASWAgent::BuildFeasibleMask() const

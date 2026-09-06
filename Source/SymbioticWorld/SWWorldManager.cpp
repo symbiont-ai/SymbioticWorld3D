@@ -89,11 +89,16 @@ void ASWWorldManager::BeginPlay()
 {
 	Super::BeginPlay();
 	ApplyCommandLineOverrides();
+	if (!Settings.PolicyServers.IsEmpty())
+	{
+		PolicyClient.Configure(Settings.PolicyServers, Settings.PolicyTimeoutMs);
+	}
 	StartRun();
 }
 
 void ASWWorldManager::EndPlay(const EEndPlayReason::Type Reason)
 {
+	PolicyClient.Shutdown();
 	Logger.Close();
 	Super::EndPlay(Reason);
 }
@@ -133,6 +138,22 @@ void ASWWorldManager::ApplyCommandLineOverrides()
 	if (FParse::Value(FCommandLine::Get(), TEXT("SWSet="), SetSpec))
 	{
 		ApplyParameterOverrides(SetSpec);
+	}
+	// External policy servers. FParse::Value stops at ',' and -SWSet owns ';', so the value uses '|' and '='.
+	FString PolicySpec;
+	if (FParse::Value(FCommandLine::Get(), TEXT("SWPolicy="), PolicySpec))
+	{
+		Settings.PolicyServers = PolicySpec;
+	}
+	int32 PolicyTimeout = 0;
+	if (FParse::Value(FCommandLine::Get(), TEXT("SWPolicyTimeoutMs="), PolicyTimeout) && PolicyTimeout > 0)
+	{
+		Settings.PolicyTimeoutMs = PolicyTimeout;
+	}
+	float PolicyShare = 0.f;
+	if (FParse::Value(FCommandLine::Get(), TEXT("SWPolicyShare="), PolicyShare))
+	{
+		Settings.PolicyShare = FMath::Clamp(PolicyShare, 0.f, 1.f);
 	}
 	bool bAuto = false;
 	if (FParse::Bool(FCommandLine::Get(), TEXT("SWAutoSelect="), bAuto) && bAuto)
@@ -231,6 +252,9 @@ void ASWWorldManager::StartRun()
 	NextAgentId = 1;
 	bDrought = false;
 	NeutralBirthTimer = AgentLogTimer = PopLogTimer = StatsTimer = 0.f;
+	ExtDecisions[0] = ExtDecisions[1] = ExtFallbacks[0] = ExtFallbacks[1] = 0;
+	ExternalCount = 0;
+	StepCounter = 0;
 	InitialLumenTarget = Settings.InitialLumen;
 	InitialTectonTarget = Settings.InitialTecton;
 
@@ -242,6 +266,12 @@ void ASWWorldManager::StartRun()
 
 	TraceX.Init(Settings.TraceCells, Settings.WorldHalfSize, Settings.TraceXHalfLife, Settings.TraceMax);
 	TraceY.Init(Settings.TraceCells, Settings.WorldHalfSize, Settings.TraceYHalfLife, Settings.TraceMax);
+
+	if (PolicyClient.HasServers())
+	{
+		PolicyClient.Tick();                     // first connection attempt (bounded by the timeout)
+		PolicyClient.SetHello(BuildHelloLine()); // sent now to connected servers, and again on every (re)connect
+	}
 
 	PopHistory.Reset();
 	SpawnPatches();
@@ -378,6 +408,7 @@ ASWAgent* ASWWorldManager::SpawnAgent(ESWSpecies Species, const FSWGenome& Genom
 	if (!A) return nullptr;
 	const FSWSpeciesParams& P = Species == ESWSpecies::Lumen ? LumenParams : TectonParams;
 	A->Init(this, Species, P, Genome, NextAgentId++, ParentId, Generation, Energy);
+	AssignPolicy(A);
 	return A;
 }
 
@@ -415,6 +446,7 @@ bool ASWWorldManager::TryReproduce(ASWAgent* Parent)
 void ASWWorldManager::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (PolicyClient.HasServers()) PolicyClient.Tick();
 	if (bPaused || TimeScale <= 0.f) return;
 
 	const double T0 = FPlatformTime::Seconds();
@@ -468,6 +500,7 @@ void ASWWorldManager::Tick(float DeltaSeconds)
 void ASWWorldManager::StepWorld(float Dt)
 {
 	SimTime += Dt;
+	StepCounter++;
 
 	// 0) Trace fields decay on the logical clock.
 	if (Settings.bTraceFields)
@@ -514,6 +547,14 @@ void ASWWorldManager::StepWorld(float Dt)
 			Agents.RemoveAtSwap(i);
 			if (bWasSelected && bAutoSelect) CycleSelection();
 		}
+	}
+
+	// 2b) External policies: organisms assigned to a server prepared their decision in Step()
+	//     (percept, context, feasibility mask) and now get the server's action, or the built-in
+	//     bandit's if none arrived. Nothing here runs when no server is configured.
+	if (PolicyClient.HasServers())
+	{
+		PolicyExchange();
 	}
 
 	// 3) Signals: every agent currently signalling broadcasts its known resource
@@ -799,6 +840,8 @@ void ASWWorldManager::RecomputeStats()
 	ComputeSpeciesStats(ESWSpecies::Tecton, TectonStats);
 	PopHistory.Add(LumenStats.N + TectonStats.N);
 	if (PopHistory.Num() > 60) PopHistory.RemoveAt(0);
+	ExternalCount = 0;
+	for (const ASWAgent* A : Agents) if (A->IsAlive() && A->IsExternal()) ExternalCount++;
 }
 
 float ASWWorldManager::GetStability() const
@@ -819,7 +862,7 @@ void ASWWorldManager::LogTick(float Dt)
 		AgentLogTimer = 0.f;
 		for (const ASWAgent* A : Agents)
 		{
-			Logger.LogAgent(*A, SimTime, bDrought, Births, Deaths, LumenStats.N, TectonStats.N, ResourceTotalA, ResourceTotalB);
+			Logger.LogAgent(*A, SimTime, bDrought, Births, Deaths, LumenStats.N, TectonStats.N, ResourceTotalA, ResourceTotalB, GetPolicyName(*A));
 		}
 	}
 
@@ -835,8 +878,194 @@ void ASWWorldManager::LogTick(float Dt)
 			const FSWSpeciesStats& St = *Both[i];
 			Logger.LogPopulation(SimTime, Sp[i], St.N, St.MeanAlpha, St.SdAlpha, St.MeanEps, St.SdEps,
 				St.MeanSocial, St.SdSocial, St.MeanEnv, St.SdEnv, St.MeanGeneration, St.MaxGeneration, Births, Deaths,
-				ResourceTotalA, ResourceTotalB, bDrought, TraceX.Mean(), TraceY.Mean());
+				ResourceTotalA, ResourceTotalB, bDrought, TraceX.Mean(), TraceY.Mean(),
+				ExtDecisions[static_cast<int32>(Sp[i])], ExtFallbacks[static_cast<int32>(Sp[i])]);
 		}
 		Logger.Flush();
+	}
+}
+
+// ---------------------------------------------------------------------------
+// External policy servers (docs/POLICY_API.md)
+// ---------------------------------------------------------------------------
+
+FString ASWWorldManager::GetPolicyName(const ASWAgent& A) const
+{
+	const int32 Idx = A.GetPolicyServer();
+	if (Idx < 0 || Idx >= PolicyClient.NumServers()) return TEXT("builtin");
+	return FString::Printf(TEXT("ext:%s"), *PolicyClient.GetServer(Idx).Name);
+}
+
+void ASWWorldManager::AssignPolicy(ASWAgent* A)
+{
+	if (!A || !PolicyClient.HasServers()) return;
+	TArray<int32> Candidates;
+	PolicyClient.ServersFor(A->GetSpecies(), Candidates);
+	if (Candidates.Num() == 0) return;
+	const float Share = FMath::Clamp(Settings.PolicyShare, 0.f, 1.f);
+	if (Share <= 0.f) return;
+	// Seeded draws only when they decide something: share < 1, or more than one server for the species.
+	if (Share < 1.f && Rng.FRand() >= Share) return;
+	const int32 Pick = Candidates.Num() == 1 ? Candidates[0] : Candidates[Rng.RandRange(0, Candidates.Num() - 1)];
+	A->SetPolicyServer(Pick);
+}
+
+namespace
+{
+	FString JsonStr(const FString& In)
+	{
+		FString Out;
+		Out.Reserve(In.Len() + 2);
+		Out += TEXT("\"");
+		for (TCHAR C : In)
+		{
+			switch (C)
+			{
+			case TEXT('"'):  Out += TEXT("\\\""); break;
+			case TEXT('\\'): Out += TEXT("\\\\"); break;
+			case TEXT('\n'): Out += TEXT("\\n"); break;
+			case TEXT('\r'): Out += TEXT("\\r"); break;
+			case TEXT('\t'): Out += TEXT("\\t"); break;
+			default:
+				if (C < 32) Out += FString::Printf(TEXT("\\u%04x"), static_cast<int32>(C));
+				else Out.AppendChar(C);
+			}
+		}
+		Out += TEXT("\"");
+		return Out;
+	}
+	const TCHAR* JsonBool(bool B) { return B ? TEXT("true") : TEXT("false"); }
+	FString JsonVec2(const FVector& V) { return FString::Printf(TEXT("[%.1f,%.1f]"), V.X, V.Y); }
+	FString JsonDir2(const FVector& V) { return FString::Printf(TEXT("[%.4f,%.4f]"), V.X, V.Y); }
+	const TCHAR* BinName(int32 Bin) { return Bin == 0 ? TEXT("LOW") : (Bin == 1 ? TEXT("MID") : TEXT("HIGH")); }
+}
+
+FString ASWWorldManager::BuildHelloLine() const
+{
+	FString Actions;
+	for (int32 A = 0; A < SW_NUM_ACTIONS; ++A)
+	{
+		Actions += FString::Printf(TEXT("%s\"%s\""), A ? TEXT(",") : TEXT(""), SWActionName(static_cast<ESWAction>(A)));
+	}
+	const FString ModeName = SWModeName(Settings.Mode);
+	// Which species each server controls is per server; the hello is shared, so list every served species.
+	FString Controls;
+	{
+		bool bL = false, bT = false;
+		for (int32 i = 0; i < PolicyClient.NumServers(); ++i) { bL |= PolicyClient.GetServer(i).bLumen; bT |= PolicyClient.GetServer(i).bTecton; }
+		if (bL) Controls += TEXT("\"Lumen\"");
+		if (bT) Controls += FString(bL ? TEXT(",") : TEXT("")) + TEXT("\"Tecton\"");
+	}
+	return FString::Printf(TEXT("{\"type\":\"hello\",\"protocol\":1,\"actions\":[%s],\"bins\":[\"LOW\",\"MID\",\"HIGH\"],\"species\":[\"Lumen\",\"Tecton\"],")
+		TEXT("\"controls\":[%s],\"seed\":%d,\"mode\":\"%c\",\"mode_name\":%s,\"run_id\":%s,\"decision_interval\":%.3f,\"substep\":%.3f,")
+		TEXT("\"timeout_ms\":%d,\"share\":%.3f,\"world_half_size\":%.1f,\"max_energy\":{\"Lumen\":%.1f,\"Tecton\":%.1f},")
+		TEXT("\"max_age\":{\"Lumen\":%.1f,\"Tecton\":%.1f},\"learning\":\"tabular contextual bandit, gamma 0; the sim keeps updating each organism's own table with every reward\"}"),
+		*Actions, *Controls, Settings.Seed, ModeName.Len() > 0 ? ModeName[0] : TEXT('?'), *JsonStr(ModeName), *JsonStr(RunId),
+		Settings.DecisionInterval, Settings.LogicalSubstep, PolicyClient.GetTimeoutMs(), Settings.PolicyShare, Settings.WorldHalfSize,
+		LumenParams.MaxEnergy, TectonParams.MaxEnergy, LumenParams.MaxAge, TectonParams.MaxAge);
+}
+
+FString ASWWorldManager::BuildDecideLine(int32 ServerIdx, const TArray<ASWAgent*>& Due) const
+{
+	FString Out;
+	Out.Reserve(Due.Num() * 700 + 128);
+	Out.Appendf(TEXT("{\"type\":\"decide\",\"t\":%.2f,\"step\":%d,\"server\":%s,\"agents\":["), SimTime, StepCounter, *JsonStr(PolicyClient.GetServer(ServerIdx).Name));
+	for (int32 n = 0; n < Due.Num(); ++n)
+	{
+		const ASWAgent& A = *Due[n];
+		const FSWPercept& Pc = A.GetPercept();
+		const FSWGenome& G = A.GetGenome();
+		const FVector Loc = A.GetActorLocation();
+		const uint32 Mask = A.GetLastFeasibleMask();
+		if (n) Out += TEXT(",");
+		Out.Appendf(TEXT("{\"id\":%d,\"species\":\"%s\",\"generation\":%d,\"age\":%.2f,\"energy\":%.3f,\"max_energy\":%.1f,\"bin\":\"%s\",\"bin_index\":%d,\"mask\":["),
+			A.GetAgentId(), SWSpeciesName(A.GetSpecies()), A.GetGeneration(), A.GetAge(), A.GetEnergy(), A.GetParams().MaxEnergy,
+			BinName(A.GetCurrentContext()), A.GetCurrentContext());
+		for (int32 a = 0; a < SW_NUM_ACTIONS; ++a) Out.Appendf(TEXT("%s%d"), a ? TEXT(",") : TEXT(""), FSWContextualBandit::IsFeasible(Mask, static_cast<ESWAction>(a)) ? 1 : 0);
+		// Reward of the action that just ended (the server's previous choice, or the built-in's on a fallback).
+		if (A.HasLastReward())
+		{
+			Out.Appendf(TEXT("],\"last_action\":\"%s\",\"last_reward\":%.4f,\"last_bin\":\"%s\",\"last_external\":%s,\"decisions\":%d,\"q\":["),
+				SWActionName(A.GetCurrentAction()), A.GetLastReward(), BinName(A.GetLastRewardContext()), JsonBool(A.WasLastActionExternal()), A.GetDecisionCount());
+		}
+		else
+		{
+			Out.Appendf(TEXT("],\"last_action\":null,\"last_reward\":null,\"last_bin\":null,\"last_external\":false,\"decisions\":%d,\"q\":["), A.GetDecisionCount());
+		}
+		for (int32 b = 0; b < SW_NUM_ENERGY_BINS; ++b)
+		{
+			Out += b ? TEXT(",[") : TEXT("[");
+			for (int32 a = 0; a < SW_NUM_ACTIONS; ++a) Out.Appendf(TEXT("%s%.4f"), a ? TEXT(",") : TEXT(""), A.GetBandit().Value(b, static_cast<ESWAction>(a)));
+			Out += TEXT("]");
+		}
+		Out.Appendf(TEXT("],\"position\":%s,\"heading\":%.1f,\"percept\":{"), *JsonVec2(Loc), A.GetActorRotation().Yaw);
+		// Every FSWPercept field by name (plus resource direction; distances are null when nothing is in range).
+		Out.Appendf(TEXT("\"energy\":%.3f,\"max_energy\":%.1f,\"resource_known\":%s,"), Pc.Energy, Pc.MaxEnergy, JsonBool(Pc.bResourceKnown));
+		if (Pc.bResourceKnown)
+		{
+			FVector Dir = Pc.NearestResourceLoc - Loc; Dir.Z = 0.f; Dir = Dir.GetSafeNormal();
+			Out.Appendf(TEXT("\"resource_loc\":%s,\"resource_dist\":%.1f,\"resource_dir\":%s,\"resource_stock\":%.2f,"), *JsonVec2(Pc.NearestResourceLoc), Pc.NearestResourceDist, *JsonDir2(Dir), Pc.NearestResourceStock);
+		}
+		else
+		{
+			Out += TEXT("\"resource_loc\":null,\"resource_dist\":null,\"resource_dir\":null,\"resource_stock\":0,");
+		}
+		Out.Appendf(TEXT("\"same_species_in_range\":%d,\"other_species_in_range\":%d,\"neighbour_known\":%s,\"neighbour_centroid\":%s,"),
+			Pc.SameSpeciesInRange, Pc.OtherSpeciesInRange, JsonBool(Pc.bNeighbourKnown), Pc.bNeighbourKnown ? *JsonVec2(Pc.NeighbourCentroid) : TEXT("null"));
+		if (Pc.NearestAnyAgentDist < TNumericLimits<float>::Max()) Out.Appendf(TEXT("\"nearest_any_agent_dist\":%.1f,"), Pc.NearestAnyAgentDist);
+		else Out += TEXT("\"nearest_any_agent_dist\":null,");
+		const bool bSig = A.HasFreshSignal();
+		Out.Appendf(TEXT("\"signal_known\":%s,\"signal_loc\":%s,"), JsonBool(bSig), bSig ? *JsonVec2(A.GetSignalLoc()) : TEXT("null"));
+		Out.Appendf(TEXT("\"trace_x\":%.4f,\"trace_y\":%.4f,\"trace_x_gradient\":%s,\"trace_x_gradient_dir\":%s,\"on_land\":%s,\"patch_in_cell_needs_soil\":%s}"),
+			Pc.TraceX, Pc.TraceY, JsonBool(Pc.bTraceXGradient), Pc.bTraceXGradient ? *JsonDir2(Pc.TraceXGradientDir) : TEXT("null"),
+			JsonBool(Pc.bOnLand), JsonBool(Pc.bPatchInCellNeedsSoil));
+		Out.Appendf(TEXT(",\"genome\":{\"alpha\":%.4f,\"epsilon\":%.4f,\"social\":%.4f,\"e\":%.4f}}"), G.Alpha, G.Epsilon, G.Social, G.EnvEffect);
+	}
+	Out += TEXT("]}");
+	return Out;
+}
+
+void ASWWorldManager::PolicyExchange()
+{
+	const int32 NS = PolicyClient.NumServers();
+	TArray<TArray<ASWAgent*>> Due;
+	Due.SetNum(NS);
+	TArray<ASWAgent*> Unserved;
+	for (ASWAgent* A : Agents)
+	{
+		if (!IsValid(A) || !A->IsDecisionDue()) continue;
+		const int32 Idx = A->GetPolicyServer();
+		if (Idx >= 0 && Idx < NS) Due[Idx].Add(A); else Unserved.Add(A);
+	}
+	for (ASWAgent* A : Unserved)
+	{
+		A->ResolveDecision(nullptr);
+		ExtFallbacks[static_cast<int32>(A->GetSpecies())]++;
+	}
+
+	TArray<FString> Lines;
+	Lines.SetNum(NS);
+	bool bAny = false;
+	for (int32 i = 0; i < NS; ++i)
+	{
+		if (Due[i].Num() == 0 || !PolicyClient.GetServer(i).bConnected) continue;
+		Lines[i] = BuildDecideLine(i, Due[i]);
+		bAny = true;
+	}
+	TArray<TMap<int32, int32>> Actions;
+	if (bAny) PolicyClient.Exchange(StepCounter, Lines, Actions);
+
+	// Resolve in the same order every time (server, then agent order): deterministic given the replies.
+	for (int32 i = 0; i < NS; ++i)
+	{
+		for (ASWAgent* A : Due[i])
+		{
+			const int32* Idx = Actions.IsValidIndex(i) ? Actions[i].Find(A->GetAgentId()) : nullptr;
+			ESWAction Ext = ESWAction::Rest;
+			const ESWAction* Ptr = nullptr;
+			if (Idx && *Idx >= 0 && *Idx < SW_NUM_ACTIONS) { Ext = static_cast<ESWAction>(*Idx); Ptr = &Ext; }
+			const bool bUsedExternal = A->ResolveDecision(Ptr);
+			(bUsedExternal ? ExtDecisions : ExtFallbacks)[static_cast<int32>(A->GetSpecies())]++;
+		}
 	}
 }

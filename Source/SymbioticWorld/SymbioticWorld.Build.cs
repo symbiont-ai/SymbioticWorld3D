@@ -16,7 +16,9 @@ public class SymbioticWorld : ModuleRules
 			"AssetRegistry",
 			"Json",
 			"JsonUtilities",
-			"Niagara"
+			"Niagara",
+			"Sockets",
+			"Networking"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

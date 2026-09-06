@@ -28,12 +28,12 @@ void FSWRunLogger::Open(const FString& InRunId, int32 InSeed, ESWLearningMode In
 			AgentHeader += FString::Printf(TEXT(",Q_%s_%s"), BinNames[B], SWActionName(static_cast<ESWAction>(A)));
 		}
 	}
-	AgentHeader += TEXT(",births,deaths,pop_lumen,pop_tecton,resource_A,resource_B\n");
+	AgentHeader += TEXT(",births,deaths,pop_lumen,pop_tecton,resource_A,resource_B,policy\n");
 	FFileHelper::SaveStringToFile(AgentHeader, *AgentsPath, FFileHelper::EEncodingOptions::ForceAnsi);
 
 	FFileHelper::SaveStringToFile(TEXT("run_id,sim_time,parent_id,child_id,species,child_generation,child_alpha,child_epsilon,child_social,child_env_effect,parent_alpha,parent_epsilon,parent_social,parent_env_effect,parent_age,parent_energy\n"), *BirthsPath, FFileHelper::EEncodingOptions::ForceAnsi);
 	FFileHelper::SaveStringToFile(TEXT("run_id,sim_time,agent_id,species,generation,age,energy,cause,alpha,epsilon,social,env_effect,decisions\n"), *DeathsPath, FFileHelper::EEncodingOptions::ForceAnsi);
-	FFileHelper::SaveStringToFile(TEXT("run_id,seed,mode,sim_time,species,n,mean_alpha,sd_alpha,mean_epsilon,sd_epsilon,mean_social,sd_social,mean_env_effect,sd_env_effect,mean_generation,max_generation,births,deaths,resource_A,resource_B,drought_state,trace_X_mean,trace_Y_mean\n"), *PopulationPath, FFileHelper::EEncodingOptions::ForceAnsi);
+	FFileHelper::SaveStringToFile(TEXT("run_id,seed,mode,sim_time,species,n,mean_alpha,sd_alpha,mean_epsilon,sd_epsilon,mean_social,sd_social,mean_env_effect,sd_env_effect,mean_generation,max_generation,births,deaths,resource_A,resource_B,drought_state,trace_X_mean,trace_Y_mean,ext_decisions,ext_fallbacks\n"), *PopulationPath, FFileHelper::EEncodingOptions::ForceAnsi);
 
 	bOpen = true;
 	UE_LOG(LogSymbioticWorld, Log, TEXT("Run log opened: %s"), *Directory);
@@ -48,7 +48,7 @@ void FSWRunLogger::Close()
 
 void FSWRunLogger::LogAgent(const ASWAgent& A, float SimTime, bool bDrought,
                             int32 Births, int32 Deaths, int32 PopLumen, int32 PopTecton,
-                            float ResourceA, float ResourceB)
+                            float ResourceA, float ResourceB, const FString& Policy)
 {
 	if (!bOpen) return;
 	const FSWGenome& G = A.GetGenome();
@@ -65,7 +65,7 @@ void FSWRunLogger::LogAgent(const ASWAgent& A, float SimTime, bool bDrought,
 			Row += FString::Printf(TEXT(",%.4f"), A.GetBandit().Value(B, static_cast<ESWAction>(Act)));
 		}
 	}
-	Row += FString::Printf(TEXT(",%d,%d,%d,%d,%.1f,%.1f\n"), Births, Deaths, PopLumen, PopTecton, ResourceA, ResourceB);
+	Row += FString::Printf(TEXT(",%d,%d,%d,%d,%.1f,%.1f,%s\n"), Births, Deaths, PopLumen, PopTecton, ResourceA, ResourceB, *Policy);
 	AgentsBuf.Add(MoveTemp(Row));
 	if (AgentsBuf.Num() >= 2000) Append(AgentsPath, AgentsBuf);
 }
@@ -95,13 +95,13 @@ void FSWRunLogger::LogPopulation(float SimTime, ESWSpecies Species, int32 N,
                                  float MeanAlpha, float SdAlpha, float MeanEps, float SdEps,
                                  float MeanSocial, float SdSocial, float MeanEnv, float SdEnv, float MeanGen, int32 MaxGen,
                                  int32 Births, int32 Deaths, float ResourceA, float ResourceB, bool bDrought,
-                                 float TraceXMean, float TraceYMean)
+                                 float TraceXMean, float TraceYMean, int32 ExtDecisions, int32 ExtFallbacks)
 {
 	if (!bOpen) return;
-	PopulationBuf.Add(FString::Printf(TEXT("%s,%d,%s,%.2f,%s,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%d,%d,%d,%.1f,%.1f,%d,%.4f,%.4f\n"),
+	PopulationBuf.Add(FString::Printf(TEXT("%s,%d,%s,%.2f,%s,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%d,%d,%d,%.1f,%.1f,%d,%.4f,%.4f,%d,%d\n"),
 		*RunId, Seed, SWModeName(Mode), SimTime, SWSpeciesName(Species), N,
 		MeanAlpha, SdAlpha, MeanEps, SdEps, MeanSocial, SdSocial, MeanEnv, SdEnv, MeanGen, MaxGen,
-		Births, Deaths, ResourceA, ResourceB, bDrought ? 1 : 0, TraceXMean, TraceYMean));
+		Births, Deaths, ResourceA, ResourceB, bDrought ? 1 : 0, TraceXMean, TraceYMean, ExtDecisions, ExtFallbacks));
 	if (PopulationBuf.Num() >= 100) Append(PopulationPath, PopulationBuf);
 }
 

@@ -80,6 +80,26 @@ public:
 	// Q at the START of life, kept for the inspector ("initial vs now").
 	const FSWContextualBandit& GetInitialBandit() const { return InitialBandit; }
 
+	// ---- External policy (docs/POLICY_API.md) ----
+	// An organism assigned to a policy server still senses, gates and learns exactly like the others;
+	// only the choice among feasible actions comes from the server. -1 = the built-in bandit chooses.
+	void SetPolicyServer(int32 ServerIdx) { PolicyServer = ServerIdx; }
+	int32 GetPolicyServer() const { return PolicyServer; }
+	bool IsExternal() const { return PolicyServer >= 0; }
+	// True after Decide() prepared a decision (percept, context, mask) that waits for the manager's
+	// exchange with the server. Built-in organisms never set this.
+	bool IsDecisionDue() const { return bAlive && bAwaitingExternal; }
+	// Finishes a prepared decision. ExternalAction = the server's choice (nullptr = none arrived);
+	// an infeasible or missing action makes the built-in bandit choose. Returns true if the
+	// external action was used.
+	bool ResolveDecision(const ESWAction* ExternalAction);
+	const FSWPercept& GetPercept() const { return Percept; }
+	bool HasLastReward() const { return bLastRewardValid; }          // LastReward was credited at the last Decide()
+	int32 GetLastRewardContext() const { return LastRewardContext; } // energy bin the credited action was chosen in
+	bool WasLastActionExternal() const { return bLastActionExternal; }
+	bool HasFreshSignal() const;
+	const FVector& GetSignalLoc() const { return SignalLoc; }
+
 protected:
 	UPROPERTY(VisibleAnywhere) UStaticMeshComponent* Mesh;        // invisible pick sphere (root)
 	UPROPERTY(VisibleAnywhere) UProceduralMeshComponent* Body;    // visible organism
@@ -140,7 +160,16 @@ protected:
 
 	bool bSelected = false;
 
+	// External policy state (see SetPolicyServer)
+	int32 PolicyServer = -1;
+	bool bAwaitingExternal = false;
+	bool bLastActionExternal = false;
+	bool bLastRewardValid = false;
+	int32 LastRewardContext = 0;
+
 	void Decide();
+	// Sense + gate: fills Percept, CurrentContext and LastFeasibleMask. No randomness.
+	void PrepareDecision();
 	uint32 BuildFeasibleMask() const;
 	void ApplyAction(float Dt);
 	void MoveToward(const FVector& Target, float Dt);

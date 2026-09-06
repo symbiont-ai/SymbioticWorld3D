@@ -37,7 +37,7 @@ Build (never while a UnrealEditor process is running: the DLL is locked; check
 with `tasklist | findstr UnrealEditor` and wait or ask):
 
 ```
-"C:/Program Files/Epic Games/UE_5.7/Engine/Build/BatchFiles/Build.bat" SymbioticWorldEditor Win64 Development -Project="<repo>/SymbioticWorld.uproject" -WaitMutex -NoHotReload
+Tools/build.bat   (refuses while any UnrealEditor process runs; never call Build.bat directly)
 ```
 
 Headless smoke run + analysis (Python is `python`):

@@ -10,6 +10,7 @@ Examples
   python Tools/run_sim.py --mode B --seed 7 --duration 300 --windowed # watch it
   python Tools/run_sim.py --mode C --seed 1 --duration 600 --set "Settings.PatchRegenPerSec=5;Lumen.ReproThreshold=85"
   python Tools/run_sim.py --mode C --seed 1 --duration 45 --speed 1 --windowed --shot 4,40 --no-logs
+  python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --policy "10.228.152.5:9000=Lumen"   # a collaborator's Python agents drive the Lumen
 
 Each run writes Saved/SymbioticWorld/<run_id>/ and the script prints the
 directory when the process exits. -SWDuration makes the sim quit itself.
@@ -28,7 +29,8 @@ EDITOR = ENGINE / "Engine/Binaries/Win64/UnrealEditor.exe"
 SAVED = ROOT / "Saved/SymbioticWorld"
 
 
-def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=None, no_logs=False, auto_select=False, cam=None, offscreen=False):
+def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=None, no_logs=False, auto_select=False, cam=None, offscreen=False, stream=None,
+            policy=None, policy_timeout=None, policy_share=None):
     before = {p.name for p in SAVED.iterdir()} if SAVED.exists() else set()
     exe = EDITOR if windowed else EDITOR_CMD
     cmd = [str(exe), str(UPROJECT), "-game", "-log", "-unattended", "-nosound",
@@ -39,6 +41,9 @@ def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=N
         cmd += ["-windowed", "-ResX=1600", "-ResY=900"]
         if offscreen:
             cmd.append("-RenderOffScreen")   # no window: nothing steals the keyboard, screenshots still land
+        if stream:
+            # Pixel Streaming 2: the sim connects to the signalling server as the streamer; viewers open its player page in a browser.
+            cmd += [f"-PixelStreamingURL={stream}", "-PixelStreamingID=SymbioticWorld"]
     if set_spec:
         cmd.append(f"-SWSet={set_spec}")
     if shots:
@@ -50,6 +55,16 @@ def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=N
         cmd.append("-SWAutoSelect=1")
     if cam:
         cmd.append(f"-SWCam={str(cam).replace(',', ':')}")
+    if policy:
+        # External policy servers (docs/POLICY_API.md): "host:port=Lumen|host:port=Tecton|host:port=Both".
+        # ',' and ';' are not allowed (UE stops parsing at ',' and -SWSet owns ';').
+        if "," in policy or ";" in policy:
+            sys.exit("--policy: use '|' between servers and '=' before the species; ',' and ';' are not allowed")
+        cmd.append(f"-SWPolicy={policy}")
+    if policy_timeout is not None:
+        cmd.append(f"-SWPolicyTimeoutMs={int(policy_timeout)}")
+    if policy_share is not None:
+        cmd.append(f"-SWPolicyShare={policy_share}")
     cmd += extra
     t0 = time.time()
     print(">>", " ".join(cmd), flush=True)
@@ -76,6 +91,12 @@ def main():
     ap.add_argument("--auto-select", action="store_true", help="auto-select the youngest Lumen so screenshots show the inspector")
     ap.add_argument("--cam", default=None, help="start camera x,y,z,pitch,yaw (e.g. -3000,900,420,-8,10)")
     ap.add_argument("--offscreen", action="store_true", help="windowed run without a visible window (-RenderOffScreen); use for scripted screenshots")
+    ap.add_argument("--stream", nargs="?", const="ws://127.0.0.1:8888", default=None, metavar="WS_URL",
+                    help="Pixel Streaming: connect to a signalling server (default ws://127.0.0.1:8888, start it with Tools/start_stream_server.bat) so LAN browsers can watch and drive the sim")
+    ap.add_argument("--policy", default=None, metavar="SPEC",
+                    help='external policy servers, e.g. "10.0.0.5:9000=Lumen|10.0.0.7:9000=Tecton" (Species: Lumen, Tecton, Both); see docs/POLICY_API.md')
+    ap.add_argument("--policy-timeout", type=int, default=None, metavar="MS", help="ms to wait for a server's reply per substep (default 200); on timeout the built-in bandit decides")
+    ap.add_argument("--policy-share", type=float, default=None, metavar="FRAC", help="fraction of a served species assigned to its server, decided per organism at birth (default 1.0)")
     ap.add_argument("extra", nargs="*", help="extra engine args (put them after --)")
     args = ap.parse_args()
 
@@ -85,7 +106,8 @@ def main():
     for m in args.mode:
         for s in args.seed:
             produced += run_one(m.upper(), s, args.duration, args.speed, args.windowed, args.extra,
-                                args.set_spec, args.shot, args.no_logs, args.auto_select, args.cam, args.offscreen)
+                                args.set_spec, args.shot, args.no_logs, args.auto_select, args.cam, args.offscreen, args.stream,
+                                args.policy, args.policy_timeout, args.policy_share)
     if args.analyze and produced:
         subprocess.run([sys.executable, str(ROOT / "Analysis/analyze_run.py"), *map(str, produced)], cwd=str(ROOT))
 

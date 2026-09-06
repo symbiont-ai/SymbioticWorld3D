@@ -6,7 +6,7 @@ Read `README.md` (build/run), `DESIGN.md` (exact mechanism definitions),
 
 ## Commands (repo root)
 
-- Build: `"C:/Program Files/Epic Games/UE_5.7/Engine/Build/BatchFiles/Build.bat" SymbioticWorldEditor Win64 Development -Project="<repo>/SymbioticWorld.uproject" -WaitMutex -NoHotReload`
+- Build: `Tools/build.bat` (wraps Build.bat for SymbioticWorldEditor Win64 Development and REFUSES to run while any UnrealEditor / UnrealEditor-Cmd process exists; never call Build.bat directly)
 - Python: `python` (has pandas/matplotlib/scipy)
 - Headless run: `python Tools/run_sim.py --mode C --seed 1 --duration 600 --analyze`
 - Sweep without recompile: `--set "Settings.PatchRegenPerSec=5;Lumen.ReproThreshold=85"`
@@ -17,7 +17,7 @@ Read `README.md` (build/run), `DESIGN.md` (exact mechanism definitions),
 
 ## Hard rules
 
-- **Do not build while any UnrealEditor / UnrealEditor-Cmd process is running.** The module DLL is locked and the link fails. `tasklist | findstr UnrealEditor` first.
+- **Do not build while any UnrealEditor / UnrealEditor-Cmd process is running.** The module DLL is locked, the link fails, and replacing the DLL under a live session crashes it (it killed the Pixel Streaming demo once). `Tools/build.bat` enforces this; agents must use it.
 - All sim logic is C++ (`Source/SymbioticWorld`). No Blueprint logic.
 - Shared contract = `SWTypes.h` + `DESIGN.md`. Consume it; never redefine it.
 - Terminology: tabular contextual bandit (γ = 0), not Q-learning. Evolution = Gaussian mutation of {α, ε, social}. Never write "intelligence", "emergent", "cooperation" into user-facing strings.

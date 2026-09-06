@@ -121,7 +121,7 @@ void ASWHUD::DrawHUD()
 		{
 			DrawSelectionMarker(*Sel);
 			DrawInspector(*M, *Sel, RX, RY, RightW);
-			RY += 388.f + 10.f;
+			RY += 403.f + 10.f;
 		}
 	}
 	else
@@ -153,8 +153,14 @@ void ASWHUD::DrawTitle(const ASWWorldManager& M)
 	DrawPanel(20.f, 14.f, 330.f, 70.f, ColPanel, &ColLumen, 28.f);
 	float Y = DrawLine(30.f, 20.f, TEXT("SYMBIOTIC WORLD"), ColText, 1.45f);
 	Y = DrawLine(30.f, Y - 2.f, TEXT("Evolution doesn't stop at deployment."), ColDim);
-	DrawLine(30.f, Y + 2.f, FString::Printf(TEXT("mode %s   seed %d   t %.0f s   %.0fx   %.1f ms"),
-		SWModeName(S.Mode), S.Seed, M.GetSimTime(), M.GetTimeScale(), M.GetLastStepMs()), ColDim);
+	FString Line = FString::Printf(TEXT("mode %s   seed %d   t %.0f s   %.0fx   %.1f ms"),
+		SWModeName(S.Mode), S.Seed, M.GetSimTime(), M.GetTimeScale(), M.GetLastStepMs());
+	if (M.HasPolicyServers())
+	{
+		// external organisms / total (docs/POLICY_API.md); the servers' connection state is in the log
+		Line += FString::Printf(TEXT("   ext %d/%d"), M.GetExternalCount(), M.GetLivingCount());
+	}
+	DrawLine(30.f, Y + 2.f, Line, ColDim);
 }
 
 void ASWHUD::DrawStatCards(const ASWWorldManager& M)
@@ -339,7 +345,7 @@ void ASWHUD::DrawInspector(const ASWWorldManager& M, const ASWAgent& A, float X,
 	const FSWContextualBandit& B = A.GetBandit();
 	const FSWContextualBandit& B0 = A.GetInitialBandit();
 
-	DrawPanel(X, Y, W, 388.f, ColPanel, &C, 28.f);
+	DrawPanel(X, Y, W, 403.f, ColPanel, &C, 28.f);
 	float y = Y + 8.f;
 	const float x = X + 10.f;
 	y = DrawLine(x, y, FString::Printf(TEXT("%s  %s"), SWSpeciesName(A.GetSpecies()), *A.GetLabel()), C, 1.25f);
@@ -353,6 +359,12 @@ void ASWHUD::DrawInspector(const ASWWorldManager& M, const ASWAgent& A, float X,
 	y = DrawLine(x, y, FString::Printf(TEXT("action %s%s   last reward %+.3f   trace X %.2f  Y %.2f"),
 		SWActionName(A.GetCurrentAction()), A.WasLastExplored() ? TEXT(" (explore)") : TEXT(""), A.GetLastReward(),
 		A.GetLocalTraceX(), A.GetLocalTraceY()), ColText);
+	// Who chooses among the feasible actions: this organism's own bandit, or an external policy server.
+	{
+		const int32 PS = A.GetPolicyServer();
+		const bool bExt = PS >= 0 && PS < M.GetPolicyClient().NumServers();
+		y = DrawLine(x, y, bExt ? FString::Printf(TEXT("policy: external %s"), *M.GetPolicyClient().GetServer(PS).Name) : FString(TEXT("policy: builtin")), bExt ? C : ColDim);
+	}
 
 	y += 8.f;
 	y = DrawLine(x, y, TEXT("INHERITED  (fixed for this lifetime)"), ColDim);

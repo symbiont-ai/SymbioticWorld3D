@@ -18,9 +18,10 @@ public:
 	void Close();
 	bool IsOpen() const { return bOpen; }
 
+	// Policy = "builtin" or "ext:host:port" (the external policy server that chooses this organism's actions).
 	void LogAgent(const ASWAgent& A, float SimTime, bool bDrought,
 	              int32 Births, int32 Deaths, int32 PopLumen, int32 PopTecton,
-	              float ResourceA, float ResourceB);
+	              float ResourceA, float ResourceB, const FString& Policy);
 
 	void LogBirth(float SimTime, const ASWAgent& Parent, const ASWAgent& Child);
 	void LogDeath(float SimTime, const ASWAgent& A, const TCHAR* Cause);
@@ -29,7 +30,7 @@ public:
 	                   float MeanAlpha, float SdAlpha, float MeanEps, float SdEps,
 	                   float MeanSocial, float SdSocial, float MeanEnv, float SdEnv, float MeanGen, int32 MaxGen,
 	                   int32 Births, int32 Deaths, float ResourceA, float ResourceB, bool bDrought,
-	                   float TraceXMean, float TraceYMean);
+	                   float TraceXMean, float TraceYMean, int32 ExtDecisions, int32 ExtFallbacks);
 
 	void Flush();
 

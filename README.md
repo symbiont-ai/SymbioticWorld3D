@@ -73,7 +73,12 @@ screenshot itself (closed-loop visual check without a human at the keyboard).
 
 Each run writes `Saved/SymbioticWorld/<run_id>/{agents,births,deaths,population}.csv`
 (Appendix A fields plus mode, energy bin, explore flag and the full 3×7 Q
-table) and quits itself at `--duration` logical seconds. `analyze_run.py`
+table) and quits itself at `--duration` logical seconds. Since 2026-09-06
+`agents.csv` ends with a `policy` column (`builtin`, or `ext:host:port` when an
+external policy server chooses that organism's actions) and `population.csv`
+ends with `ext_decisions,ext_fallbacks` (cumulative per species: decisions taken
+from a server / server-assigned decisions the built-in bandit had to make). Both
+are constant (`builtin`, `0,0`) in runs without `--policy`. `analyze_run.py`
 prints lifetime Q drift per agent, parent/child genome correlation,
 per-generation means, and a Welch test of C vs N end-of-run mean α, plus a
 summary PNG per run.
@@ -88,6 +93,8 @@ Command-line flags understood by the sim (all optional):
 -SWCam=x:y:z:pitch:yaw  # start camera for scripted shots (run_sim: --cam=x,y,z,pitch,yaw)
 -RenderOffScreen        # run_sim: --offscreen; renders and screenshots without a visible window,
                         # so a scripted render never captures your keystrokes (M/P/1-3 would change the run)
+-SWPolicy="host:port=Lumen|host:port=Tecton"   # external policy servers (run_sim: --policy); '|' and '=' only, no ',' or ';'
+-SWPolicyTimeoutMs=200  -SWPolicyShare=1.0     # run_sim: --policy-timeout / --policy-share; see docs/POLICY_API.md
 ```
 
 `-SWSet` reaches any numeric/bool/colour/string field of `FSWRunSettings` (scope `Settings`),
@@ -112,6 +119,56 @@ arches, and `M_SW_Scan`, which the environment binds at spawn to every Electric 
 scan mesh from its own Albedo/Normal/DR textures). Delete a `.uasset` and re-run the
 generator to rebuild it; then grep `Saved/Logs/SymbioticWorld.log` for
 `Failed to compile Material`, which is how a bad sampler type shows up.
+
+## Bring your own agent (Python, any OS)
+
+Collaborators on the same wifi write their own agents in Python and have them
+control organisms inside the one world running on the Windows host. No Unreal, no
+pip installs: `Tools/policy_server.py` is standard library only (Python 3.9+, runs on
+macOS). The sim connects to *their* machine, sends each organism's percept, feasibility
+mask and its own bandit table once per decision, and acts on the reply; anything late
+or infeasible falls back to the organism's built-in bandit and is counted. Protocol,
+field list and fallback rules: `docs/POLICY_API.md`.
+
+On the Mac (4 commands, nothing to install):
+
+```bash
+git clone <this repo> && cd Symbiotic_Word_3D          # or just copy Tools/policy_server.py
+python3 Tools/policy_server.py --agent my --port 9000   # edit MyAgent.act() in that file; --agent random|bandit are the references
+python3 Tools/policy_client_check.py --port 9000        # optional self-test from a second terminal
+ipconfig getifaddr en0                                  # tell the host this IP
+```
+
+On the host:
+
+```bash
+python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --windowed --policy "10.228.152.5:9000=Lumen|10.228.152.7:9000=Tecton"
+```
+
+Species per server: `Lumen`, `Tecton` or `Both`; several servers share one world. The
+HUD title shows `ext N/M` (externally driven organisms / total), the inspector shows
+`policy: external host:port`, and the UE log prints connect / hello / timeout lines
+once per state change plus a round-trip summary every 10 s. Allow `UnrealEditor.exe`
+through Windows Firewall on private networks if the host cannot reach a Mac.
+
+## Watching and driving the sim from other computers (Pixel Streaming)
+
+The sim runs once, on the Windows machine; anyone on the same network watches and
+controls it from a browser (Chrome or Safari, including Macs). One-time setup:
+fetch Epic's signalling server with the engine's script
+`Engine/Plugins/Media/PixelStreaming2/Resources/WebServers/get_ps_servers.bat`
+(the `PixelStreaming2` plugin is enabled in the `.uproject`). Then, in two terminals:
+
+```bash
+Tools\start_stream_server.bat
+python Tools/run_sim.py --mode C --seed 1 --windowed --speed 1 --duration 36000 --stream
+```
+
+Viewers open `http://<host LAN IP>/` and click to start. Mouse and keyboard from the
+browser reach the sim (select, follow, drought, speed, camera), so agree on one driver at a
+time. Allow `node.exe` on private networks when Windows Firewall asks. The stream is
+encoded on the host GPU (NVENC on NVIDIA); hackathon wifi that isolates clients from each
+other blocks it, in which case fall back to screen sharing.
 
 ## What is verified (2026-09-05)
 
@@ -138,13 +195,15 @@ Source/SymbioticWorld/
   SWResourcePatch.*  logistic-regrowth resource patches (A = Lumen, B = Tecton)
   SWWorldManager.*   seeded RNG, fixed logical step, reproduction, modes, stats
   SWLogger.*         CSV run logs
+  SWPolicyClient.*   TCP client for external policy servers (docs/POLICY_API.md)
   SWGameMode.*       runtime environment + manager spawn
   SWCameraPawn.*     observer camera
   SWPlayerController.* key bindings
   SWHUD.*            canvas HUD: global stats, meta-parameter strip, inspector
 Config/              legacy input mappings, renderer settings (Lumen GI, VSM, TSR)
 Content/Maps/Valley  empty startup level
-Tools/               run_sim.py (launcher), sweep.py (parameter sweeps), make_valley_map.py
+Tools/               run_sim.py (launcher), sweep.py (parameter sweeps), make_valley_map.py,
+                     policy_server.py (reference agents: random / bandit / MyAgent stub), policy_client_check.py
 .claude/             agents/implementer.md, agents/tester.md, skills/phase (Manager Loop)
 Analysis/            analyze_run.py
 ```

@@ -445,6 +445,15 @@ struct FSWRunSettings
 	// is useful (Lumen: a stocked resource in range; Tecton: a patch below half stock in the cell). This is a
 	// documented bias that lets a gamma = 0 learner credit an action whose benefit arrives later. 0 disables it.
 	UPROPERTY(EditAnywhere) float WeightInteraction = 0.10f;
+
+	// ---- External policy servers (docs/POLICY_API.md) ----
+	// "host:port=Lumen|host:port=Tecton|host:port=Both". Organisms of a served species send their
+	// decision (percept, feasibility mask, own Q table as a hint) to that server over newline JSON
+	// and act on the reply; the built-in bandit still receives every reward. Empty = all built-in.
+	// Also settable as -SWPolicy=... ; ',' and ';' are not allowed in the value (command-line parsing).
+	UPROPERTY(EditAnywhere) FString PolicyServers;
+	UPROPERTY(EditAnywhere) int32 PolicyTimeoutMs = 200;    // per-substep wait for a reply; on timeout the built-in bandit decides
+	UPROPERTY(EditAnywhere) float PolicyShare = 1.0f;       // fraction of a served species assigned to the server, decided per organism at birth (seeded stream)
 };
 
 // Snapshot of what one agent can perceive when it decides. Filled by the
