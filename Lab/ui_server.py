@@ -11,6 +11,7 @@ a session or the sim machine is writing to the same database.
 """
 import json
 import os
+import re
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -47,6 +48,11 @@ def snapshot(db_path):
             out["generation"] = int(row["value"]) if row else 0
         except sqlite3.OperationalError:
             out["generation"] = 0
+        try:
+            row = con.execute("SELECT value FROM lab_meta WHERE key='live_collect'").fetchone()
+            out["live_collect"] = row["value"] if row else "on"
+        except sqlite3.OperationalError:
+            out["live_collect"] = "on"
     finally:
         con.close()
     out["figs"] = sorted(p.name for p in FIG_DIR.glob("*.png")) if FIG_DIR.exists() else []
@@ -88,6 +94,39 @@ def make_handler(db_path):
                     self._send(404, b"not found", "text/plain")
             else:
                 self._send(404, b"not found", "text/plain")
+
+        def do_POST(self):
+            # The only writes this server makes: the live-collection switch and
+            # the uncited-live-evidence reset (dashboard World-tab controls).
+            from . import db as labdb
+            path = urlparse(self.path).path
+            if path not in ("/api/live/play", "/api/live/pause", "/api/live/reset"):
+                self._send(404, b"not found", "text/plain")
+                return
+            con = labdb.connect(db_path)
+            try:
+                if path.endswith("/reset"):
+                    # Evidence already cited by a hypothesis or stance is part
+                    # of the scientific record and survives the reset.
+                    cited = {r[0] for r in con.execute(
+                        "SELECT evidence_id FROM hypothesis_evidence")}
+                    for (txt,) in con.execute(
+                            "SELECT evidence_ids FROM stances WHERE evidence_ids != ''"):
+                        cited.update(t for t in re.split(r"[^A-Za-z0-9:_.\-]+", txt or "") if t)
+                    rows = [r[0] for r in con.execute(
+                        "SELECT id FROM evidence WHERE stat LIKE 'live_%'")]
+                    doomed = [i for i in rows if i not in cited]
+                    con.executemany("DELETE FROM evidence WHERE id=?",
+                                    [(i,) for i in doomed])
+                    out = {"deleted": len(doomed), "kept": len(rows) - len(doomed)}
+                else:
+                    state = "on" if path.endswith("/play") else "off"
+                    labdb.set_meta(con, "live_collect", state)
+                    out = {"live_collect": state}
+                con.commit()
+            finally:
+                con.close()
+            self._send(200, json.dumps(out).encode(), "application/json")
 
     return Handler
 

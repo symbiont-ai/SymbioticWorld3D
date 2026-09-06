@@ -88,7 +88,12 @@ const st = s => `<span class="status ${esc(s)}">${esc(s)}</span>`;
 const J = s => { try { return JSON.parse(s); } catch { return null; } };
 
 function nav(){
-  document.getElementById("nav").innerHTML = TABS.map(t =>
+  // Conservation appears only once the scientists actually open a rescue
+  // program — until then it reads as a confusing twin of "Conversation".
+  const tabs = TABS.filter(t =>
+    t !== "Conservation" || (S && S.programs && S.programs.length));
+  if (tab === "Conservation" && !tabs.includes("Conservation")) tab = "World";
+  document.getElementById("nav").innerHTML = tabs.map(t =>
     `<button class="${t===tab?"on":""}" onclick="tab='${t}';render()">${t}</button>`).join("");
 }
 
@@ -140,13 +145,30 @@ function streamUrl(){
       || `http://${location.hostname}/?AFKDetection=false&HoveringMouse=true`;
 }
 
+async function liveCtl(a){
+  if (a === "reset" && !confirm(
+      "Delete all live evidence windows not yet cited by a hypothesis or stance?")) return;
+  const r = await fetch("/api/live/" + a, {method: "POST"});
+  const j = await r.json();
+  if (a === "reset") alert(`cleared ${j.deleted} uncited live rows (kept ${j.kept} cited)`);
+  await tick();
+}
+
 function worldSide(){
   const m = S.meetings[S.meetings.length - 1];
   const live = (S.evidence || []).filter(e => e.stat.startsWith("live_")).slice(0, 10);
   const fig = S.figs[S.figs.length - 1];
   const exps = [...S.experiments].reverse().slice(0, 3);
+  const paused = S.live_collect === "off";
+  const btn = `style="cursor:pointer;background:none;border:1px solid var(--cyan);
+    color:var(--cyan);border-radius:4px;font:inherit;font-size:11px;padding:1px 7px;margin-left:4px"`;
   return `
-    <div class="card"><h3>Live telemetry <span class="dim">(policy bridge)</span></h3>
+    <div class="card"><h3>Live telemetry <span class="dim">(policy bridge)</span>
+      <span style="float:right">
+        <button ${btn} onclick="liveCtl('${paused ? "play" : "pause"}')">${paused ? "▶ collect" : "⏸ pause"}</button>
+        <button ${btn} onclick="liveCtl('reset')">↺ reset</button></span></h3>
+      ${paused ? `<div class="dim" style="margin-bottom:4px">collection paused —
+        live windows are discarded until ▶ collect</div>` : ""}
       ${live.length ? live.map(e => `<div class="tick"><b>${esc(e.id)}</b>
           ${esc(e.stat.replace("live_",""))} = ${(+e.value).toFixed(3)}</div>`).join("")
         : `<span class="dim">not attached — run <b>python -m Lab.lab observe</b> and launch the

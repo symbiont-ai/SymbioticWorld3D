@@ -195,6 +195,12 @@ class ObserverHandler(socketserver.StreamRequestHandler):
             pass   # peer gone (run over); the final window flush still lands in the DB
 
     def _flush(self, con, run_id, window):
+        # Dashboard collection switch (lab_meta.live_collect): while "off" the
+        # bridge stays connected and replies instantly, but windows are
+        # discarded instead of minted as evidence.
+        if db.get_meta(con, "live_collect", "on") == "off":
+            print(f"[observe] window {window.index}: collection paused — discarded")
+            return
         t0, t1 = window.index * WINDOW_S, (window.index + 1) * WINDOW_S
         stats = window.stats(run_id, t0, t1)
         if not stats:
