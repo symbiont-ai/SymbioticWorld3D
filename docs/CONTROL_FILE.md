@@ -93,7 +93,9 @@ its parent, so this is the whole population's genome after the reset).
 
 **`Look.*`:** live: `bLumenTrails`, `TrailSampleInterval`, `TrailSamples`, `CreatureGlow`,
 `SignalGlowBoost`, `LumenGlow`, `TectonGlow`, `DroughtBlendSeconds`, `bDroughtPreview`,
-`DroughtWaterDrop`. Applied at the next drought transition (the environment re-applies its drought blend
+`DroughtWaterDrop`, `bScientistAvatars` (0 removes the field-team avatars on the next frame; 1 shows them
+only while a policy server is sending `scientists` reports, docs/POLICY_API.md §5). Applied at the next
+drought transition (the environment re-applies its drought blend
 only while the blend moves; `drought=toggle` twice forces it): `SunColor`, `SunTemperature`, `SunPitch`,
 `SunYaw`, `MieScale`, `FogColor`, `FogDensity`, `VolumetricFogAlbedo`, `FogDirectionalColor`,
 `WaterLevel`, `WaterfallGlow`, `WhiteTemp`, `HighlightTint`, `Saturation` and their `Drought*`

@@ -119,7 +119,9 @@ sim-side additions before the lab can use them.
 
 ## Honest notes
 
-- Drought is a runtime toggle in the UE sim (no CLI trigger), so drought
+- The sim has no launch-time drought flag (the live control file and the experiment
+  service can toggle it mid-run with `drought=on`, but the runner's protocol has no
+  slot for a timed command yet), so drought
   experiments are designed as regen-rate interventions
   (`Settings.PatchRegenPerSec=1.8` ≈ 0.3× of the regen-6 baseline), which is
   the regen half of what drought does. The capacity half needs a `-SWDrought`
@@ -141,8 +143,12 @@ lab uses the same split: run the lab (and Ollama) on your machine, keep the
 DB/textbook local, and either execute experiments there when the engine is
 present or hand the report's printed `run_sim.py` commands to the sim host and
 `python -m Lab.lab run-queued` after the CSVs land. The scientists deliberately
-do NOT drive organisms through the policy bridge (PRD non-goal: no controlling
-individual creatures) — but a scripted policy served from `policy_server.py`
+do NOT drive organisms through the policy bridge by default (PRD non-goal: no
+controlling individual creatures): plain `observe` answers every `decide` with
+empty `actions`. `observe --manage` is an opt-in intervention mode in which bound
+organisms follow the lab's floor/target doctrine (`population_manager.py`);
+evidence gathered in managed windows must never back a learning or selection
+claim. Likewise a scripted policy served from `policy_server.py`
 is a legitimate future *intervention arm* for experiments ("does a
 forage-greedy Lumen policy change the selection gradient on alpha?").
 
@@ -156,8 +162,9 @@ forage-greedy Lumen policy change the selection gradient on alpha?").
   the sim (no avatar rendering), complete information for the scientists.
 - **Embodied field team** — add `--embody`. The eight researchers walk the
   arena as virtual bodies with a sense radius; each observer can present
-  only what they personally witnessed, and the sim can render them as
-  mannequins (V key / `Look.bScientistAvatars`, off by default). Costs
+  only what they personally witnessed, and the sim can render them as labelled
+  bodies (Manny/Quinn mannequins when the project has that content, else engine
+  capsules; V key / `Look.bScientistAvatars`, off by default). Costs
   render load and partial observability — use it when the point is the
   fieldwork, not the fastest science.
 

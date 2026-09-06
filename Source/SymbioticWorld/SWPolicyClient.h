@@ -31,6 +31,7 @@ struct FSWPolicyServer
 
 	FSocket* Socket = nullptr;
 	bool bConnected = false;
+	bool bDropScientistPings = false; // set on run reset: a "scientists" report before this server's first reply of the new run is the old run's
 	double NextConnectAttempt = 0.0; // wall-clock seconds (FPlatformTime)
 	TArray<uint8> RecvBuf;           // bytes received but not yet consumed (partial lines)
 
@@ -127,6 +128,15 @@ public:
 	const TArray<FSWScientistPing>& GetScientistPings() const { return ScientistPings; }
 	uint32 GetScientistStamp() const { return ScientistStamp; }
 	double GetScientistLastWall() const { return ScientistLastWall; }
+	// Forget the last team report (run reset): nothing spawns until the bridge sends a fresh one. The bridge sends
+	// "scientists" AFTER its "actions" reply, so the old run's last report may still be in the socket; reports are
+	// dropped per server until that server's first in-step reply of the new run.
+	void ClearScientistPings()
+	{
+		ScientistPings.Reset();
+		ScientistLastWall = 0.0;
+		for (FSWPolicyServer& S : Servers) S.bDropScientistPings = true;
+	}
 
 private:
 	TArray<FSWPolicyServer> Servers;

@@ -57,7 +57,9 @@ Source/SymbioticWorld/
   SWResourcePatch.*     ASWResourcePatch: logistic regrowth, Take; type 0 = Resource A (Lumen), 1 = B (Tecton)
   SWTraceField.*        FSWTraceField: decaying grid (Trace X / Trace Y), Deposit, Sample, Gradient
   SWLogger.*            FSWRunLogger: agents/births/deaths/population/commands CSV schemas
-  SWPolicyClient.*      FSWPolicyClient: TCP client for external policy servers
+  SWPolicyClient.*      FSWPolicyClient: TCP client for external policy servers; also parses the "scientists" side message
+  SWLeviathan.*         river predator, Settings.bLeviathan (DESIGN.md §4)
+  SWScientistAvatar.*   visual-only field-team avatar, driven from the manager's Tick (never in a substep)
   SWHUD.*               canvas HUD: title, stat cards, species panels, inspector, minimap, drought banner
   SWPlayerController.*  key bindings (names in Config/DefaultInput.ini)
   SWCameraPawn.*        observer camera, -SWCam
@@ -84,13 +86,18 @@ Tools/
                         run summary (analyze_run statistics + Welch C vs N per job), /live, /control, /notes;
                         jobs persist in Saved/experiments/ (docs/SCIENTIST_API.md)
   scientist_client.py   stdlib client + CLI for the experiment service (submit_runs, wait, get_run, live, control, note)
+  add_lab_button.py     patches the served Pixel Streaming pages with a link to the Lab dashboard (:8765); host only
   make_materials.py, make_valley_map.py, migrate_ed.py, import_assets.py, fetch_polyhaven.py,
   fix_foliage_materials.py, registry_dump.py   content generation / asset import (host only)
   start_stream_server.bat   Pixel Streaming signalling server
 Analysis/
   analyze_run.py        lifetime learning, inheritance, per-generation means, C vs N Welch test, summary PNG
+Lab/                    Symbiotic Lab (WKrohg): scientist team (meetings, registry, victory conditions, evolution),
+                        live observer bridge (python -m Lab.lab observe [--embody], a policy server on :9000, observer only
+                        unless --manage), remote experiment runner (LAB_SIM_SERVICE=host:8800), dashboard (:8765).
+                        Needs numpy, pandas, matplotlib, scipy, PyYAML (only ui_server.py is stdlib); see Lab/README.md
 docs/
-  POLICY_API.md         the policy protocol (hello / decide / actions / log, fallback rules)
+  POLICY_API.md         the policy protocol (hello / decide / actions / log / scientists, fallback rules)
   CONTROL_FILE.md       the live control file: path, append-only semantics, grammar, live vs reset-only settings, commands.csv
   SCIENTIST_API.md      the experiment service: endpoints, run summary fields, control grammar, C vs N recipe, caveats
   CONTRIBUTING.md       this file

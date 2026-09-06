@@ -252,6 +252,7 @@ protected:
 	// never draws from the seeded stream. Look.bScientistAvatars toggles it.
 	UPROPERTY() TArray<ASWScientistAvatar*> ScientistAvatars;
 	uint32 ScientistStampSeen = 0;
+	float ScientistLastPingSim = -1.f;                 // SimTime of the last team report (-1 = none this run)
 	void UpdateScientistAvatars(float DeltaSeconds);
 	void DestroyScientistAvatars();
 };

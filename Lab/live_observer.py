@@ -117,6 +117,7 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                 if mtype == "hello":
                     run_id = msg.get("run_id", "live")
                     window = _Window(0)
+                    last_team_sent = -1.0   # a reset run restarts t at 0: report the team again at once
                     if srv.embody:
                         from .embodiment import EmbodiedField
                         field = EmbodiedField(run_id, msg.get("world_half_size"))
@@ -237,7 +238,7 @@ def serve(db_path=None, port=9000, host="0.0.0.0", manage=False, embody=False):
     ip = my_lan_ip()
     role = "POPULATION MANAGER (driving organisms)" if manage else "observer (read-only)"
     if embody:
-        role += " + EMBODIED FIELD TEAM (seven walking observers, witnessed-only evidence)"
+        role += " + EMBODIED FIELD TEAM (eight walking bodies: seven voting scientists plus Vega, witnessed-only evidence)"
     print(f"Symbiotic Lab live bridge on {host}:{port} — {role} (db: {srv.lab_db_path})")
     print("On the sim host, attach the lab to a run with:")
     print(f'  python Tools/run_sim.py --mode C --seed 7 --duration 900 --speed 20 '

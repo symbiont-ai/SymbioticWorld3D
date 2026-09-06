@@ -29,7 +29,7 @@ CONDITIONS = [
     ("VC-6", "Trigger a drought and demonstrate adaptation continuing without offline retraining."),
 ]
 
-ORIGIN = "Symbiotic_World_Spec.pdf §1 — minimum proof of challenge fit"
+ORIGIN = "docs/SPEC_TEXT.txt §1 — minimum proof of challenge fit"
 
 
 def _mode_of(con, run_id, _cache={}):

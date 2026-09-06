@@ -50,6 +50,7 @@ If `Content/Maps/Valley.umap` is missing, recreate it:
 | M | cycle mode A → B → C → N (resets run) |
 | R | reset run (same seed) |
 | H | hide/show help |
+| V | scientist avatars on/off (field team of a `Lab.lab observe --embody` bridge; visual only, off by default) |
 | WASD / QE, RMB drag, wheel | camera |
 
 Modes: **A** learning off (α = 0) · **B** learning on, genome fixed ·
@@ -97,6 +98,7 @@ Command-line flags understood by the sim (all optional):
 -SWPolicy="host:port=Lumen|host:port=Tecton"   # external policy servers (run_sim: --policy); '|' and '=' only, no ',' or ';'
 -SWPolicyTimeoutMs=200  -SWPolicyShare=1.0     # run_sim: --policy-timeout / --policy-share; see docs/POLICY_API.md
 -SWSet="Settings.bLeviathan=1"                  # river predator (off by default; DESIGN.md §4); live: control "set Settings.bLeviathan=1" then "reset"
+-SWSet="Look.bScientistAvatars=1"               # Symbiotic Lab field-team avatars (visual only, off by default; docs/POLICY_API.md §5); live: control "set Look.bScientistAvatars=1"
 -SWPolicyFile=Saved/policy_servers.txt         # server list file polled every 3 s while running (run_sim: --policy-file); edit it to add/remove servers
 -SWControlFile=Saved/control.txt               # live control file polled every 2 s (run_sim: --control-file): append "drought=on", "set Lumen.MaxAge=200", "reset seed=3" ... (docs/CONTROL_FILE.md)
 ```
@@ -249,6 +251,8 @@ Source/SymbioticWorld/
   SWCameraPawn.*     observer camera
   SWPlayerController.* key bindings
   SWHUD.*            canvas HUD: global stats, meta-parameter strip, inspector
+  SWLeviathan.*      river predator (Settings.bLeviathan; DESIGN.md §4)
+  SWScientistAvatar.* visual-only field-team avatars driven by the policy bridge's "scientists" message
 Config/              legacy input mappings, renderer settings (Lumen GI, VSM, TSR)
 Content/Maps/Valley  empty startup level
 Tools/               run_sim.py (launcher), sweep.py (parameter sweeps), make_valley_map.py,
@@ -260,6 +264,8 @@ Tools/               run_sim.py (launcher), sweep.py (parameter sweeps), make_va
                      scientist_client.py (stdlib client + CLI for it; docs/SCIENTIST_API.md)
 .claude/             agents/implementer.md, agents/tester.md, skills/phase (Manager Loop)
 Analysis/            analyze_run.py
+Lab/                 Symbiotic Lab (WKrohg): scientist team, live observer bridge (python -m Lab.lab observe [--embody]),
+                     experiment runner, dashboard (python -m Lab.lab ui, :8765); Lab/README.md
 ```
 
 ## Credits

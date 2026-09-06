@@ -99,14 +99,20 @@ def _run_arm(mode, set_spec, seeds, duration, log):
 def execute_experiment(con, exp_id, log=print):
     exp = con.execute("SELECT * FROM experiments WHERE id=?", (exp_id,)).fetchone()
     proto = json.loads(exp["protocol"])
-    remote = None
-    if not engine_available():
-        remote = service_client(log)
-        if remote is None:
-            con.execute("UPDATE experiments SET status='awaiting-sim' WHERE id=?", (exp_id,))
-            con.commit()
-            log(f"  [runner] {exp_id}: no UE engine and no experiment service -> awaiting-sim")
-            return None
+    # An operator who set LAB_SIM_SERVICE wants the host's serial queue, engine or not (on the stream host
+    # a direct engine launch would bypass the one-worker service and compete with the live demo).
+    import os
+    remote = service_client(log)
+    if remote is None and os.environ.get("LAB_SIM_SERVICE"):
+        con.execute("UPDATE experiments SET status='awaiting-sim' WHERE id=?", (exp_id,))
+        con.commit()
+        log(f"  [runner] {exp_id}: LAB_SIM_SERVICE is set but the service is unreachable -> awaiting-sim")
+        return None
+    if remote is None and not engine_available():
+        con.execute("UPDATE experiments SET status='awaiting-sim' WHERE id=?", (exp_id,))
+        con.commit()
+        log(f"  [runner] {exp_id}: no UE engine and no experiment service -> awaiting-sim")
+        return None
 
     def arm(mode, set_spec, label):
         if remote:
