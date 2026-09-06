@@ -7,6 +7,12 @@ which action each of your organisms takes. Protocol: docs/POLICY_API.md.
 
     python3 Tools/policy_server.py --agent bandit --port 9000
     python3 Tools/policy_server.py --agent my                    # your own class, see MyAgent below
+    python3 Tools/policy_server.py --agent heuristic --record my_run.jsonl   # also log every exchange for policy_replay.py
+
+Agents: random, bandit (tabular contextual bandit, gamma 0), heuristic (fixed rules on the
+percept), tracefollower (uses the Trace X / Trace Y fields), my (yours). No Unreal on your
+machine? Develop offline: replay a recording with Tools/policy_replay.py (see docs/POLICY_API.md,
+"Offline development on a Mac").
 
 Then tell the host your IP (macOS: `ipconfig getifaddr en0`); the host runs
     python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --policy "<your ip>:9000=Lumen"
@@ -126,6 +132,70 @@ class BanditAgent:
         self.q[c][i] += obs["genome"]["alpha"] * (reward - self.q[c][i])
 
 
+class HeuristicAgent:
+    """Fixed if/else rules on the percept, no learning. A readable non-random baseline.
+
+    Order of the rules (first match wins; every rule is gated by the mask):
+      1. forage   a resource is known and energy is not HIGH
+      2. avoid    energy is LOW and other-species neighbours are in range (mask allows avoid
+                  only when the closest organism is within CrowdRadius)
+      3. rest     energy is LOW and no resource is known
+      4. explore  otherwise (always feasible)
+    Percept field names are exactly those the sim writes (docs/POLICY_API.md, SWWorldManager.cpp).
+    """
+
+    def __init__(self, obs):
+        pass
+
+    def act(self, obs, mask):
+        p = obs["percept"]
+        b = obs["bin"]
+        if p["resource_known"] and b != "HIGH" and mask[ACTIONS.index("forage")]:
+            return "forage"
+        if b == "LOW" and p["other_species_in_range"] > 0 and mask[ACTIONS.index("avoid")]:
+            return "avoid"
+        if b == "LOW" and not p["resource_known"] and mask[ACTIONS.index("rest")]:
+            return "rest"
+        return "explore"
+
+    def learn(self, obs, action, reward):
+        pass
+
+
+class TraceFollowerAgent:
+    """Uses the Trace X / Trace Y fields (DESIGN.md section 4), per species, no learning.
+
+    Lumen:  follow when the local Trace X gradient is strong (trace_x_gradient and
+            trace_x >= TRACE_X_STRONG; the sim itself only climbs above TraceXFollowMin = 0.08).
+            Note the mask allows follow only with a same-species neighbour or a fresh signal,
+            and the sim's follow goes to the signal, then the neighbour centroid, and climbs the
+            gradient only when both are gone (SWAgent.cpp, ESWAction::Follow).
+    Tecton: modify (deposit Trace Y) when on land and energy is HIGH (mask: on land, > 25 % energy).
+    Both:   else forage when a resource is known and energy is not HIGH, else explore.
+    """
+
+    TRACE_X_STRONG = 0.15
+
+    def __init__(self, obs):
+        pass
+
+    def act(self, obs, mask):
+        p = obs["percept"]
+        b = obs["bin"]
+        if obs["species"] == "Lumen":
+            if p["trace_x_gradient"] and p["trace_x"] >= self.TRACE_X_STRONG and mask[ACTIONS.index("follow")]:
+                return "follow"
+        else:   # Tecton
+            if p["on_land"] and b == "HIGH" and mask[ACTIONS.index("modify")]:
+                return "modify"
+        if p["resource_known"] and b != "HIGH" and mask[ACTIONS.index("forage")]:
+            return "forage"
+        return "explore"
+
+    def learn(self, obs, action, reward):
+        pass
+
+
 class MyAgent:
     """>>> YOUR AGENT GOES HERE (select it with --agent my). <<<
 
@@ -156,7 +226,8 @@ class MyAgent:
         pass
 
 
-AGENTS = {"random": RandomAgent, "bandit": BanditAgent, "my": MyAgent}
+AGENTS = {"random": RandomAgent, "bandit": BanditAgent, "heuristic": HeuristicAgent,
+          "tracefollower": TraceFollowerAgent, "my": MyAgent}
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +258,18 @@ class Stats:
 STATS = Stats()
 AGENT_CLASS = BanditAgent
 VERBOSE = False
+RECORD = None                 # open file from --record, or None; one JSON line per decide/actions exchange
+RECORD_LOCK = threading.Lock()
+
+
+def record_exchange(decide_msg, reply_msg):
+    """Append {"t_wall", "decide", "actions"} as one line (Tools/policy_replay.py reads these)."""
+    if RECORD is None:
+        return
+    line = json.dumps({"t_wall": time.time(), "decide": decide_msg, "actions": reply_msg}, separators=(",", ":"))
+    with RECORD_LOCK:
+        RECORD.write(line + "\n")
+        RECORD.flush()
 
 
 class Handler(socketserver.StreamRequestHandler):
@@ -269,8 +352,10 @@ class Handler(socketserver.StreamRequestHandler):
                 actions[str(aid)] = a
                 self.last_obs[aid] = obs
             self.last_seen[aid] = now
-        self.send({"type": "actions", "step": msg.get("step"), "actions": actions})
+        reply = {"type": "actions", "step": msg.get("step"), "actions": actions}
+        self.send(reply)
         STATS.add(len(actions), time.perf_counter() - t0)
+        record_exchange(msg, reply)
         if VERBOSE:
             print(f"t={now:.1f} step={msg.get('step')} {len(actions)} actions in {(time.perf_counter() - t0) * 1000:.2f} ms", flush=True)
         # Forget organisms not seen for 30 logical seconds (they died).
@@ -297,23 +382,34 @@ def stats_loop(period):
 
 
 def main():
-    global AGENT_CLASS, VERBOSE
+    global AGENT_CLASS, VERBOSE, RECORD
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--agent", choices=sorted(AGENTS), default="bandit", help="which policy class drives the organisms")
     ap.add_argument("--port", type=int, default=9000)
     ap.add_argument("--host", default="0.0.0.0", help="bind address (0.0.0.0 = reachable from the LAN)")
     ap.add_argument("--stats-every", type=float, default=5.0, help="seconds between throughput lines")
     ap.add_argument("--verbose", action="store_true", help="print one line per request")
+    ap.add_argument("--record", default=None, metavar="PATH",
+                    help="append one JSON line per exchange {t_wall, decide, actions}; replay offline with Tools/policy_replay.py")
     args = ap.parse_args()
     AGENT_CLASS = AGENTS[args.agent]
     VERBOSE = args.verbose
+    if args.record:
+        RECORD = open(args.record, "a", encoding="utf-8")
+        print(f"policy_server: recording every exchange to {args.record}", flush=True)
     threading.Thread(target=stats_loop, args=(args.stats_every,), daemon=True).start()
-    with Server((args.host, args.port), Handler) as srv:
-        print(f"policy_server: agent={AGENT_CLASS.__name__} listening on {args.host}:{args.port}  (Ctrl-C to stop)", flush=True)
-        try:
-            srv.serve_forever()
-        except KeyboardInterrupt:
-            print("bye", flush=True)
+    try:
+        with Server((args.host, args.port), Handler) as srv:
+            print(f"policy_server: agent={AGENT_CLASS.__name__} listening on {args.host}:{args.port}  (Ctrl-C to stop)", flush=True)
+            try:
+                srv.serve_forever()
+            except KeyboardInterrupt:
+                print("bye", flush=True)
+    finally:
+        if RECORD is not None:
+            with RECORD_LOCK:
+                RECORD.close()
+                RECORD = None
 
 
 if __name__ == "__main__":

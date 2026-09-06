@@ -10,6 +10,7 @@ mutated learning parameters (α, ε, social) and an environmental-effect strengt
 Spec: `docs/SPEC_TEXT.txt` (text of the hack-day specification; concept plates in
 `docs/plates/`). Mechanism definitions: `DESIGN.md`.
 Build plan with exit conditions: `CHECKLIST.md`.
+Contributing (Mac collaborators, coding agents, recipes for actions/percepts/species/learners/perturbations/analysis): `docs/CONTRIBUTING.md`.
 
 ## Requirements
 
@@ -128,16 +129,31 @@ pip installs: `Tools/policy_server.py` is standard library only (Python 3.9+, ru
 macOS). The sim connects to *their* machine, sends each organism's percept, feasibility
 mask and its own bandit table once per decision, and acts on the reply; anything late
 or infeasible falls back to the organism's built-in bandit and is counted. Protocol,
-field list and fallback rules: `docs/POLICY_API.md`.
+field list and fallback rules: `docs/POLICY_API.md`. To go beyond the policy API and
+change the sim itself (C++ the host builds for you): `docs/CONTRIBUTING.md`.
 
 On the Mac (4 commands, nothing to install):
 
 ```bash
 git clone <this repo> && cd Symbiotic_Word_3D          # or just copy Tools/policy_server.py
-python3 Tools/policy_server.py --agent my --port 9000   # edit MyAgent.act() in that file; --agent random|bandit are the references
+python3 Tools/policy_server.py --agent my --port 9000   # edit MyAgent.act() in that file; see the agent list below
 python3 Tools/policy_client_check.py --port 9000        # optional self-test from a second terminal
 ipconfig getifaddr en0                                  # tell the host this IP
 ```
+
+Example agents in `Tools/policy_server.py` (`--agent`):
+
+* `random`: uniform over the feasible actions, the floor to beat.
+* `bandit`: the sim's own tabular contextual bandit (γ = 0) re-implemented in Python, α/ε from the genome.
+* `heuristic`: fixed rules on the percept (forage when food is known and energy is not HIGH, avoid other-species neighbours when LOW, rest when LOW with nothing known, else explore).
+* `tracefollower`: Lumen follow up a strong Trace X gradient, Tecton modify (Trace Y) on land at HIGH energy, else forage/explore.
+* `my`: yours.
+
+No Unreal on your machine? `python3 Tools/policy_server.py --record run.jsonl` logs every
+exchange, `python3 Tools/policy_replay.py --agent my --file docs/samples/decide_sample.jsonl`
+replays a recording against your class offline (mask violations, action distribution,
+timing), and the repo ships a 300-exchange sample. See "Offline development on a Mac" in
+`docs/POLICY_API.md`.
 
 On the host:
 
@@ -203,7 +219,8 @@ Source/SymbioticWorld/
 Config/              legacy input mappings, renderer settings (Lumen GI, VSM, TSR)
 Content/Maps/Valley  empty startup level
 Tools/               run_sim.py (launcher), sweep.py (parameter sweeps), make_valley_map.py,
-                     policy_server.py (reference agents: random / bandit / MyAgent stub), policy_client_check.py
+                     policy_server.py (reference agents: random / bandit / heuristic / tracefollower / MyAgent stub),
+                     policy_client_check.py (one fake exchange), policy_replay.py (offline replay of a --record file)
 .claude/             agents/implementer.md, agents/tester.md, skills/phase (Manager Loop)
 Analysis/            analyze_run.py
 ```

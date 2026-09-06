@@ -7,7 +7,8 @@ organism's own tabular contextual bandit (which keeps receiving every reward, so
 organism can be switched back to built-in at any time without losing anything).
 
 Reference server: `Tools/policy_server.py` (stdlib only, Python 3.9+, macOS/Linux/Windows).
-Self-test without the sim: `Tools/policy_client_check.py`.
+Self-test without the sim: `Tools/policy_client_check.py`. Offline replay of a recorded session:
+`Tools/policy_replay.py` (section "Offline development on a Mac" below).
 
 ## Roles and transport
 
@@ -157,3 +158,97 @@ Without `--policy` the sim is byte-identical to the previous build for a given s
 requests (seeded RNG in your agent, no dependence on wall time), no timeouts. A timeout or a
 disconnect changes which organisms draw from the sim's seeded stream, so two runs against a
 slow server can differ.
+
+## Offline development on a Mac (no Unreal)
+
+You do not need the sim to develop an agent. A machine that *was* connected to the sim can
+record every exchange, and `Tools/policy_replay.py` feeds that recording to your agent class
+exactly the way the server would, without Unreal, without pip installs (stdlib, Python 3.9+).
+
+### Record (on any machine the sim connects to, usually the Windows host)
+
+```bash
+python Tools/policy_server.py --agent heuristic --port 9100 --record my_run.jsonl
+python Tools/run_sim.py --mode C --seed 4 --duration 300 --speed 20 --policy "127.0.0.1:9100=Both" --policy-share 0.05 --no-logs
+```
+
+`--record PATH` appends one JSON line per `decide`/`actions` exchange:
+
+```json
+{"t_wall": 1788986267.12, "decide": {"type":"decide","t":12.30,"step":123,"agents":[...]}, "actions": {"type":"actions","step":123,"actions":{"17":"forage"}}}
+```
+
+`decide` is the sim's message verbatim (every field of section 2), `actions` is the reply the
+server sent. The `hello` is not recorded. The file is opened in append mode, so several runs
+or several server processes can share one file. Size: about 1 KB per organism per decision;
+the default population (52 founders, one decision each per logical second) writes ~50 KB per
+logical second, so for a shareable sample use `--policy-share` (a small served subset of a
+normal population) or a short run.
+
+### The sample: `docs/samples/decide_sample.jsonl`
+
+Recorded with the two commands above (mode C, seed 4, 300 logical s, `HeuristicAgent`
+replying, share 0.05) and cut to the first 300 whole lines: 350 KB, `t = 1.0 .. 216.0`,
+6 organisms (4 Lumen, 2 Tecton; 187 Lumen and 113 Tecton decisions, one or two organisms per
+exchange), 0 timeouts, 0 stale replies. Because the served subset is drawn per organism at
+birth, the world around them is the full 52-founder population.
+
+### Replay
+
+```bash
+python3 Tools/policy_replay.py --agent my --file docs/samples/decide_sample.jsonl            # --agent random|bandit|heuristic|tracefollower|my
+python3 Tools/policy_replay.py --agent bandit --file my_run.jsonl --limit 100                # first 100 exchanges only
+```
+
+For every recorded `decide` it creates one agent instance per organism id (as the server does),
+calls `learn(prev_obs, last_action, last_reward)` with the sim's recorded credit for the
+organism's previous action, then `act(obs, mask)`, and prints:
+
+```
+file        docs/samples/decide_sample.jsonl  (300 exchanges)
+agent       BanditAgent (--agent bandit)  vs recorded replies in the file
+sim time    t=1.0 .. 216.0 s, 6 organisms Lumen 187, Tecton 113 (decisions)
+decisions   300   in 1.7 ms wall   = 172,157 decisions/s   (learn() calls 294)
+yours     forage   127 ( 42.3%)  explore    19 (  6.3%)  follow     7 (  2.3%)  avoid    22 (  7.3%)  signal    36 ( 12.0%)  rest    28 (  9.3%)  modify    61 ( 20.3%)
+recorded  forage   184 ( 61.3%)  explore   116 ( 38.7%)  follow     0 (  0.0%)  avoid     0 (  0.0%)  signal     0 (  0.0%)  rest     0 (  0.0%)  modify     0 (  0.0%)
+agreement   116 / 300 decisions same as recorded (38.7%)
+mean recorded reward by recorded action (last_action -> last_reward, sim credited):
+    forage   +0.2124  (n=182)
+    explore  -0.1684  (n=113)
+    follow   -0.1767  (n=3)
+    signal   -0.1900  (n=1)
+    modify   -0.1939  (n=1)
+mask violations 0   (OK)
+slowest act()   9 us  (organism 39, step 10)
+```
+
+* `mask violations` **must be 0**: each one is an action the sim would have refused and replaced
+  by the organism's built-in bandit (a counted fallback). Exit code is 1 if any violation, invalid
+  return value or exception occurred, 0 otherwise, so the script works as a test.
+* `mean recorded reward by recorded action` groups the sim's `last_reward` by `last_action`.
+  Actions that never appear in the recorded replies (here `follow`, `signal`, `modify`) are the
+  built-in bandit's own choices at birth, before the first exchange (`last_external: false`).
+* `slowest act()` is the single worst call; the sim waits for a whole request (all organisms),
+  so keep act() in the tens of microseconds. `decisions/s` is your act()+learn() throughput
+  on this machine, for comparison against the ~200 decisions/s the sim needs at `--speed 20`
+  with 40 organisms (section "Timing advice").
+* Replay is **off-policy**: the trace is fixed, so your choice does not change the next
+  observation, and `learn()` receives the reward of the *recorded* action. A learning agent
+  gets realistic `(obs, action, reward)` triples and the mask/timing checks, but not a
+  closed-loop score. That needs the sim.
+
+### The loop
+
+1. `python3 Tools/policy_replay.py --agent my --file docs/samples/decide_sample.jsonl` (0 violations, fast).
+2. Edit `MyAgent` in `Tools/policy_server.py` (read `HeuristicAgent` and `TraceFollowerAgent` for percept usage).
+3. Replay again; `python3 Tools/policy_client_check.py --port 9000` with your server running for the wire format.
+4. Ask the host to point the sim at you: `python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --policy "<your ip>:9000=Lumen"`.
+   Run your server with `--record my_agent.jsonl` during that session to get a recording of
+   your own organisms for the next offline round, and read `ext_decisions` / `ext_fallbacks`
+   in the host's `population.csv` for the real fallback count.
+
+For AI coding agents working in this repo: the contract for an agent class is `__init__(obs)`,
+`act(obs, mask) -> name or index`, `learn(obs, action, reward)`; `ACTIONS` order is fixed by the
+sim's `hello`; `policy_server.py` must stay importable without side effects (the server starts only
+under `if __name__ == "__main__"`), stdlib only, Python 3.9 syntax; `python3 Tools/policy_replay.py
+--agent <name> --file docs/samples/decide_sample.jsonl` exiting 0 is the acceptance check.
