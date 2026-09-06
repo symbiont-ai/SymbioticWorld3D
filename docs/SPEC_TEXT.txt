@@ -1,0 +1,502 @@
+==================== PAGE 1 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 1SYMBIOTIC WORLD
+Sundai Hack 139 — One-Day Technical & Design Specification
+Agents that learn after deployment — and evolve how to learn.
+Design reference 1 — Locked world overview: Lumen + Tecton in one natural alien ecosystem.
+EVENT PARTNER BUILD WINDOW
+Sundai Hack 139 Wolfram Research 1 day / ~8 productive hours
+==================== PAGE 2 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 20. Executive Summary
+The project is deliberately small in cognition, rich in adaptive dynamics, and visually ambitious.
+CORE PROPOSITION
+What happens when embodied agents continue learning after deployment, while evolution simultaneously changes how their 
+descendants learn — in a world that the agents themselves keep reshaping?
+Symbiotic World is a persistent 3D artificial ecosystem built in Unreal Engine. It contains two heterogeneous populations of 
+primitive learning agents: Lumen, fast bioluminescent scouts that learn and signal, and Tecton, slow ecosystem engineers that 
+reshape terrain and moisture. Individuals learn online during their own lifetimes. Successful agents reproduce, and descendants 
+inherit mutated meta-learning parameters. Because both populations alter the shared environment, the learning problem itself 
+changes over time.
+THE THREE NESTED ADAPTATION LOOPS
+Lifetime scale The same individual changes its policy from experience after deployment.
+Generational scaleLearning rate, exploration, memory and other meta-parameters are inherited, selected  
+and mutated.
+Ecosystem scaleLumen and Tecton reshape environmental conditions and therefore one another’s 
+future learning problems.
+Primary demoObserve one individual learn → accelerate generations → trigger drought → watch 
+behavioral and evolutionary adaptation.
+Final line Training was only generation zero.
+Why primitive organisms are intentional
+The Sundai brief does not require language models or human-level cognition. A primitive organism with a plastic policy can be a 
+stronger demonstration because the audience can see exactly what changed. The hack should therefore prove a narrow 
+mechanism rather than imply a sophisticated mind:
+The same individual must measurably change its action policy during its lifetime.
+Its descendants must inherit and mutate parameters that control how learning happens.
+The two populations must change the environment experienced by future agents.
+No claim of “emergent intelligence” is required; the evidence is continuous post-deployment adaptation.
+==================== PAGE 3 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 31. Challenge Alignment
+Directly maps to the Hack 139 framing: variation, selection, inheritance, feedback and coevolution after deployment.
+Hack 139 theme Implementation in Symbiotic World Priority
+Feedback-driven adaptation Online action-value updates change an 
+individual’s policy after experience.P0
+Variation Offspring receive bounded mutations to 
+meta-learning parameters.P0
+Selection Energy, survival and reproduction 
+determine lineage success.P0
+Inheritance Meta-learning parameters pass from 
+parent to child.P0
+Coevolving populations Lumen and Tecton continually reshape 
+shared environmental fields.P1
+Open-ended ecosystem Outcomes are not scripted as 
+cooperation; interaction can stabilize, 
+compete, exploit or collapse.P1
+Goal/purpose drift Optional stretch: reward-weight drift 
+within lifetime or across generations.P3
+DESIGN RULE
+Do not present this as “a genetic algorithm with pretty creatures.” The demo must visibly distinguish within-lifetime learning 
+from across-generation evolution.
+Minimum proof of challenge fit
+1. Select a live Lumen and display its initial action-policy values.
+2. Let that same individual interact with the world for 30–60 seconds.
+3. Show that its learned policy changed because of experience.
+4. Show its offspring inheriting a related but mutated learning configuration.
+5. Accelerate time and show a population-level shift in meta-learning parameters.
+6. Trigger a drought and demonstrate adaptation continuing without offline retraining.
+==================== PAGE 4 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 42. World & Visual Grammar
+A natural alien ecology — spectacular enough for a demo, constrained enough for a one-day build.
+Design reference 2 — World overview and HUD language.
+LOCKED WORLD DECISIONS
+World topologyOne compact valley with river/wetland, rocky uplands, resource patches and terrain 
+gradients.
+Arches Natural geological erosion formations only; never ruins or constructed infrastructure.
+Active speciesExactly two: Lumen and Tecton. No higher species, people, predators or civilization in 
+the MVP.
+Visual codingCyan = Lumen information/learning; amber = Tecton terrain modification; green = 
+resource recovery; red = perturbation.
+Environment Water, vegetation, soil/moisture field, two resource types, local environmental traces.
+RenderingUnreal real-time scene; volumetric fog, water reflections, emissive materials and 
+lightweight particle effects.
+World truth Gameplay variables remain simple even if the visual layer appears rich.
+Non-goals for the hack
+No cities, buildings, crafting, tool use or civilization simulation.
+No MetaHumans or human-like NPCs.
+No LLM controlling each organism.
+No third “higher” species.
+No fungi or mushrooms growing on Tecton; terrain effects come from physical disturbance and environmental modification.
+No requirement for physically accurate terrain deformation; the visible effect can be decoupled from the simulation variable.
+==================== PAGE 5 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 53. Species A — Lumen
+Fast, short-lived learning agents whose main adaptive resource is information.
+Design reference 3 — Lumen individual learning and signaling view.
+LUMEN — MVP DEFINITION
+Role Scout / forager / information mover.
+Visual identitySmall sleek quadruped, cyan bioluminescent markings, visible signaling pulses and 
+trace lines.
+Generation timeShort relative to Tecton; enough reproduction cycles to show evolution during a hack 
+demo.
+Primary sensorsEnergy, nearest resource, nearest water, local Lumen density, Tecton proximity, 
+Trace X / Y intensity, received signal.
+Actions Forage, explore, follow, avoid, signal, rest, use/leave environmental trace.
+Trace XA decaying environmental information marker that can influence later navigation and 
+learning. It is not a third organism.
+Learning story Lumen should show visible policy plasticity within 30–60 seconds at 1× speed.
+==================== PAGE 6 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 6Lumen behavior loop
+SENSE LOCAL STATE
+  ↓
+GATE FEASIBLE ACTIONS
+  ↓
+SELECT ACTION (ε-greedy from learned Q values)
+  ↓
+ACT / MOVE / SIGNAL
+  ↓
+MEASURE REWARD
+  ↓
+UPDATE ACTION VALUE
+  ↓
+STORE SHORT MEMORY + REPEAT
+A Lumen does not need a neural network for the hack. A bounded contextual bandit is sufficient to prove continuous learning 
+while keeping the Blueprints implementation inspectable.
+4. Species B — Tecton
+Slow, long-lived ecosystem engineers that alter the learning landscape.
+Design reference 4 — Tecton environmental engineering without fungal symbionts.
+TECTON — MVP DEFINITION
+Role Terrain / moisture / resource-field modifier.
+Visual identityLarge rock-armored quadruped with subtle amber emissive seams; no mushrooms, fungi 
+or vegetation on its body.
+Generation time Longer than Lumen, but compressed enough for demonstration.
+Primary sensors Energy, water gradient, soil/moisture quality, local density, Lumen trace intensity, recent 
+==================== PAGE 7 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 7successful route.
+ActionsMove, forage, rest, follow moisture corridor, avoid, compact/turn soil, create shallow 
+channel.
+Trace YA terrain-state field representing soil turnover, moisture retention and resource 
+regeneration changes.
+Visual consequenceFurrows, changed ground material, temporary moisture channels and later sprouting. 
+Visual change can be faked with decals/materials while the field is simulated numerically.
+NO PRE-SCRIPTED MUTUALISM
+Tecton modification may help, hurt or simply redirect Lumen depending on local conditions. The relationship is an outcome, 
+not a hard-coded “cooperation” rule.
+5. Agent Architecture
+Separate inherited learning machinery from the learned policy that changes during a lifetime.
+5.1 Local observable state
+State vector s = [
+  energy,
+  nearest_resource_distance,
+  nearest_water_distance,
+  own_species_density,
+  other_species_density,
+  environment_quality,
+  received_signal_or_trace
+]
+5.2 Action set
+HIGH-LEVEL ACTIONS
+FORAGE Move toward and consume a viable local resource.
+EXPLORE Move toward novelty / low-visited local space.
+FOLLOW Align with useful local agents or signals.
+AVOID Increase distance from crowding, poor conditions or other species.
+SIGNALBroadcast a local Lumen information pulse; Tecton may omit or use a simple 
+orientation cue.
+REST Reduce energy burn.
+MODIFY Lumen deposits/updates Trace X; Tecton modifies Trace Y / terrain state.
+5.3 Minimal online learner
+Default hack algorithm: a contextual action-value learner. Each agent maintains a small value for each high-level action. Context  
+gates impossible actions, and the agent chooses among feasible actions using an ε-greedy policy. After the action  
+outcome:Q(a) ← Q(a) + α [ r − Q(a) ]
+This is intentionally simpler than deep RL. It gives a stable, visible policy update that is easy to implement in Blueprints, inspect 
+live, and explain to the audience.
+==================== PAGE 8 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 85.4 Reward
+r = wE·ΔEnergy + wS·Survival + wN·Novelty + wI·UsefulInteraction
+MVP reward weights are fixed per species. Stretch goal: make one or more reward weights plastic or inheritable to explore “goal 
+drift.”
+6. Evolution of Learning
+Descendants inherit the parameters that determine how they adapt — not merely a frozen final behavior.
+INHERITED META-LEARNING GENOME G
+α — learning rate How quickly experience updates action values.
+ε — exploration rate Probability of testing a non-greedy action.
+m — memory persistence How much recent experience influences behavior.
+s — social responsiveness How strongly local signals / agents influence feasible-action context.
+e — environmental-effect 
+strengthMagnitude of Trace X or Trace Y modification.
+optional γ Future-reward weighting if a Q-learning variant is implemented.
+G_child = clamp(G_parent + Normal(0, σ))
+Reproduction
+Asexual reproduction for the hack: no mating logic or sexual recombination.
+Reproduction triggers above an energy threshold and after a minimum age.
+Reproduction incurs an energy cost to create selection pressure.
+Offspring receive mutated meta-learning parameters and a fresh or weakly inherited policy.
+The simulation logs parent ID, child ID, generation and genome values for lineage tracking.
+Optional learned-policy inheritance
+Only if P0/P1 are complete, initialize the child from a small fraction of the parent’s learned action values: Q_child = λ 
+Q_parent + (1 − λ) Q_random   with λ ≈ 0.1
+This is a stretch feature, not a dependency. The core scientific story is inheritance of learning parameters.
+==================== PAGE 9 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 97. Environment & Co-adaptation
+Agents adapt to a world that their own behavior keeps changing.
+LUMEN ACTIVITY → Trace X (decaying information field)
+                     ↓
+               future navigation / action context
+TECTON ACTIVITY → Trace Y (soil + moisture field)
+                     ↓
+              resource regeneration / pathways
+Both traces alter what future agents perceive, learn and select.
+SHARED WORLD STATE
+Resource A Primary Lumen food/resource field; locally regenerates.
+Resource B Primary Tecton food/resource field; locally regenerates.
+Water field Spatial availability / distance signal; strongly affected during drought.
+Trace X Lumen-generated information marker with intensity and decay.
+Trace Y Tecton-generated terrain/moisture modifier with slower persistence.
+World update 5–10 Hz numerical update is sufficient; rendering remains independent.
+Interaction principleNeither population gets a global objective to cooperate. Coupling is local and can 
+produce different ecological relationships.
+Why this matters
+If the environment were fixed, agents would merely learn within a stationary task. Here, successful behavior changes future 
+observations and resource structure, so the adaptive landscape itself moves. This is the co-adaptation layer that distinguishes 
+Symbiotic World from a collection of independent learners.
+==================== PAGE 10 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 108. Perturbation Experiment — DROUGHT
+A single intervention that exposes lifetime learning, population selection and ecosystem response on different timescales.
+Design reference 5 — Drought stress test and two-scale adaptation dashboard.
+DROUGHT EVENT
+Trigger User presses DROUGHT at a known simulation time.
+Immediate effectWater availability and resource regeneration drop sharply; visual tone warms and wet 
+areas contract.
+Seconds/minutes Existing individuals update their action policies.
+Generations Different meta-learning parameter combinations reproduce at different rates.
+Ecosystem response Movement, Trace X/Y and resource geography reorganize.
+RecoveryDrought can partially relax; compare resilience and recovery with different adaptation 
+modes.
+Required experimental modes
+Mode Setting Purpose
+A — Learning OFF α = 0; evolution optional off Baseline: behavior stays effectively fixed 
+except scripted context gating.
+B — Learning ON α > 0; meta-parameters fixed Shows within-lifetime post-deployment 
+adaptation.
+C — Learning + evolution α > 0; meta-parameters inherited + Shows evolution of adaptive capacity 
+==================== PAGE 11 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 11Mode Setting Purpose
+mutated across generations.
+INTERPRETATION DISCIPLINE
+A more resilient run does not prove “intelligence.” The hack demonstrates measurable policy plasticity and evolution of 
+learning parameters under a changing shared environment.
+9. HUD, Telemetry & Observability
+The visual layer must prove adaptation, not merely decorate the ecosystem.
+9.1 Global HUD
+Generation / simulation time
+Population A (Lumen) and Population B (Tecton)
+Water / resource availability
+Ecosystem stability or simple recovery score
+Simulation speed: 1× / 10× / 50×
+DROUGHT button and adaptation mode toggle
+9.2 Individual inspector — highest-value UI feature
+LUMEN A-3172
+INHERITED
+  learning rate        0.22
+  exploration ε        0.31
+  social response      0.44
+  memory persistence   0.61
+LEARNED POLICY
+  forage        0.18 → 0.37
+  explore       0.41 → 0.22
+  follow        0.09 → 0.17
+  signal        0.04 → 0.16
+The audience should be able to click one organism, wait, and visibly watch its learned policy move while inherited parameters 
+remain stable during that lifetime.
+9.3 Population evolution view
+Mean / distribution of learning rate α by generation
+Mean exploration ε by generation
+Mean social responsiveness by generation
+Behavior distribution before and during drought
+Lineage share or reproduction counts for the currently dominant learning configuration
+==================== PAGE 12 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 1210. One-Day Unreal Architecture
+All required runtime logic lives in Unreal for the hack; avoid a Python bridge unless the core demo is already complete.
+BP_WorldManager
+├── BP_ResourceManager
+├── BP_PerturbationManager
+├── BP_PopulationManager
+│   ├── BP_Lumen (from BP_AgentBase)
+│   └── BP_Tecton (from BP_AgentBase)
+├── BP_TraceXField
+├── BP_TraceYField
+└── WBP_HUD / WBP_AgentInspector
+BLUEPRINT RESPONSIBILITIES
+BP_AgentBaseID, parent ID, generation, energy, age, genome, Q/action values, current action, 
+learning update.
+BP_LumenCyan material, signaling, Trace X deposit/sensing, faster movement and short 
+lifecycle.
+BP_Tecton Amber/rock material, slower movement, terrain/moisture modification, longer lifecycle.
+Resource manager Spatial resource patches, regeneration, consumption and drought multiplier.
+Trace fieldsGrid, actor patches or lightweight scalar volumes; choose implementation easiest for 
+team.
+Perturbation manager Drought state, severity, duration and visual effects.
+HUDGlobal metrics, mode controls, speed control, selected-agent inspector and one 
+evolution chart.
+Performance targets
+Subsystem Target Rationale
+Rendering ~60 FPS target; degrade visuals if 
+neededKeep the experience cinematic.
+Agent decisions ~1 decision / second / agent Enough for visible learning without heavy  
+update cost.
+World fields 5–10 Hz Smooth enough for ecology; simpler than  
+frame-rate updates.
+Initial population 30–50 Lumen + 10–20 Tecton Enough dynamics without MassEntity 
+dependency.
+Fast-forward 10× and 50× logical time Required to show generations during a 
+demo.
+Asset strategy
+Use a free/available Unreal environment or Quixel/Fab biome as the base; spend time on lighting and composition rather than  
+modeling terrain.
+Use any rigged creature placeholders that can be recolored/material-modified into Lumen and Tecton roles.
+==================== PAGE 13 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 13If Tecton terrain deformation is too expensive, represent Trace Y numerically and fake visible change with decals, material 
+blends, splines, Niagara, or pre-placed vegetation states.
+If signaling animation is not ready, cyan arcs/particles alone are sufficient to communicate Lumen information exchange.
+11. One-Day Build Plan
+The learning loop is P0. If the world is gorgeous but the same individual cannot learn, the hack has missed the brief.
+Time Deliverable Exit condition
+09:00–10:00 World + assets Valley opens, camera works, 
+Lumen/Tecton placeholders visible.
+10:00–11:00 Movement + resources Agents move, sense and consume; 
+energy changes.
+11:00–12:00 Lifetime learning Selected agent’s action values visibly 
+update from reward.
+12:00–13:00 Death + reproduction + mutation Offspring spawn with parent ID and 
+mutated meta-learning genome.
+13:00–14:00 Trace X / Trace Y Each species changes a persistent 
+shared environmental variable.
+14:00–15:00 Drought + fast-forward Perturbation works; 1× / 10× / 50× work.
+15:00–16:00 HUD + inspector + population chart Can prove individual learning and 
+generational change.
+16:00–17:00 Polish + repeatable demo Run chosen seed, fix failures, record 
+backup capture, rehearse 90 s story.
+Priority stack
+CUT ORDER
+P0Same individual learns; learning is visible; reproduction; inherited/mutated meta-learning 
+parameters; population changes across generations.
+P1 Two species; environmental modification; drought; 1×/10×/50×; simple control mode.
+P2 Individual inspector; evolution chart; polished HUD; stronger environmental VFX.
+P3Goal drift; social learning; partial learned-policy inheritance; AI scientist; external Python 
+analysis.
+IF BEHIND SCHEDULE
+Cut AI scientist, extra charts, sophisticated deformation, social learning and goal drift before cutting lifetime learning or 
+inherited learning parameters.
+==================== PAGE 14 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 1412. Acceptance Criteria & 90-Second Demo
+The final demonstration should be a causal story, not a montage.
+12.1 Definition of done
+1. Start from a known random seed and initial population.
+2. Select one Lumen and show its initial learned policy and inherited meta-learning parameters.
+3. Let it interact; show its policy values change in the same lifetime.
+4. Show the individual reproducing or show one child with a parent ID.
+5. Show the child’s related but mutated meta-learning parameters.
+6. Fast-forward multiple generations; show population means/distributions shifting.
+7. Trigger DROUGHT; existing individuals change behavior without offline retraining.
+8. Continue fast-forward; show post-drought evolutionary change.
+9. Run or show a learning-off control to demonstrate that policy plasticity matters.
+10. End with the world still running: adaptation does not stop at deployment.
+12.2 90-second narrative
+0–15 s “Most agents are deployed when training ends. For these 
+agents, deployment is when learning begins.” Show the world 
+and select one Lumen.
+15–35 s Show inherited parameters versus learned policy; run at 1× 
+and watch the same individual update.
+35–50 s Fast-forward generations. Show that descendants inherit and 
+mutate how they learn, not just what they currently do.
+50–75 s Press DROUGHT. Lumens regroup; Tectons alter movement; 
+policy distributions shift. Accelerate again.
+75–90 s Show population meta-parameter shift and control contrast. 
+Final line: “Training was only generation zero.”
+FINAL LINE
+TRAINING WAS ONLY GENERATION ZERO.
+==================== PAGE 15 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 1513. Risk Register & Fallbacks
+Protect the learning proof first; protect the cinematic rendering second.
+Risk Fallback / mitigation Priority
+Unreal animation / creature asset 
+integration takes too longUse glowing capsules/low-poly rigs 
+temporarily; keep learning and telemetry 
+working.High
+Terrain deformation is expensive or 
+buggyUse numerical Trace Y plus 
+decals/material blends/vegetation state 
+changes.High
+Learning appears unstable Use bounded action values, small α, 
+deterministic rewards and a fixed demo 
+seed.High
+Evolution takes too long to see Shorten lifespan/reproduction threshold 
+and use 10×/50× logical speed.High
+No interesting co-adaptive pattern 
+emergesDo not depend on emergence for 
+acceptance; the proof is policy change + 
+inherited meta-learning change.Medium
+HUD is too ambitious Keep only top metrics, one individual 
+inspector and one population evolution 
+chart.Medium
+Live demo fails Record a backup run from the same 
+reproducible seed after the system is 
+working.Medium
+Scope expands toward LLM agents Explicitly defer LLM inhabitants to post-
+hack extensions.Low
+Scientific guardrails
+Do not label survival or recovery as “intelligence.”
+Do not hard-code cooperation and then claim it emerged.
+Log the random seed and learning/evolution mode for every run shown.
+Show at least one control where learning is disabled.
+Keep inherited parameters visually separate from lifetime-learned policy values.
+==================== PAGE 16 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 1614. What Changed from the Previous Spec
+The project is ~80–85% the same world and architecture; the core adaptive mechanism is now sharper and better aligned 
+to the Sundai brief.
+Earlier version Locked version Why it matters
+Behavior weights were the main evolving  
+object.Each agent has a genuine post-
+deployment online learner; behavior 
+values update during its lifetime.Prevents the demo from looking like a 
+conventional genetic algorithm.
+Evolution primarily changed behavioral 
+preferences.Evolution changes meta-learning 
+parameters such as α and ε.The population can evolve how to learn.
+Adaptation could be inferred from 
+descendants.The same selected individual must 
+visibly change policy before reproducing.Direct evidence of continuous learning.
+“Terra” species with optional 
+mushroom/fungal visual language.Species B is Tecton; no mushrooms or 
+third-organism explanation.Cleaner scientific story and visual 
+grammar.
+Arches could read as ruins. Arches are explicitly geological 
+formations only.Avoids implying a higher civilization.
+Potentially broad ecology. Exactly two active species in the MVP. Keeps causal attribution and 
+implementation manageable.
+AI scientist was a notable extension. AI scientist is P3; inhabitants are the 
+focus.Aligns build time with challenge intent.
+LOCKED THESIS
+Individual learning → evolution of learning → co-adaptation in a shared, self-modifying environment.
+==================== PAGE 17 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 17A. Appendix — Suggested MVP Parameters
+Use these as starting values only; tune quickly for visible dynamics and reproducible demo timing.
+Parameter Starting value Notes
+Initial Lumen population 40 Fast enough to generate social/local 
+density effects.
+Initial Tecton population 12 Large visual presence without 
+overloading the scene.
+Decision interval 1.0 s Independent of rendering tick.
+World-field update 0.1–0.2 s 5–10 Hz.
+Lumen lifespan 90–150 logical s Tune to show generations in minutes at 
+10×/50×.
+Tecton lifespan 180–300 logical s Longer than Lumen, still demoable.
+Learning rate α 0.05–0.25 inherited Clamp to stable range.
+Exploration ε 0.05–0.40 inherited Decay optional; for hack keep inheritable  
+and bounded.
+Mutation σ 0.02–0.05 Per meta-parameter at birth.
+Reproduction threshold ~70–80% max energy Tune so lineages turn over visibly.
+Trace X half-life 15–30 logical s Information marker should visibly persist 
+but decay.
+Trace Y half-life 60–180 logical s Terrain effect persists longer.
+Drought water multiplier 0.25–0.40 Strong but not instantly lethal.
+Drought resource regen 0.20–0.40 × baseline Tune for meaningful selection pressure.
+Demo seeds 3–5 pretested seeds Choose one stable primary and one 
+backup.
+Minimum logged fields
+run_id, seed, sim_time, generation, drought_state
+agent_id, parent_id, species, age, energy
+alpha, epsilon, memory, social_response, env_effect
+Q_forage, Q_explore, Q_follow, Q_avoid, Q_signal, Q_rest, Q_modify
+current_action, reward, births, deaths
+resource_A, resource_B, water, trace_X_mean, trace_Y_mean
+Post-hack extensions
+Upgrade the action-value learner to a tiny neural or recurrent policy; allow reward weights to drift.
+Add social learning and weak inheritance of learned policy state.
+Move high-throughput science runs to Python while retaining Unreal as the visual front end.
+Add a Scientist/Critic agent for controlled interventions after the core ecology is validated.
+Introduce additional ecological roles only after the two-species dynamics are understood.
+==================== PAGE 18 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 18B. Appendix — Design Reference Plate
+The four renderings below are concept targets, not literal promises of one-day implementation fidelity.
+B1 — World overview: natural geology, two species, persistent 3D ecology.
+B2 — Lumen: individual learning, signaling and inspectable policy.
+==================== PAGE 19 ====================
+SYMBIOTIC WORLD  |  SUNDAI HACK 139 SPECIFICATION
+Version 1.0  •  5 September 2026 Page 19
+B3 — Tecton: terrain modification, moisture channels and resource regeneration.
+B4 — Drought: lifetime adaptation and generational evolution under perturbation.

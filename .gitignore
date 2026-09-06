@@ -1,0 +1,49 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+.vs/
+.vscode/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+# Python
+__pycache__/
+*.pyc
+# Local
+_tmp/
+# Session logs
+*_log.txt
+headless_*.txt
+# Downloaded asset sources (zips, FBX, glTF) - not committed
+AssetSources/*
+# Migrated Electric Dreams (Epic sample, UE EULA / Fab licence) and imported scans: regenerate with Tools/migrate_ed.py and Tools/import_assets.py
+Content/Megascans/
+Content/Meshes/
+Content/MSPresets/
+Content/Custom/
+Content/Effects/
+Content/FX/
+Content/PCG/
+Content/PhysicalMaterials/
+Content/SmartAssets/
+Content/Textures/
+Content/Assets/
+*_log[0-9].txt
+foliage_log*.txt
+import_log*.txt
+materials_log*.txt
+shot_log*.txt
+!AssetSources/ed_manifest.json
+# Local editor / tool state
+Content/Developers/
+Content/Collections/
+.claude/settings.local.json
+.claude/worktrees/
+*.log
+.idea/
