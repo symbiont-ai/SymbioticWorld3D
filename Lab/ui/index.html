@@ -147,9 +147,18 @@ function streamUrl(){
 
 async function liveCtl(a){
   if (a === "reset" && !confirm(
-      "Delete all live evidence windows not yet cited by a hypothesis or stance?")) return;
-  const r = await fetch("/api/live/" + a, {method: "POST"});
+      "Delete all live evidence windows not yet cited by a hypothesis or stance?\n" +
+      "(💾 save first to archive the current collection.)")) return;
+  let opts = {method: "POST"};
+  if (a === "save") {
+    const name = prompt("Name this data save (optional):");
+    if (name === null) return;   // cancelled
+    opts.headers = {"Content-Type": "application/json"};
+    opts.body = JSON.stringify({name});
+  }
+  const r = await fetch("/api/live/" + a, opts);
   const j = await r.json();
+  if (a === "save")  alert(`saved ${j.evidence} live evidence rows (${j.runs} runs) → ${j.file}`);
   if (a === "reset") alert(`cleared ${j.deleted} uncited live rows (kept ${j.kept} cited)`);
   await tick();
 }
@@ -166,6 +175,7 @@ function worldSide(){
     <div class="card"><h3>Live telemetry <span class="dim">(policy bridge)</span>
       <span style="float:right">
         <button ${btn} onclick="liveCtl('${paused ? "play" : "pause"}')">${paused ? "▶ collect" : "⏸ pause"}</button>
+        <button ${btn} onclick="liveCtl('save')">💾 save</button>
         <button ${btn} onclick="liveCtl('reset')">↺ reset</button></span></h3>
       ${paused ? `<div class="dim" style="margin-bottom:4px">collection paused —
         live windows are discarded until ▶ collect</div>` : ""}

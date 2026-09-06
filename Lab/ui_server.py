@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -100,12 +101,37 @@ def make_handler(db_path):
             # the uncited-live-evidence reset (dashboard World-tab controls).
             from . import db as labdb
             path = urlparse(self.path).path
-            if path not in ("/api/live/play", "/api/live/pause", "/api/live/reset"):
+            if path not in ("/api/live/play", "/api/live/pause",
+                            "/api/live/reset", "/api/live/save"):
                 self._send(404, b"not found", "text/plain")
                 return
             con = labdb.connect(db_path)
             try:
-                if path.endswith("/reset"):
+                if path.endswith("/save"):
+                    # Archive the current live-collection windows to a named
+                    # snapshot under Lab/saves/ (reset can then start a fresh
+                    # collection without losing anything).
+                    n = int(self.headers.get("Content-Length") or 0)
+                    try:
+                        req = json.loads(self.rfile.read(n) or b"{}")
+                    except json.JSONDecodeError:
+                        req = {}
+                    name = re.sub(r"[^A-Za-z0-9_-]", "",
+                                  str(req.get("name") or ""))[:40]
+                    evid = [dict(r) for r in con.execute(
+                        "SELECT * FROM evidence WHERE stat LIKE 'live_%' ORDER BY id")]
+                    runs = [dict(r) for r in con.execute(
+                        "SELECT * FROM runs WHERE run_id LIKE 'live:%'")]
+                    sdir = config.LAB_DIR / "saves"
+                    sdir.mkdir(exist_ok=True)
+                    fname = (time.strftime("live_%Y%m%d_%H%M%S")
+                             + (f"_{name}" if name else "") + ".json")
+                    (sdir / fname).write_text(json.dumps(
+                        {"name": name, "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                         "runs": runs, "evidence": evid}, indent=1))
+                    out = {"file": f"Lab/saves/{fname}",
+                           "evidence": len(evid), "runs": len(runs)}
+                elif path.endswith("/reset"):
                     # Evidence already cited by a hypothesis or stance is part
                     # of the scientific record and survives the reset.
                     cited = {r[0] for r in con.execute(
