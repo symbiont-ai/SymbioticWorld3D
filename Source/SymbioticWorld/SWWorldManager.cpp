@@ -223,6 +223,24 @@ bool ASWWorldManager::SetStructPropertyByName(UScriptStruct* StructType, void* S
 		if (V == INDEX_NONE) { UE_LOG(LogSymbioticWorld, Warning, TEXT("SWSet: bad enum value '%s' for %s"), *Value, *Name); return false; }
 		E->GetUnderlyingProperty()->SetIntPropertyValue(ValuePtr, V);
 	}
+	// UHT reflects a `UENUM enum class : uint8` UPROPERTY as an FByteProperty carrying an
+	// Enum pointer, NOT as an FEnumProperty (that one is for wider underlying types), so
+	// without this branch Settings.Mode and Settings.LeviathanTarget fall through to
+	// "unsupported" and -SWSet silently does nothing. Accepts a name or a number.
+	else if (FByteProperty* By = CastField<FByteProperty>(Prop))
+	{
+		if (UEnum* En = By->Enum)
+		{
+			int64 V = En->GetValueByNameString(Value);
+			if (V == INDEX_NONE && Value.IsNumeric()) V = FCString::Atoi64(*Value);
+			if (V == INDEX_NONE) { UE_LOG(LogSymbioticWorld, Warning, TEXT("SWSet: bad enum value '%s' for %s"), *Value, *Name); return false; }
+			By->SetPropertyValue(ValuePtr, static_cast<uint8>(V));
+		}
+		else
+		{
+			By->SetPropertyValue(ValuePtr, static_cast<uint8>(FCString::Atoi(*Value)));
+		}
+	}
 	else
 	{
 		UE_LOG(LogSymbioticWorld, Warning, TEXT("SWSet: unsupported property type for '%s'"), *Name);

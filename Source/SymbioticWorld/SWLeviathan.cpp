@@ -174,7 +174,11 @@ void ASWLeviathan::Step(float Dt, TArray<ASWAgent*>& OutVictims)
 	// ---- 3) Strike: the nearest organism that is IN THE WATER and in range ----
 	// The cooldown is what keeps this a pressure rather than an extinction event:
 	// one animal removes at most one organism per LeviathanStrikeCooldown seconds.
-	if (StrikeTimer <= 0.f)
+	// Predation pauses during a drought so the two perturbations never overlap and the
+	// drought's own effect stays readable: the animal keeps patrolling, it just does
+	// not take anything.
+	const bool bPausedByDrought = S.bLeviathanPauseInDrought && Manager->IsDrought();
+	if (StrikeTimer <= 0.f && !bPausedByDrought)
 	{
 		const FVector Here = GetActorLocation();
 		float BestD2 = S.LeviathanStrikeRadius * S.LeviathanStrikeRadius;
@@ -183,6 +187,9 @@ void ASWLeviathan::Step(float Dt, TArray<ASWAgent*>& OutVictims)
 		{
 			if (!IsValid(A) || !A->IsAlive()) continue;
 			if (OutVictims.Contains(A)) continue;          // another leviathan already claimed it this substep
+			// Optional single-species filter. Reads GetSpecies() only; adds no species.
+			if (S.LeviathanTarget == ESWLeviathanTarget::Lumen  && A->GetSpecies() != ESWSpecies::Lumen)  continue;
+			if (S.LeviathanTarget == ESWLeviathanTarget::Tecton && A->GetSpecies() != ESWSpecies::Tecton) continue;
 			const FVector AL = A->GetActorLocation();
 			if (!IsInWater(AL)) continue;                  // dry ground is safe, and the organism can sense that
 			const float D2 = FVector::DistSquared2D(Here, AL);

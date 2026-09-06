@@ -81,15 +81,29 @@ performs that comparison across seeds.
   the river channel at `LeviathanSpeed` uu/s on the fixed substep and kill any
   organism within `LeviathanStrikeRadius` (horizontal) whose position is in the
   water (`FSWPercept::bOnLand` false, widened by `LeviathanWaterMargin`), at
-  most one kill per `LeviathanStrikeCooldown` s per animal. Kills are logged in
-  `deaths.csv` with cause `predation` and counted in the HUD title. Movement
-  and surfacing (`LeviathanSubmersion`, `LeviathanBreachRise`,
-  `LeviathanSurfaceInterval`, `LeviathanSurfaceDuration`) are visual and use
-  their own `LookSeed` stream; `Look.LeviathanBody/Glow/Scale/GlowScale` style
-  it. Selection pressure it creates: staying out of the channel, which both the
-  built-in bandit and an external policy can learn from the existing `on_land`
-  percept and the `avoid` action. With `bLeviathan` false every run is
-  byte-identical to the pre-predator build (verified seed 7, 120 s).
+  most one kill per `LeviathanStrikeCooldown` s per animal. The cooldown is
+  the death-rate dial: encounters are far more frequent than it, so one animal
+  takes at most 60/cooldown organisms per logical minute (default 5 s ->
+  12/min; raise it if the population crashes). `LeviathanTarget`
+  (`ESWLeviathanTarget`: `Both` default, `Lumen`, `Tecton`) restricts the
+  victims to one species; it is a filter on the predator, not an `ESWSpecies`
+  entry, and `Both` is the default because a single-species predator is a
+  species handicap rather than a shared pressure. `bLeviathanPauseInDrought`
+  (default true) stops strikes while the drought is active so the two
+  perturbations never overlap; the animal keeps patrolling. Kills are logged
+  in `deaths.csv` with cause `predation` and shown in a sixth, red HUD stat
+  card (`PREDATION`, "paused: drought" during a paused drought; the drought
+  banner then reads "(predation paused)"). Movement and surfacing
+  (`LeviathanSubmersion`, `LeviathanBreachRise`, `LeviathanSurfaceInterval`,
+  `LeviathanSurfaceDuration`) are visual and use their own `LookSeed` stream;
+  `Look.LeviathanBody/Glow/Scale/GlowScale` style it, red by default to match
+  the drought banner (red = perturbation on the HUD). Enum settings such as
+  `Settings.LeviathanTarget` are settable by name through `-SWSet` and the
+  control file's `set`. Selection pressure it creates: staying out of the
+  channel, which both the built-in bandit and an external policy can learn
+  from the existing `on_land` percept and the `avoid` action. With
+  `bLeviathan` false every run is byte-identical to the pre-predator build
+  (verified seed 7, 120 s).
 - Signals: a signalling Lumen broadcasts its nearest known resource location
   to same-species neighbours within `NeighbourRange · (0.5 + social)`;
   receivers accept with probability `social`.
