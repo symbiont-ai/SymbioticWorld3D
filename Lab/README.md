@@ -146,6 +146,24 @@ individual creatures) — but a scripted policy served from `policy_server.py`
 is a legitimate future *intervention arm* for experiments ("does a
 forage-greedy Lumen policy change the selection gradient on alpha?").
 
+## The two scientist modes (god view is the default)
+
+- **God view** — `python -m Lab.lab observe`. The DEFAULT and the priority
+  mode: the bridge receives every organism's percept, genome, reward and
+  chosen action every decision, and distills each 60 s window into global
+  evidence: populations, genome means, rewards, traces, and the full
+  behavior distribution per species (`live_*_action_*_frac`). Cheapest for
+  the sim (no avatar rendering), complete information for the scientists.
+- **Embodied field team** — add `--embody`. The eight researchers walk the
+  arena as virtual bodies with a sense radius; each observer can present
+  only what they personally witnessed, and the sim can render them as
+  mannequins (V key / `Look.bScientistAvatars`, off by default). Costs
+  render load and partial observability — use it when the point is the
+  fieldwork, not the fastest science.
+
+Same discourse rules in both modes; the toggle changes what the scientists
+can see, never how claims are validated.
+
 ## Joining the live simulator (`observe`)
 
 `python -m Lab.lab observe` starts a policy-bridge server (docs/POLICY_API.md)

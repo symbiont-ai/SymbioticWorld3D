@@ -35,6 +35,7 @@ class _Window:
         self.epsilon = {"Lumen": [], "Tecton": []}
         self.env_e = {"Lumen": [], "Tecton": []}
         self.rewards = {"Lumen": [], "Tecton": []}
+        self.actions = {"Lumen": {}, "Tecton": {}}   # god view: behavior distribution
         self.trace_x, self.trace_y = [], []
 
     def add(self, a):
@@ -52,6 +53,9 @@ class _Window:
                 self.env_e[sp].append(g.get("e", 0.5))
         if a.get("last_reward") is not None:
             self.rewards[sp].append(a["last_reward"])
+        la = a.get("last_action")
+        if la:
+            self.actions[sp][la] = self.actions[sp].get(la, 0) + 1
         if "trace_x" in p:
             self.trace_x.append(p["trace_x"])
             self.trace_y.append(p["trace_y"])
@@ -77,6 +81,14 @@ class _Window:
                 out.append((f"live_{s}_mean_reward",
                             sum(self.rewards[sp]) / len(self.rewards[sp]),
                             f"mean per-decision reward of live {sp} — {prov}"))
+            # Behavior distribution: what the whole population actually did this
+            # window (the god view's core observable; no interpretation attached).
+            total = sum(self.actions[sp].values())
+            if total:
+                for act, cnt in sorted(self.actions[sp].items()):
+                    out.append((f"live_{s}_action_{act}_frac", cnt / total,
+                                f"share of {sp} decisions choosing {act} "
+                                f"({total} decisions) — {prov}"))
         if self.trace_x:
             out.append(("live_trace_x_mean", sum(self.trace_x) / len(self.trace_x),
                         f"mean local Trace X at decision points — {prov}"))
