@@ -81,6 +81,13 @@ def cmd_textbook(args):
     print(json.dumps(memory.textbook(con), indent=2))
 
 
+def cmd_trajectory(args):
+    from . import trajectory
+    con = db.connect(args.db)
+    for line in trajectory.report_section(con):
+        print(line)
+
+
 def cmd_victory(args):
     from . import victory
     con = db.connect(args.db)
@@ -132,6 +139,10 @@ def main():
     s = sub.add_parser("victory",
                        help="score the spec's six victory conditions against the evidence")
     s.set_defaults(fn=cmd_victory)
+
+    s = sub.add_parser("trajectory",
+                       help="print the discourse trajectory (is the conversation improving?)")
+    s.set_defaults(fn=cmd_trajectory)
 
     s = sub.add_parser("ui", help="serve the read-only lab dashboard (LAN-visible)")
     s.add_argument("--port", type=int, default=8765)

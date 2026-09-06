@@ -103,8 +103,9 @@ def generate(con, session_label=None, annex_lines=None):
             L.append(f"| {c['agent']} | {c['domain']} | {c['weight']:.2f} | {c['n_scored']} |")
         L.append("")
 
-    from . import victory
+    from . import trajectory, victory
     L += victory.report_section(con)
+    L += trajectory.report_section(con)
 
     L += ["## Open questions", ""]
     for q in _rows(con, "SELECT * FROM open_questions ORDER BY id"):
