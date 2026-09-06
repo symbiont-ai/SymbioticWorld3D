@@ -50,6 +50,8 @@ protected:
 	void DrawInspector(const ASWWorldManager& M, const ASWAgent& A, float X, float Y, float W);
 	void DrawMinimap(const ASWWorldManager& M, float X, float Y, float Size);
 	void DrawHelp(float X, float Y);
+	// Bottom-centre credits card (Look.GreetingLine1 / GreetingLine2). Cosmetic only.
+	void DrawGreeting(const ASWWorldManager& M, float CentreX, float BottomY);
 	void DrawSelectionMarker(const ASWAgent& A);
 	void DrawEvolutionStrip(const ASWWorldManager& M, float X, float Y, float W);
 };

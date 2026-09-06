@@ -140,10 +140,44 @@ void ASWHUD::DrawHUD()
 	{
 		DrawLine(SX * 0.5f - 40.f, 70.f, TEXT("PAUSED"), ColRed, 1.6f);
 	}
+	DrawGreeting(*M, SX * 0.5f, SY - 78.f);
+
 	if (M->IsDrought())
 	{
-		DrawPanel(SX * 0.5f - 160.f, SY - 66.f, 320.f, 34.f, FLinearColor(0.45f, 0.08f, 0.05f, 0.85f), &ColRed);
-		DrawLine(SX * 0.5f - 146.f, SY - 58.f, TEXT("PERTURBATION ACTIVE:  DROUGHT"), ColText, 1.2f);
+		// While the drought is on, predation is paused (Settings.bLeviathanPauseInDrought),
+		// so say so rather than leaving the viewer to wonder why the kills stopped.
+		const bool bPredationPaused = M->GetSettings().bLeviathan && M->GetSettings().bLeviathanPauseInDrought;
+		const float W = bPredationPaused ? 430.f : 320.f;
+		DrawPanel(SX * 0.5f - W * 0.5f, SY - 66.f, W, 34.f, FLinearColor(0.45f, 0.08f, 0.05f, 0.85f), &ColRed);
+		DrawLine(SX * 0.5f - W * 0.5f + 14.f, SY - 58.f,
+			bPredationPaused ? TEXT("PERTURBATION ACTIVE:  DROUGHT   (predation paused)")
+			                 : TEXT("PERTURBATION ACTIVE:  DROUGHT"), ColText, 1.2f);
+	}
+}
+
+void ASWHUD::DrawGreeting(const ASWWorldManager& M, float CentreX, float BottomY)
+{
+	const FSWLookSettings& L = M.GetLook();
+	if (L.GreetingLine1.IsEmpty() && L.GreetingLine2.IsEmpty()) return;
+
+	// Width follows the text so a longer set of names is never clipped.
+	const float W1 = L.GreetingLine1.IsEmpty() ? 0.f : TextWidth(L.GreetingLine1, 1.25f);
+	const float W2 = L.GreetingLine2.IsEmpty() ? 0.f : TextWidth(L.GreetingLine2, 0.95f);
+	const float W = FMath::Max(FMath::Max(W1, W2) + 34.f, 190.f);
+	const float H = (L.GreetingLine1.IsEmpty() || L.GreetingLine2.IsEmpty()) ? 32.f : 50.f;
+	const float X = CentreX - W * 0.5f;
+	const float Y = BottomY - H;
+
+	DrawPanel(X, Y, W, H, ColPanel, &ColLumen, 0.f);
+	float TY = Y + 8.f;
+	if (!L.GreetingLine1.IsEmpty())
+	{
+		DrawLine(CentreX - W1 * 0.5f, TY, L.GreetingLine1, ColText, 1.25f);
+		TY += 20.f;
+	}
+	if (!L.GreetingLine2.IsEmpty())
+	{
+		DrawLine(CentreX - W2 * 0.5f, TY, L.GreetingLine2, ColDim, 0.95f);
 	}
 }
 
@@ -160,11 +194,8 @@ void ASWHUD::DrawTitle(const ASWWorldManager& M)
 		// external organisms / total (docs/POLICY_API.md); the servers' connection state is in the log
 		Line += FString::Printf(TEXT("   ext %d/%d"), M.GetExternalCount(), M.GetLivingCount());
 	}
-	if (S.bLeviathan)
-	{
-		// Predation deaths so far (deaths.csv carries them individually, cause = "predation").
-		Line += FString::Printf(TEXT("   predation %d"), M.GetDeathsPredation());
-	}
+	// Predation is NOT appended here: this line is already close to the 330 px panel and
+	// the overflow ran underneath the GENERATION stat card. It gets its own card instead.
 	DrawLine(30.f, Y + 2.f, Line, ColDim);
 }
 
@@ -178,15 +209,25 @@ void ASWHUD::DrawStatCards(const ASWWorldManager& M)
 	const float Stab = M.GetStability();
 
 	struct FCard { FString Label; FString Value; FString Sub; FLinearColor C; };
-	const FCard Cards[5] = {
-		{ TEXT("GENERATION"),   Thousands(FMath::Max(L.MaxGeneration, T.MaxGeneration)), TEXT("ongoing evolution"), ColText },
-		{ TEXT("POPULATION A"), Thousands(L.N), TEXT("lumen"), ColLumen },
-		{ TEXT("POPULATION B"), Thousands(T.N), TEXT("tecton"), ColTecton },
-		{ TEXT("RESOURCES"),    FString::Printf(TEXT("%.0f%%"), Res * 100.f), Res > 0.5f ? TEXT("stable") : (Res > 0.25f ? TEXT("strained") : TEXT("depleted")), ColGreen },
-		{ TEXT("STABILITY"),    FString::Printf(TEXT("%.0f%%"), Stab * 100.f), Stab > 0.85f ? TEXT("thriving") : (Stab > 0.6f ? TEXT("shifting") : TEXT("turbulent")), M.IsDrought() ? ColRed : ColText },
-	};
+	TArray<FCard> Cards;
+	Cards.Add({ TEXT("GENERATION"),   Thousands(FMath::Max(L.MaxGeneration, T.MaxGeneration)), TEXT("ongoing evolution"), ColText });
+	Cards.Add({ TEXT("POPULATION A"), Thousands(L.N), TEXT("lumen"), ColLumen });
+	Cards.Add({ TEXT("POPULATION B"), Thousands(T.N), TEXT("tecton"), ColTecton });
+	Cards.Add({ TEXT("RESOURCES"),    FString::Printf(TEXT("%.0f%%"), Res * 100.f), Res > 0.5f ? TEXT("stable") : (Res > 0.25f ? TEXT("strained") : TEXT("depleted")), ColGreen });
+	Cards.Add({ TEXT("STABILITY"),    FString::Printf(TEXT("%.0f%%"), Stab * 100.f), Stab > 0.85f ? TEXT("thriving") : (Stab > 0.6f ? TEXT("shifting") : TEXT("turbulent")), M.IsDrought() ? ColRed : ColText });
+	// Sixth card only when the predator is enabled, so the default five-card layout is
+	// byte-for-byte what it was. Red, matching the drought banner: both are perturbations.
+	if (M.GetSettings().bLeviathan)
+	{
+		const int32 NPred = M.GetDeathsPredation();
+		const bool bPaused = M.IsDrought() && M.GetSettings().bLeviathanPauseInDrought;
+		Cards.Add({ TEXT("PREDATION"), Thousands(NPred),
+		            bPaused ? TEXT("paused: drought") : TEXT("taken by the leviathan"), ColRed });
+	}
+
 	const float CardW = 150.f, CardH = 60.f, Gap = 8.f;
-	const float Total = 5 * CardW + 4 * Gap;
+	const float Total = Cards.Num() * CardW + (Cards.Num() - 1) * Gap;
+	// Keep clear of the 330 px title panel on the left; centre when there is room.
 	float X = FMath::Max(370.f, Canvas->SizeX * 0.5f - Total * 0.5f);
 	for (const FCard& C : Cards)
 	{

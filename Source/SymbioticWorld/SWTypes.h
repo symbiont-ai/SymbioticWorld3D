@@ -44,6 +44,17 @@ constexpr int32 SW_NUM_ACTIONS = static_cast<int32>(ESWAction::COUNT);
 // context that lets an agent represent "forage when low, rest when high".
 constexpr int32 SW_NUM_ENERGY_BINS = 3;
 
+// Which organisms the leviathan will take. NOT an extension of ESWSpecies — it is a
+// filter on the PREDATOR's targets, so the species enum stays binary and the external
+// policy protocol (7 actions, 2 species) is untouched.
+UENUM(BlueprintType)
+enum class ESWLeviathanTarget : uint8
+{
+	Both   UMETA(DisplayName = "Both species"),
+	Lumen  UMETA(DisplayName = "Lumen only"),
+	Tecton UMETA(DisplayName = "Tecton only")
+};
+
 UENUM(BlueprintType)
 enum class ESWLearningMode : uint8
 {
@@ -240,8 +251,10 @@ struct FSWLookSettings
 	UPROPERTY(EditAnywhere) FLinearColor LumenGlow = FLinearColor(0.40f, 0.85f, 1.0f);
 	UPROPERTY(EditAnywhere) FLinearColor TectonBody = FLinearColor(0.05f, 0.045f, 0.045f);
 	UPROPERTY(EditAnywhere) FLinearColor TectonGlow = FLinearColor(1.0f, 0.42f, 0.07f);
-	UPROPERTY(EditAnywhere) FLinearColor LeviathanBody = FLinearColor(0.028f, 0.036f, 0.048f);
-	UPROPERTY(EditAnywhere) FLinearColor LeviathanGlow = FLinearColor(0.22f, 0.95f, 0.88f);
+	// Red: the HUD already reads red as "perturbation" (the drought banner), so the
+	// predator matches. Overridable live with -SWSet "Look.LeviathanGlow=r:g:b".
+	UPROPERTY(EditAnywhere) FLinearColor LeviathanBody = FLinearColor(0.075f, 0.012f, 0.010f);
+	UPROPERTY(EditAnywhere) FLinearColor LeviathanGlow = FLinearColor(1.00f, 0.13f, 0.06f);
 	UPROPERTY(EditAnywhere) float LeviathanScale = 0.55f;        // multiplier on the procedural body: ~900 uu long, 2.5x a Tecton
 	UPROPERTY(EditAnywhere) float LeviathanGlowScale = 0.8f;     // x CreatureGlow while cruising (x2.2 while surfacing)
 	UPROPERTY(EditAnywhere) FLinearColor ResourceAGlow = FLinearColor(0.25f, 1.0f, 0.35f);
@@ -315,6 +328,14 @@ struct FSWLookSettings
 	// Console commands executed once after the environment is built. '|' separates
 	// commands and '=' becomes a space, so the value survives -SWSet without quoting:
 	//   --set "Look.ConsoleCommands=r.vsync=0|stat=unit"
+	// ---- Greeting card (bottom centre of the HUD) ----
+	// Purely cosmetic; touches nothing in the simulation. Either line empty hides that
+	// line; both empty hides the card. Overridable with -SWSet "Look.GreetingLine1=..."
+	// but NOT with a comma or semicolon in it (the command line parser stops at ','
+	// and -SWSet owns ';'), which is why the credits are compiled in here.
+	UPROPERTY(EditAnywhere) FString GreetingLine1 = TEXT("Hello Sundai");
+	UPROPERTY(EditAnywhere) FString GreetingLine2 = TEXT("From Ilknur, Kalyani, Will");
+
 	UPROPERTY(EditAnywhere) FString ConsoleCommands;
 	UPROPERTY(EditAnywhere) bool bCreatureShadows = true;
 	UPROPERTY(EditAnywhere) bool bDroughtPreview = false;            // render the drought look without touching the sim
@@ -449,7 +470,18 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) int32 LeviathanCount = 1;
 	UPROPERTY(EditAnywhere) float LeviathanSpeed = 620.f;          // uu per logical s along the channel
 	UPROPERTY(EditAnywhere) float LeviathanStrikeRadius = 420.f;   // uu, horizontal
-	UPROPERTY(EditAnywhere) float LeviathanStrikeCooldown = 6.f;   // logical s between kills (one animal cannot clear a shoal)
+	// THE dial that sets the death rate. The encounter rate is far higher than this, so
+	// kills are cooldown-limited: one leviathan takes at most 60/Cooldown organisms per
+	// logical minute (5 s -> 12/min, 20 s -> 3/min). Raise it if the population crashes.
+	UPROPERTY(EditAnywhere) float LeviathanStrikeCooldown = 5.f;   // logical s between kills
+	// Restrict the predator to one species. Both is the honest default: hunting one
+	// species only turns predation into a species-specific handicap rather than a shared
+	// environmental pressure, which changes what a mode C vs N comparison means.
+	UPROPERTY(EditAnywhere) ESWLeviathanTarget LeviathanTarget = ESWLeviathanTarget::Both;
+	// Predation pauses while the drought is active: one perturbation at a time, so the
+	// drought's effect on the population stays readable instead of being confounded.
+	// The animal keeps swimming; it just does not strike.
+	UPROPERTY(EditAnywhere) bool bLeviathanPauseInDrought = true;
 	// Added to Look.WaterLevel when testing "in the water". 0 makes the danger zone
 	// EXACTLY the set where FSWPercept::bOnLand is false; raise it to make the
 	// shallows dangerous too (at the cost of that exact correspondence).
@@ -489,6 +521,12 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) FString PolicyServers;
 	UPROPERTY(EditAnywhere) int32 PolicyTimeoutMs = 200;    // per-substep wait for a reply; on timeout the built-in bandit decides
 	UPROPERTY(EditAnywhere) float PolicyShare = 1.0f;       // fraction of a served species assigned to the server, decided per organism at birth (seeded stream)
+	// Server list file, watched on the wall clock while the sim runs (docs/POLICY_API.md, "Adding servers while
+	// the sim runs"): one "host:port=Species" per line, '#' comments. Its entries are added to PolicyServers
+	// (same host:port: the file line wins for the species). Relative paths are under the project directory.
+	// A missing file means "no file servers". Empty = do not watch. Also settable as -SWPolicyFile=path.
+	UPROPERTY(EditAnywhere) FString PolicyServerFile = TEXT("Saved/policy_servers.txt");
+	UPROPERTY(EditAnywhere) float PolicyFilePollSec = 3.0f;  // wall-clock seconds between stats of the file (never inside a substep)
 };
 
 // Snapshot of what one agent can perceive when it decides. Filled by the
