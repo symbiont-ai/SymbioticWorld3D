@@ -135,8 +135,13 @@ Printed in the UE log as `[host:port] text`.
 ```
 
 Reports embodied field observers (the Symbiotic Lab's `observe --embody`) for
-the sim's avatar layer: the sim renders one labelled mannequin per entry
-(`Look.bScientistAvatars`, default on) and smooths movement between reports.
+the sim's avatar layer: the sim renders one labelled mannequin per entry and
+smooths movement between reports. `Look.bScientistAvatars` gates the layer and
+is OFF by default (the plain god-view is the stable demo configuration); turn
+it on at launch with `-SWSet "Look.bScientistAvatars=true"` or live through
+the control file (`set Look.bScientistAvatars=1`), and off again the same way.
+The lab's witnessing and evidence are bridge-side and work identically with
+the layer off.
 Coordinates are arena uu, the same space as organism `position`. Send at most
 a few per sim-second; entries beyond 16 are ignored. STRICTLY visual: no
 organism can perceive an avatar, nothing enters the seeded stream, the CSVs,
