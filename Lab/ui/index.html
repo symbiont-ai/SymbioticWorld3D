@@ -163,6 +163,15 @@ async function liveCtl(a){
   await tick();
 }
 
+async function liveLoad(f){
+  const r = await fetch("/api/live/load", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify({file: f})});
+  const j = await r.json();
+  alert(j.error ? j.error
+        : `restored ${j.restored} rows from ${f} (${j.already_present} already present)`);
+  await tick();
+}
+
 function worldSide(){
   const m = S.meetings[S.meetings.length - 1];
   const live = (S.evidence || []).filter(e => e.stat.startsWith("live_")).slice(0, 10);
@@ -179,6 +188,11 @@ function worldSide(){
         <button ${btn} onclick="liveCtl('reset')">↺ reset</button></span></h3>
       ${paused ? `<div class="dim" style="margin-bottom:4px">collection paused —
         live windows are discarded until ▶ collect</div>` : ""}
+      ${(S.saves || []).length ? `<div style="margin:2px 0 6px">
+        ${S.saves.map(f => `<div class="tick"><span class="dim">💾
+          ${esc(f.replace(/^live_/, "").replace(/\.json$/, ""))}</span>
+          <a style="color:var(--cyan);cursor:pointer" onclick="liveLoad('${esc(f)}')">load</a>
+        </div>`).join("")}</div>` : ""}
       ${live.length ? live.map(e => `<div class="tick"><b>${esc(e.id)}</b>
           ${esc(e.stat.replace("live_",""))} = ${(+e.value).toFixed(3)}</div>`).join("")
         : `<span class="dim">not attached — run <b>python -m Lab.lab observe</b> and launch the

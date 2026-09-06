@@ -57,6 +57,9 @@ def snapshot(db_path):
     finally:
         con.close()
     out["figs"] = sorted(p.name for p in FIG_DIR.glob("*.png")) if FIG_DIR.exists() else []
+    sdir = config.LAB_DIR / "saves"
+    out["saves"] = (sorted((p.name for p in sdir.glob("live_*.json")), reverse=True)[:5]
+                    if sdir.exists() else [])
     # World-tab stream default when dashboard and sim run on different machines
     out["stream_url"] = os.environ.get("LAB_STREAM_URL", "")
     return out
@@ -102,11 +105,42 @@ def make_handler(db_path):
             from . import db as labdb
             path = urlparse(self.path).path
             if path not in ("/api/live/play", "/api/live/pause",
-                            "/api/live/reset", "/api/live/save"):
+                            "/api/live/reset", "/api/live/save",
+                            "/api/live/load"):
                 self._send(404, b"not found", "text/plain")
                 return
             con = labdb.connect(db_path)
             try:
+                if path.endswith("/load"):
+                    # Restore a snapshot: rows re-inserted, existing ids kept.
+                    n = int(self.headers.get("Content-Length") or 0)
+                    try:
+                        req = json.loads(self.rfile.read(n) or b"{}")
+                    except json.JSONDecodeError:
+                        req = {}
+                    fname = Path(str(req.get("file") or "")).name  # no traversal
+                    f = config.LAB_DIR / "saves" / fname
+                    if not (fname.startswith("live_") and fname.endswith(".json")
+                            and f.exists()):
+                        self._send(404, b'{"error": "no such save"}',
+                                   "application/json")
+                        return
+                    d = json.loads(f.read_text())
+                    before = con.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
+                    for r in d.get("runs", []):
+                        con.execute("INSERT OR IGNORE INTO runs VALUES(?,?,?,?,?,?)",
+                                    (r["run_id"], r["mode"], r["seed"],
+                                     r["sim_end"], r["path"], r["ingested_at"]))
+                    for e in d.get("evidence", []):
+                        con.execute("INSERT OR IGNORE INTO evidence VALUES(?,?,?,?,?,?)",
+                                    (e["id"], e["run_id"], e["stat"], e["value"],
+                                     e["provenance"], e["created_at"]))
+                    con.commit()
+                    after = con.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
+                    out = {"file": fname, "restored": after - before,
+                           "already_present": len(d.get("evidence", [])) - (after - before)}
+                    self._send(200, json.dumps(out).encode(), "application/json")
+                    return
                 if path.endswith("/save"):
                     # Archive the current live-collection windows to a named
                     # snapshot under Lab/saves/ (reset can then start a fresh
