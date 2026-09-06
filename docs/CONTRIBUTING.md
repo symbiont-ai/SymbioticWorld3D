@@ -31,6 +31,7 @@ verification numbers from §6.
 |---|---|---|
 | write a smarter or different controller for organisms | A | `Tools/policy_server.py` (`MyAgent.act/learn`), `docs/POLICY_API.md` |
 | test my agent without the sim | A | `Tools/policy_client_check.py` (one live exchange), `Tools/policy_replay.py` on a `--record` file or `docs/samples/decide_sample.jsonl` (see `docs/POLICY_API.md`, "Offline development") |
+| join a world that is already running | A | ask the host to add `your-ip:9000=Species` to `Saved/policy_servers.txt` (polled every 3 s; `Tools/policy_probe.py --write` finds you), see `docs/POLICY_API.md`, "Adding servers while the sim runs" |
 | ask a new question of existing runs | A (Python) | `Analysis/analyze_run.py`, CSVs from the host |
 | change a parameter or the look for one run | neither: `--set` | `Tools/run_sim.py --set "Settings.X=..;Lumen.Y=..;Look.Z=.."`, field names in `SWTypes.h` |
 | sweep parameters | neither: `--set` | `Tools/sweep.py` |
@@ -62,13 +63,17 @@ Source/SymbioticWorld/
   SWProcMesh.*          procedural terrain, arches, rocks, BuildLumen / BuildTecton bodies, glow clusters
 Tools/
   build.bat             the only allowed build entry point (refuses while any UnrealEditor process runs)
-  run_sim.py            launcher: headless / windowed / offscreen, --set, --shot, --policy, --stream
+  run_sim.py            launcher: headless / windowed / offscreen, --set, --shot, --policy, --policy-file, --stream
   sweep.py              one headless run per (override x mode x seed), summary table + CSV in Saved/
   policy_server.py      reference policy server (stdlib only): RandomAgent, BanditAgent, HeuristicAgent,
                         TraceFollowerAgent, MyAgent stub; --record writes every exchange as JSON lines
   policy_client_check.py  pretends to be the sim for one exchange against your server
   policy_replay.py      replays a --record file through an agent class offline, no sim
                         (docs/POLICY_API.md, "Offline development")
+  policy_probe.py       scans a /24 for policy servers (real hello + decide exchange per open port) and prints /
+                        appends "host:port=Both" lines for the server list file (--write Saved/policy_servers.txt)
+  policy_servers.example.txt   template for Saved/policy_servers.txt, the file the running sim polls every 3 s
+                        to add / change / remove servers without a restart (docs/POLICY_API.md)
   make_materials.py, make_valley_map.py, migrate_ed.py, import_assets.py, fetch_polyhaven.py,
   fix_foliage_materials.py, registry_dump.py   content generation / asset import (host only)
   start_stream_server.bat   Pixel Streaming signalling server
