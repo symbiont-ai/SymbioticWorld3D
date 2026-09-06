@@ -10,6 +10,7 @@
 
 class ASWAgent;
 class ASWResourcePatch;
+class ASWLeviathan;
 
 USTRUCT()
 struct FSWSpeciesStats
@@ -53,6 +54,8 @@ public:
 	const FSWLookSettings& GetLook() const { return Look; }
 	// Height an organism stands at, from the terrain field (pure function; no traces).
 	float GetGroundZ(float X, float Y) const;
+	// How far the drought has currently lowered the water (0 when not in drought).
+	float GetDroughtWaterDrop() const;
 	void SetEnvironment(class ASWEnvironment* Env) { Environment = Env; }
 	class ASWEnvironment* GetEnvironment() const { return Environment; }
 
@@ -93,6 +96,8 @@ public:
 	int32 GetBirths() const { return Births; }
 	int32 GetDeaths() const { return Deaths; }
 	int32 GetDeathsStarvation() const { return DeathsStarvation; }
+	int32 GetDeathsPredation() const { return DeathsPredation; }
+	const TArray<ASWLeviathan*>& GetLeviathans() const { return Leviathans; }
 	float GetResourceTotal(int32 Type) const { return Type == 0 ? ResourceTotalA : ResourceTotalB; }
 	float GetResourceCapacity(int32 Type) const { return Type == 0 ? ResourceCapA : ResourceCapB; }
 	int32 GetLivingCount() const { return Agents.Num(); }
@@ -115,6 +120,7 @@ public:
 protected:
 	UPROPERTY() TArray<ASWAgent*> Agents;
 	UPROPERTY() TArray<ASWResourcePatch*> Patches;
+	UPROPERTY() TArray<ASWLeviathan*> Leviathans;
 	UPROPERTY() ASWAgent* SelectedAgent = nullptr;
 	UPROPERTY() class ASWEnvironment* Environment = nullptr;
 
@@ -129,6 +135,7 @@ protected:
 	int32 Births = 0;
 	int32 Deaths = 0;
 	int32 DeathsStarvation = 0;
+	int32 DeathsPredation = 0;
 	float ResourceTotalA = 0.f, ResourceTotalB = 0.f;
 	float ResourceCapA = 0.f, ResourceCapB = 0.f;
 	float NeutralBirthTimer = 0.f;
@@ -152,6 +159,9 @@ protected:
 	void StepWorld(float Dt);
 	void SpawnFounders();
 	void SpawnPatches();
+	void SpawnLeviathans();
+	// Advances every leviathan and reaps the organisms they took (cause "predation").
+	void LeviathanStep(float Dt);
 	ASWAgent* SpawnAgent(ESWSpecies Species, const FSWGenome& Genome, const FVector& Loc, int32 ParentId, int32 Generation, float Energy);
 	FSWGenome MakeFounderGenome();
 	FSWGenome MakeChildGenome(const FSWGenome& Parent);
@@ -182,26 +192,6 @@ protected:
 	void PolicyExchange();
 	FString BuildHelloLine() const;
 	FString BuildDecideLine(int32 ServerIdx, const TArray<ASWAgent*>& Due) const;
-
-	// Server list file (Settings.PolicyServerFile), watched on the WALL clock from Tick(), never from a
-	// substep. Effective set = -SWPolicy entries + file entries (same host:port: the file wins for the
-	// species). A change is applied between substeps: removed servers are closed and their organisms
-	// unbound, new servers connect, unbound organisms of a species whose servers changed go through
-	// AssignPolicy() (the birth-time rule, so the seeded stream is drawn only when share < 1 or several
-	// servers serve the species). Nothing here runs, and no stream draw happens, without any server.
-	TArray<FSWPolicyServerSpec> LaunchPolicySpecs;      // from Settings.PolicyServers (-SWPolicy), fixed for the process
-	TArray<FSWPolicyServerSpec> EffectivePolicySpecs;   // what PolicyClient currently holds (same order)
-	FString PolicyFilePath;                             // resolved absolute path, empty = not watching
-	double PolicyFileNextPoll = 0.0;                    // wall clock (FPlatformTime)
-	double PolicyReportNextTime = 0.0;                  // wall clock: binding summary every 10 s while servers exist
-	FDateTime PolicyFileStamp;                          // last seen modification time (MinValue = absent)
-	int64 PolicyFileSize = -1;                          // last seen size (-1 = absent)
-	bool bPolicyFileEverPolled = false;
-	void InitPolicyServers();                           // BeginPlay: launch entries + first read of the file
-	void PollPolicyFile(bool bForce);                   // stat, re-parse on change, apply the diff
-	bool ReadPolicyFile(TArray<FSWPolicyServerSpec>& Out) const;   // false = file absent; bad lines logged and skipped
-	void ApplyPolicyServerSet(const TArray<FSWPolicyServerSpec>& Desired, const FString& Source);
-	void RebindPolicies(const TArray<int32>& OldToNew, const bool bSpeciesChanged[2], int32& OutBound, int32& OutUnbound);
 	void NeutralBirthStep(float Dt);
 	void LogTick(float Dt);
 	FVector RandomArenaPoint(float Margin);

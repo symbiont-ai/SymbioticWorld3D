@@ -240,6 +240,10 @@ struct FSWLookSettings
 	UPROPERTY(EditAnywhere) FLinearColor LumenGlow = FLinearColor(0.40f, 0.85f, 1.0f);
 	UPROPERTY(EditAnywhere) FLinearColor TectonBody = FLinearColor(0.05f, 0.045f, 0.045f);
 	UPROPERTY(EditAnywhere) FLinearColor TectonGlow = FLinearColor(1.0f, 0.42f, 0.07f);
+	UPROPERTY(EditAnywhere) FLinearColor LeviathanBody = FLinearColor(0.028f, 0.036f, 0.048f);
+	UPROPERTY(EditAnywhere) FLinearColor LeviathanGlow = FLinearColor(0.22f, 0.95f, 0.88f);
+	UPROPERTY(EditAnywhere) float LeviathanScale = 0.55f;        // multiplier on the procedural body: ~900 uu long, 2.5x a Tecton
+	UPROPERTY(EditAnywhere) float LeviathanGlowScale = 0.8f;     // x CreatureGlow while cruising (x2.2 while surfacing)
 	UPROPERTY(EditAnywhere) FLinearColor ResourceAGlow = FLinearColor(0.25f, 1.0f, 0.35f);
 	UPROPERTY(EditAnywhere) FLinearColor ResourceBGlow = FLinearColor(0.95f, 0.80f, 0.25f);
 	UPROPERTY(EditAnywhere) float CreatureGlow = 5.0f;
@@ -427,6 +431,37 @@ struct FSWRunSettings
 	// Neutral control: births attempted at this interval while below target pop.
 	UPROPERTY(EditAnywhere) float NeutralBirthInterval = 2.5f;
 
+	// ---- Leviathan: river predation (a perturbation, not a species) ----------
+	// The leviathan is part of the ENVIRONMENT, like the drought: no genome, no
+	// learning, no ESWSpecies entry, no entry in the action set. It patrols the
+	// river channel and kills organisms that are in the water. Deliberately kept
+	// out of the species machinery so ESWSpecies stays binary and the external
+	// policy protocol (docs/POLICY_API.md: 7 actions, 2 species) is unchanged.
+	//
+	// The danger is legible through the EXISTING percept: an organism is at risk
+	// exactly when percept.on_land is false, and 'avoid' is already a feasible
+	// action, so a policy server can learn to stay out of the river with no
+	// protocol change at all.
+	// OFF by default on purpose: enabling it removes organisms, so every recorded
+	// baseline for a seed would stop reproducing. Turn it on per run with
+	//   --set "Settings.bLeviathan=1"
+	UPROPERTY(EditAnywhere) bool bLeviathan = false;
+	UPROPERTY(EditAnywhere) int32 LeviathanCount = 1;
+	UPROPERTY(EditAnywhere) float LeviathanSpeed = 620.f;          // uu per logical s along the channel
+	UPROPERTY(EditAnywhere) float LeviathanStrikeRadius = 420.f;   // uu, horizontal
+	UPROPERTY(EditAnywhere) float LeviathanStrikeCooldown = 6.f;   // logical s between kills (one animal cannot clear a shoal)
+	// Added to Look.WaterLevel when testing "in the water". 0 makes the danger zone
+	// EXACTLY the set where FSWPercept::bOnLand is false; raise it to make the
+	// shallows dangerous too (at the cost of that exact correspondence).
+	UPROPERTY(EditAnywhere) float LeviathanWaterMargin = 0.f;      // uu
+	// The river is only ~160 uu deep (RiverDepth 150, surface at WaterLevel -42), so
+	// the animal cannot submerge fully; it runs bed-hugging with its back showing and
+	// is lifted clear of the terrain over shallow stretches. See ASWLeviathan.
+	UPROPERTY(EditAnywhere) float LeviathanSubmersion = 120.f;     // uu the spine cruises below the surface
+	UPROPERTY(EditAnywhere) float LeviathanBreachRise = 130.f;     // uu the spine rises at the top of a surfacing arc (back and head clear, belly stays wet)
+	UPROPERTY(EditAnywhere) float LeviathanSurfaceInterval = 14.f; // logical s between surfacing arcs
+	UPROPERTY(EditAnywhere) float LeviathanSurfaceDuration = 3.5f; // logical s per arc (a kill also triggers one)
+
 	UPROPERTY(EditAnywhere) bool bWriteLogs = true;
 	UPROPERTY(EditAnywhere) float AgentLogInterval = 1.0f;   // logical s between per-agent rows
 
@@ -454,12 +489,6 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) FString PolicyServers;
 	UPROPERTY(EditAnywhere) int32 PolicyTimeoutMs = 200;    // per-substep wait for a reply; on timeout the built-in bandit decides
 	UPROPERTY(EditAnywhere) float PolicyShare = 1.0f;       // fraction of a served species assigned to the server, decided per organism at birth (seeded stream)
-	// Server list file, watched on the wall clock while the sim runs (docs/POLICY_API.md, "Adding servers while
-	// the sim runs"): one "host:port=Species" per line, '#' comments. Its entries are added to PolicyServers
-	// (same host:port: the file line wins for the species). Relative paths are under the project directory.
-	// A missing file means "no file servers". Empty = do not watch. Also settable as -SWPolicyFile=path.
-	UPROPERTY(EditAnywhere) FString PolicyServerFile = TEXT("Saved/policy_servers.txt");
-	UPROPERTY(EditAnywhere) float PolicyFilePollSec = 3.0f;  // wall-clock seconds between stats of the file (never inside a substep)
 };
 
 // Snapshot of what one agent can perceive when it decides. Filled by the

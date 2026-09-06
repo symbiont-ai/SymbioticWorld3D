@@ -564,4 +564,107 @@ void BuildTecton(FRandomStream& Rng, FMeshData& Out)
 	ComputeNormals(Out);
 }
 
+void BuildLeviathan(FRandomStream& Rng, FMeshData& Out)
+{
+	// ~1650 uu nose to fluke: roughly 4.5x the Tecton, so it reads as a different
+	// order of animal rather than a third organism. Built only from ellipsoids so
+	// every part's orientation is unambiguous (no cylinder axis convention).
+	//
+	// Vertex colour R = bioluminescent mask (throat grooves, raked flank scars, eye,
+	// fluke edge), G = phase along the body from fluke (0) to snout (1) so the
+	// M_SW_Creature pulse travels the length of the animal. B unused.
+	const float Seed = Rng.FRandRange(0.f, 40.f);
+	const FVector NSeed(Rng.FRandRange(0.f, 50.f), Rng.FRandRange(0.f, 50.f), Rng.FRandRange(0.f, 50.f));
+	auto Phase = [](float X) { return FMath::Clamp((X + 820.f) / 1660.f, 0.f, 1.f); };
+
+	// ---- Trunk: long barrel, tapering hard toward the tail stock ----------
+	const FVector Trunk(560.f, 152.f, 180.f);
+	AppendEllipsoid(Out, FTransform(FVector::ZeroVector), Trunk, 56, 28,
+		[&](const FVector& U, const FVector& P)
+		{
+			float Mark = 0.f;
+			// Ventral throat grooves: parallel lines running down the underside of the front half.
+			if (U.Z < -0.30f && P.X > -140.f)
+			{
+				const float Groove = FMath::Sin(P.Y * 0.085f + Seed);
+				if (Groove > 0.55f) Mark = 0.9f;
+			}
+			// Old raking scars across the flanks: sparse, thin, dimmer than the grooves.
+			const float Rake = FMath::Sin(P.X * 0.020f + U.Z * 5.5f + Seed * 1.7f);
+			if (FMath::Abs(U.Z) < 0.5f && Rake > 0.987f) Mark = FMath::Max(Mark, 0.45f);
+			return FLinearColor(Mark, Phase(P.X), 0.f, 1.f);
+		},
+		[&](const FVector& U)
+		{
+			const float Back = FMath::Max(0.f, -U.X);
+			const float Taper = -0.30f * Back * Back;          // narrows toward the peduncle
+			const float Shoulder = 0.07f * FMath::Max(0.f, U.X); // fills out behind the head
+			const float Belly = U.Z < -0.6f ? -0.05f : 0.f;      // flattens the underside
+			return Taper + Shoulder + Belly + 0.012f * FBm3(U * 6.f + NSeed, 2);
+		});
+
+	// ---- Head: blunt, narrowing to a snout, with a blowhole and an eye spot ----
+	AppendEllipsoid(Out, FTransform(FRotator(-3.f, 0.f, 0.f), FVector(600.f, 0.f, 18.f)), FVector(250.f, 140.f, 126.f), 40, 22,
+		[&](const FVector& U, const FVector& P)
+		{
+			const bool Eye = U.X > 0.28f && FMath::Abs(U.Y) > 0.62f && U.Z > 0.02f && U.Z < 0.42f;
+			const bool Blow = U.Z > 0.82f && U.X > 0.05f && U.X < 0.45f && FMath::Abs(U.Y) < 0.24f;
+			return FLinearColor(Eye ? 1.f : (Blow ? 0.6f : 0.f), Phase(P.X + 600.f), 0.f, 1.f);
+		},
+		[&](const FVector& U)
+		{
+			const float Snout = U.X > 0.45f ? -0.30f * (U.X - 0.45f) : 0.f;
+			return Snout + 0.02f * FBm3(U * 4.f + NSeed * 1.3f, 2);
+		});
+
+	// ---- Lower jaw: the glowing throat. This is the part that shows in a lunge. ----
+	AppendEllipsoid(Out, FTransform(FRotator(4.f, 0.f, 0.f), FVector(578.f, 0.f, -82.f)), FVector(236.f, 124.f, 62.f), 34, 16,
+		[&](const FVector& U, const FVector& P)
+		{
+			float Mark = 0.f;
+			const float Groove = FMath::Sin(P.Y * 0.10f + Seed * 0.7f);
+			if (U.Z < 0.35f && Groove > 0.35f) Mark = 1.f;
+			return FLinearColor(Mark, Phase(P.X + 578.f), 0.f, 1.f);
+		},
+		[&](const FVector& U) { return U.X > 0.5f ? -0.24f * (U.X - 0.5f) : 0.f; });
+
+	// ---- Peduncle: the narrow tail stock the flukes hang off ----
+	AppendEllipsoid(Out, FTransform(FVector(-600.f, 0.f, -6.f)), FVector(215.f, 56.f, 84.f), 26, 14,
+		[&](const FVector&, const FVector& P) { return FLinearColor(0.f, Phase(P.X - 600.f), 0.f, 1.f); },
+		[&](const FVector& U) { return -0.22f * FMath::Max(0.f, -U.X); });
+
+	// ---- Flukes: two flat lobes, swept back, glowing along the trailing edge ----
+	for (int32 side = -1; side <= 1; side += 2)
+	{
+		AppendEllipsoid(Out, FTransform(FRotator(0.f, side * -22.f, 0.f), FVector(-772.f, side * 168.f, -10.f)),
+			FVector(118.f, 200.f, 19.f), 22, 12,
+			[&](const FVector& U, const FVector&)
+			{
+				// Trailing (rear) edge lights up; the leading edge stays dark.
+				const float Edge = FMath::Clamp(-U.X, 0.f, 1.f);
+				return FLinearColor(Edge > 0.55f ? Edge : 0.f, 0.f, 0.f, 1.f);
+			},
+			[&](const FVector& U) { return -0.18f * FMath::Abs(U.Y); });
+	}
+
+	// ---- Dorsal ridge + a small hooked fin: what the camera sees when it surfaces ----
+	AppendEllipsoid(Out, FTransform(FVector(-150.f, 0.f, 150.f)), FVector(300.f, 34.f, 62.f), 22, 10,
+		[&](const FVector&, const FVector& P) { return FLinearColor(0.f, Phase(P.X - 150.f), 0.f, 1.f); },
+		[&](const FVector&) { return 0.f; });
+	AppendEllipsoid(Out, FTransform(FRotator(-24.f, 0.f, 0.f), FVector(-210.f, 0.f, 226.f)), FVector(64.f, 15.f, 84.f), 18, 10,
+		[&](const FVector& U, const FVector&) { return FLinearColor(U.Z > 0.55f ? 0.5f : 0.f, 0.55f, 0.f, 1.f); },
+		[&](const FVector&) { return 0.f; });
+
+	// ---- Pectoral flippers: long, swept back and slightly down ----
+	for (int32 side = -1; side <= 1; side += 2)
+	{
+		AppendEllipsoid(Out, FTransform(FRotator(-10.f, side * 125.f, 0.f), FVector(248.f, side * 282.f, -104.f)),
+			FVector(196.f, 62.f, 25.f), 20, 10,
+			[&](const FVector& U, const FVector&) { return FLinearColor(U.X < -0.7f ? 0.4f : 0.f, 0.75f, 0.f, 1.f); },
+			[&](const FVector& U) { return -0.16f * FMath::Max(0.f, U.X); });
+	}
+
+	ComputeNormals(Out);
+}
+
 } // namespace SWProc
