@@ -2,6 +2,7 @@
 #include "SWAgent.h"
 #include "SWResourcePatch.h"
 #include "SWEnvironment.h"
+#include "SWLeviathan.h"
 #include "SWProcMesh.h"
 #include "SymbioticWorld.h"
 #include "EngineUtils.h"
@@ -9,9 +10,6 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Misc/DateTime.h"
-#include "Misc/Paths.h"
-#include "Misc/FileHelper.h"
-#include "HAL/FileManager.h"
 #include "HAL/PlatformTime.h"
 #include "HAL/PlatformMisc.h"
 #include "GameFramework/PlayerController.h"
@@ -72,10 +70,14 @@ ASWWorldManager::ASWWorldManager()
 	TectonParams.PreferredResourceType = 1;
 }
 
+float ASWWorldManager::GetDroughtWaterDrop() const
+{
+	return Environment ? Look.DroughtWaterDrop * Environment->GetDroughtFactor() : 0.f;
+}
+
 float ASWWorldManager::GetGroundZ(float X, float Y) const
 {
-	const float Drop = Environment ? Look.DroughtWaterDrop * Environment->GetDroughtFactor() : 0.f;
-	return SWProc::GroundZ(Look, X, Y, Drop);
+	return SWProc::GroundZ(Look, X, Y, GetDroughtWaterDrop());
 }
 
 ASWWorldManager* ASWWorldManager::Get(UWorld* World)
@@ -92,7 +94,10 @@ void ASWWorldManager::BeginPlay()
 {
 	Super::BeginPlay();
 	ApplyCommandLineOverrides();
-	InitPolicyServers();   // -SWPolicy entries + the server list file (docs/POLICY_API.md)
+	if (!Settings.PolicyServers.IsEmpty())
+	{
+		PolicyClient.Configure(Settings.PolicyServers, Settings.PolicyTimeoutMs);
+	}
 	StartRun();
 }
 
@@ -154,12 +159,6 @@ void ASWWorldManager::ApplyCommandLineOverrides()
 	if (FParse::Value(FCommandLine::Get(), TEXT("SWPolicyShare="), PolicyShare))
 	{
 		Settings.PolicyShare = FMath::Clamp(PolicyShare, 0.f, 1.f);
-	}
-	// Server list file watched while the sim runs (run_sim: --policy-file). Also reachable as -SWSet Settings.PolicyServerFile=...
-	FString PolicyFile;
-	if (FParse::Value(FCommandLine::Get(), TEXT("SWPolicyFile="), PolicyFile))
-	{
-		Settings.PolicyServerFile = PolicyFile.TrimStartAndEnd().TrimQuotes();
 	}
 	bool bAuto = false;
 	if (FParse::Bool(FCommandLine::Get(), TEXT("SWAutoSelect="), bAuto) && bAuto)
@@ -254,7 +253,7 @@ void ASWWorldManager::StartRun()
 	Rng.Initialize(Settings.Seed);
 	SimTime = 0.f;
 	Accumulator = 0.f;
-	Births = Deaths = DeathsStarvation = 0;
+	Births = Deaths = DeathsStarvation = DeathsPredation = 0;
 	NextAgentId = 1;
 	bDrought = false;
 	NeutralBirthTimer = AgentLogTimer = PopLogTimer = StatsTimer = 0.f;
@@ -282,6 +281,7 @@ void ASWWorldManager::StartRun()
 	PopHistory.Reset();
 	SpawnPatches();
 	SpawnFounders();
+	SpawnLeviathans();
 	RecomputeStats();
 	if (bAutoSelect) CycleSelection();
 
@@ -319,9 +319,74 @@ void ASWWorldManager::ClearWorld()
 	for (ASWAgent* A : Agents) if (IsValid(A)) A->Destroy();
 	for (ASWAgent* A : PendingSpawns) if (IsValid(A)) A->Destroy();
 	for (ASWResourcePatch* P : Patches) if (IsValid(P)) P->Destroy();
+	for (ASWLeviathan* Lv : Leviathans) if (IsValid(Lv)) Lv->Destroy();
 	Agents.Reset();
 	PendingSpawns.Reset();
 	Patches.Reset();
+	Leviathans.Reset();
+}
+
+void ASWWorldManager::SpawnLeviathans()
+{
+	UWorld* World = GetWorld();
+	if (!World || !Settings.bLeviathan) return;
+
+	FActorSpawnParameters SP;
+	SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	for (int32 i = 0; i < Settings.LeviathanCount; ++i)
+	{
+		ASWLeviathan* Lv = World->SpawnActor<ASWLeviathan>(ASWLeviathan::StaticClass(), FTransform::Identity, SP);
+		if (!Lv) continue;
+		// Init() places the animal on the channel; it draws only from its own visual
+		// stream, so adding or removing leviathans does not shift the simulation RNG.
+		Lv->Init(this, i);
+		Leviathans.Add(Lv);
+	}
+	if (Leviathans.Num() > 0)
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("Leviathan: %d patrolling the channel (strike radius %.0f uu, cooldown %.1f s)"),
+			Leviathans.Num(), Settings.LeviathanStrikeRadius, Settings.LeviathanStrikeCooldown);
+	}
+}
+
+void ASWWorldManager::LeviathanStep(float Dt)
+{
+	// Every leviathan moves and nominates its victims first; the reaping happens
+	// here, in one place, so death accounting matches the starvation/age path and
+	// two animals cannot both claim the same organism.
+	TArray<ASWAgent*> Victims;
+	for (ASWLeviathan* Lv : Leviathans)
+	{
+		if (IsValid(Lv)) Lv->Step(Dt, Victims);
+	}
+	for (ASWAgent* V : Victims)
+	{
+		if (!IsValid(V)) continue;
+		const int32 Idx = Agents.Find(V);
+		if (Idx == INDEX_NONE) continue;
+		Deaths++;
+		DeathsPredation++;
+		// deaths.csv already carries a 'cause' column, so this needs no schema change.
+		Logger.LogDeath(SimTime, *V, TEXT("predation"));
+		const bool bWasSelected = (SelectedAgent == V);
+		if (bWasSelected) SelectedAgent = nullptr;
+		V->Destroy();
+		Agents.RemoveAtSwap(Idx);
+		if (bWasSelected && bAutoSelect && Agents.Num() > 0)
+		{
+			// Deliberately NOT CycleSelection(): that draws from the seeded simulation
+			// stream, so a predation event would shift the RNG and make -SWAutoSelect=1
+			// (a screenshot-only flag) change the run. Lowest living id is deterministic.
+			ASWAgent* Next = nullptr;
+			for (ASWAgent* A : Agents)
+			{
+				if (!IsValid(A)) continue;
+				if (!Next || A->GetAgentId() < Next->GetAgentId()) Next = A;
+			}
+			if (Next) SelectAgent(Next);
+		}
+	}
 }
 
 FVector ASWWorldManager::RandomArenaPoint(float Margin)
@@ -452,24 +517,7 @@ bool ASWWorldManager::TryReproduce(ASWAgent* Parent)
 void ASWWorldManager::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	// Server list file: wall-clock poll, applied here, between frames, so never between an organism's
-	// PrepareDecision() and ResolveDecision() (both happen inside one substep) and never inside the
-	// fixed-step loop below. Without any server this is a timestamp check every PolicyFilePollSec.
-	PollPolicyFile(false);
-	if (PolicyClient.HasServers())
-	{
-		PolicyClient.Tick();
-		const double NowWall = FPlatformTime::Seconds();
-		if (NowWall >= PolicyReportNextTime)
-		{
-			PolicyReportNextTime = NowWall + 10.0;
-			int32 Bound[2] = { 0, 0 };
-			for (const ASWAgent* A : Agents) if (IsValid(A) && A->IsAlive() && A->IsExternal()) Bound[static_cast<int32>(A->GetSpecies())]++;
-			UE_LOG(LogSymbioticWorld, Log, TEXT("Policy servers: %d configured, %d connected; bound organisms %d/%d (Lumen %d, Tecton %d); external decisions %d, fallbacks %d"),
-				PolicyClient.NumServers(), PolicyClient.NumConnected(), Bound[0] + Bound[1], Agents.Num(), Bound[0], Bound[1],
-				ExtDecisions[0] + ExtDecisions[1], ExtFallbacks[0] + ExtFallbacks[1]);
-		}
-	}
+	if (PolicyClient.HasServers()) PolicyClient.Tick();
 	if (bPaused || TimeScale <= 0.f) return;
 
 	const double T0 = FPlatformTime::Seconds();
@@ -570,6 +618,15 @@ void ASWWorldManager::StepWorld(float Dt)
 			Agents.RemoveAtSwap(i);
 			if (bWasSelected && bAutoSelect) CycleSelection();
 		}
+	}
+
+	// 2a) Leviathan: the river predator patrols the channel and strikes organisms
+	//     that are in the water. Spatial selection pressure, not a species — see
+	//     ASWLeviathan. Runs after the agents have moved this substep so a kill
+	//     reflects where the organism actually ended up.
+	if (Settings.bLeviathan && Leviathans.Num() > 0)
+	{
+		LeviathanStep(Dt);
 	}
 
 	// 2b) External policies: organisms assigned to a server prepared their decision in Step()
@@ -931,202 +988,6 @@ void ASWWorldManager::AssignPolicy(ASWAgent* A)
 	if (Share < 1.f && Rng.FRand() >= Share) return;
 	const int32 Pick = Candidates.Num() == 1 ? Candidates[0] : Candidates[Rng.RandRange(0, Candidates.Num() - 1)];
 	A->SetPolicyServer(Pick);
-}
-
-// ---------------------------------------------------------------------------
-// Server list file (docs/POLICY_API.md, "Adding servers while the sim runs")
-// ---------------------------------------------------------------------------
-
-void ASWWorldManager::InitPolicyServers()
-{
-	PolicyClient.SetTimeoutMs(Settings.PolicyTimeoutMs);
-	LaunchPolicySpecs.Reset();
-	if (!Settings.PolicyServers.IsEmpty())
-	{
-		FSWPolicyClient::ParseServerList(Settings.PolicyServers, LaunchPolicySpecs);
-	}
-	PolicyFilePath.Empty();
-	const FString FileSetting = Settings.PolicyServerFile.TrimStartAndEnd();
-	if (!FileSetting.IsEmpty())
-	{
-		PolicyFilePath = FPaths::IsRelative(FileSetting) ? FPaths::Combine(FPaths::ProjectDir(), FileSetting) : FileSetting;
-		PolicyFilePath = FPaths::ConvertRelativePathToFull(PolicyFilePath);
-		FPaths::NormalizeFilename(PolicyFilePath);
-	}
-	PolicyFileStamp = FDateTime::MinValue();
-	PolicyFileSize = -1;
-	bPolicyFileEverPolled = false;
-	PolicyFileNextPoll = 0.0;
-	PolicyReportNextTime = 0.0;
-	PollPolicyFile(true);   // launch entries + whatever the file holds now, applied in one go
-}
-
-bool ASWWorldManager::ReadPolicyFile(TArray<FSWPolicyServerSpec>& Out) const
-{
-	FString Content;
-	if (PolicyFilePath.IsEmpty() || !FFileHelper::LoadFileToString(Content, *PolicyFilePath)) return false;
-	TArray<FString> Lines;
-	Content.ParseIntoArray(Lines, TEXT("\n"), false);   // keep empty lines so the numbers in warnings match the file
-	for (int32 i = 0; i < Lines.Num(); ++i)
-	{
-		FString Line = Lines[i];
-		int32 Hash = INDEX_NONE;
-		if (Line.FindChar(TEXT('#'), Hash)) Line.LeftInline(Hash);
-		Line.TrimStartAndEndInline();   // also drops a trailing '\r'
-		if (Line.IsEmpty()) continue;
-		FSWPolicyServerSpec S;
-		FString Err;
-		if (!FSWPolicyClient::ParseServerEntry(Line, S, Err))
-		{
-			UE_LOG(LogSymbioticWorld, Warning, TEXT("Policy file %s line %d: '%s' skipped: %s"), *PolicyFilePath, i + 1, *Line, *Err);
-			continue;
-		}
-		// The same host:port twice in the file: the later line wins.
-		const int32 Existing = Out.IndexOfByPredicate([&S](const FSWPolicyServerSpec& O) { return O.SameServer(S); });
-		if (Existing != INDEX_NONE) Out[Existing] = S; else Out.Add(S);
-	}
-	return true;
-}
-
-void ASWWorldManager::PollPolicyFile(bool bForce)
-{
-	const double Now = FPlatformTime::Seconds();
-	if (!bForce)
-	{
-		if (PolicyFilePath.IsEmpty() || Now < PolicyFileNextPoll) return;
-	}
-	PolicyFileNextPoll = Now + FMath::Max(Settings.PolicyFilePollSec, 0.25f);
-
-	bool bChanged = !bPolicyFileEverPolled;   // the first poll always applies (launch entries, plus the file if present)
-	bool bPresent = false;
-	if (!PolicyFilePath.IsEmpty())
-	{
-		IFileManager& FM = IFileManager::Get();
-		const int64 Size = FM.FileSize(*PolicyFilePath);   // -1 when absent
-		const FDateTime Stamp = Size >= 0 ? FM.GetTimeStamp(*PolicyFilePath) : FDateTime::MinValue();
-		bPresent = Size >= 0;
-		if (Size != PolicyFileSize || Stamp != PolicyFileStamp)
-		{
-			bChanged = true;
-			PolicyFileSize = Size;
-			PolicyFileStamp = Stamp;
-		}
-	}
-	const bool bFirst = !bPolicyFileEverPolled;
-	bPolicyFileEverPolled = true;
-	if (!bChanged) return;
-
-	// Effective set: launch entries first (in -SWPolicy order), then file entries; the same host:port in
-	// both takes the file's species. Read errors and bad lines never stop the sim.
-	TArray<FSWPolicyServerSpec> Desired = LaunchPolicySpecs;
-	const FString Source = PolicyFilePath.IsEmpty() ? FString(TEXT("-SWPolicy only, no file")) : FString::Printf(TEXT("file %s"), *PolicyFilePath);
-	if (!PolicyFilePath.IsEmpty())
-	{
-		TArray<FSWPolicyServerSpec> FromFile;
-		if (ReadPolicyFile(FromFile))
-		{
-			for (const FSWPolicyServerSpec& F : FromFile)
-			{
-				const int32 Existing = Desired.IndexOfByPredicate([&F](const FSWPolicyServerSpec& O) { return O.SameServer(F); });
-				if (Existing != INDEX_NONE) Desired[Existing] = F; else Desired.Add(F);
-			}
-			if (bFirst)
-			{
-				UE_LOG(LogSymbioticWorld, Log, TEXT("Policy file %s: %d server line(s), polled every %.1f s"), *PolicyFilePath, FromFile.Num(), FMath::Max(Settings.PolicyFilePollSec, 0.25f));
-			}
-		}
-		else if (bFirst)
-		{
-			UE_LOG(LogSymbioticWorld, Log, TEXT("Policy file not present, watching %s (polled every %.1f s; one host:port=Lumen|Tecton|Both per line)"), *PolicyFilePath, FMath::Max(Settings.PolicyFilePollSec, 0.25f));
-		}
-		else if (!bPresent)
-		{
-			UE_LOG(LogSymbioticWorld, Log, TEXT("Policy file %s removed; its servers are dropped, still watching"), *PolicyFilePath);
-		}
-	}
-	ApplyPolicyServerSet(Desired, Source);
-}
-
-void ASWWorldManager::ApplyPolicyServerSet(const TArray<FSWPolicyServerSpec>& Desired, const FString& Source)
-{
-	// Diff against the current effective set; also which species' server sets change at all.
-	FString Diff;
-	bool bSpeciesChanged[2] = { false, false };
-	auto Note = [&bSpeciesChanged](const FSWPolicyServerSpec& S) { if (S.bLumen) bSpeciesChanged[0] = true; if (S.bTecton) bSpeciesChanged[1] = true; };
-	for (const FSWPolicyServerSpec& D : Desired)
-	{
-		const FSWPolicyServerSpec* Old = EffectivePolicySpecs.FindByPredicate([&D](const FSWPolicyServerSpec& O) { return O.SameServer(D); });
-		if (!Old)                      { Diff += FString::Printf(TEXT(" +%s=%s"), *D.Name, D.SpeciesLabel()); Note(D); }
-		else if (!Old->SameSpecies(D)) { Diff += FString::Printf(TEXT(" ~%s=%s"), *D.Name, D.SpeciesLabel()); Note(*Old); Note(D); }
-	}
-	for (const FSWPolicyServerSpec& O : EffectivePolicySpecs)
-	{
-		if (!Desired.FindByPredicate([&O](const FSWPolicyServerSpec& D) { return D.SameServer(O); }))
-		{
-			Diff += FString::Printf(TEXT(" -%s=%s"), *O.Name, O.SpeciesLabel());
-			Note(O);
-		}
-	}
-	if (Diff.IsEmpty())
-	{
-		if (EffectivePolicySpecs.Num() > 0)
-		{
-			UE_LOG(LogSymbioticWorld, Log, TEXT("Policy servers: unchanged (%s)"), *Source);
-		}
-		return;
-	}
-
-	TArray<int32> OldToNew;
-	PolicyClient.ApplyServerSet(Desired, OldToNew);
-	EffectivePolicySpecs = Desired;
-	int32 Bound = 0, Unbound = 0;
-	RebindPolicies(OldToNew, bSpeciesChanged, Bound, Unbound);
-	// The hello lists the served species, so refresh the stored line for the connect of every new server.
-	// It is not re-sent to servers already connected: for them a hello means "new run" (the reference
-	// server forgets its organisms on hello). StartRun() still sends it to everyone on every reset.
-	PolicyClient.SetHello(BuildHelloLine(), /*bSendNow*/ false);
-	UE_LOG(LogSymbioticWorld, Log, TEXT("Policy servers:%s (%s); %d server(s); organisms bound %d, unbound %d, external now %d/%d"),
-		*Diff, *Source, PolicyClient.NumServers(), Bound, Unbound, ExternalCount, Agents.Num());
-}
-
-void ASWWorldManager::RebindPolicies(const TArray<int32>& OldToNew, const bool bSpeciesChanged[2], int32& OutBound, int32& OutUnbound)
-{
-	OutBound = OutUnbound = 0;
-	auto Visit = [&](ASWAgent* A)
-	{
-		if (!IsValid(A) || !A->IsAlive()) return;
-		const int32 Sp = static_cast<int32>(A->GetSpecies());
-		const int32 Old = A->GetPolicyServer();
-		if (Old >= 0)
-		{
-			// Follow the server to its new index; drop the binding if the server went away or its species
-			// mapping no longer covers this organism.
-			int32 New = OldToNew.IsValidIndex(Old) ? OldToNew[Old] : -1;
-			if (New >= 0 && !PolicyClient.GetServer(New).Controls(A->GetSpecies())) New = -1;
-			A->SetPolicyServer(New);
-			if (New < 0)
-			{
-				OutUnbound++;
-				// Cannot happen between frames (a prepared decision is resolved in the same substep), but if a
-				// decision were still open it finishes with the built-in bandit and counts as a fallback.
-				if (A->IsDecisionDue()) { A->ResolveDecision(nullptr); ExtFallbacks[Sp]++; }
-			}
-		}
-		if (A->GetPolicyServer() < 0 && bSpeciesChanged[Sp])
-		{
-			// Unbound organism of a species whose server set changed: the birth-time rule decides again.
-			// AssignPolicy() draws from the seeded stream only when PolicyShare < 1 or several servers serve
-			// the species (a real choice), exactly as at birth; with one server per species and share 1 no
-			// draw happens, so a run without any server stays byte-identical. Organisms of a species whose
-			// servers did not change are left alone (no repeated share draws on unrelated edits).
-			AssignPolicy(A);
-			if (A->GetPolicyServer() >= 0) OutBound++;
-		}
-	};
-	for (ASWAgent* A : Agents) Visit(A);
-	for (ASWAgent* A : PendingSpawns) Visit(A);
-	ExternalCount = 0;
-	for (const ASWAgent* A : Agents) if (IsValid(A) && A->IsAlive() && A->IsExternal()) ExternalCount++;
 }
 
 namespace
