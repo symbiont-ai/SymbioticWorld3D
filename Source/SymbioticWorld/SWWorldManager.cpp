@@ -2,6 +2,7 @@
 #include "SWAgent.h"
 #include "SWResourcePatch.h"
 #include "SWEnvironment.h"
+#include "SWLeviathan.h"
 #include "SWProcMesh.h"
 #include "SymbioticWorld.h"
 #include "EngineUtils.h"
@@ -72,10 +73,14 @@ ASWWorldManager::ASWWorldManager()
 	TectonParams.PreferredResourceType = 1;
 }
 
+float ASWWorldManager::GetDroughtWaterDrop() const
+{
+	return Environment ? Look.DroughtWaterDrop * Environment->GetDroughtFactor() : 0.f;
+}
+
 float ASWWorldManager::GetGroundZ(float X, float Y) const
 {
-	const float Drop = Environment ? Look.DroughtWaterDrop * Environment->GetDroughtFactor() : 0.f;
-	return SWProc::GroundZ(Look, X, Y, Drop);
+	return SWProc::GroundZ(Look, X, Y, GetDroughtWaterDrop());
 }
 
 ASWWorldManager* ASWWorldManager::Get(UWorld* World)
@@ -254,7 +259,7 @@ void ASWWorldManager::StartRun()
 	Rng.Initialize(Settings.Seed);
 	SimTime = 0.f;
 	Accumulator = 0.f;
-	Births = Deaths = DeathsStarvation = 0;
+	Births = Deaths = DeathsStarvation = DeathsPredation = 0;
 	NextAgentId = 1;
 	bDrought = false;
 	NeutralBirthTimer = AgentLogTimer = PopLogTimer = StatsTimer = 0.f;
@@ -282,6 +287,7 @@ void ASWWorldManager::StartRun()
 	PopHistory.Reset();
 	SpawnPatches();
 	SpawnFounders();
+	SpawnLeviathans();
 	RecomputeStats();
 	if (bAutoSelect) CycleSelection();
 
@@ -319,9 +325,74 @@ void ASWWorldManager::ClearWorld()
 	for (ASWAgent* A : Agents) if (IsValid(A)) A->Destroy();
 	for (ASWAgent* A : PendingSpawns) if (IsValid(A)) A->Destroy();
 	for (ASWResourcePatch* P : Patches) if (IsValid(P)) P->Destroy();
+	for (ASWLeviathan* Lv : Leviathans) if (IsValid(Lv)) Lv->Destroy();
 	Agents.Reset();
 	PendingSpawns.Reset();
 	Patches.Reset();
+	Leviathans.Reset();
+}
+
+void ASWWorldManager::SpawnLeviathans()
+{
+	UWorld* World = GetWorld();
+	if (!World || !Settings.bLeviathan) return;
+
+	FActorSpawnParameters SP;
+	SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	for (int32 i = 0; i < Settings.LeviathanCount; ++i)
+	{
+		ASWLeviathan* Lv = World->SpawnActor<ASWLeviathan>(ASWLeviathan::StaticClass(), FTransform::Identity, SP);
+		if (!Lv) continue;
+		// Init() places the animal on the channel; it draws only from its own visual
+		// stream, so adding or removing leviathans does not shift the simulation RNG.
+		Lv->Init(this, i);
+		Leviathans.Add(Lv);
+	}
+	if (Leviathans.Num() > 0)
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("Leviathan: %d patrolling the channel (strike radius %.0f uu, cooldown %.1f s)"),
+			Leviathans.Num(), Settings.LeviathanStrikeRadius, Settings.LeviathanStrikeCooldown);
+	}
+}
+
+void ASWWorldManager::LeviathanStep(float Dt)
+{
+	// Every leviathan moves and nominates its victims first; the reaping happens
+	// here, in one place, so death accounting matches the starvation/age path and
+	// two animals cannot both claim the same organism.
+	TArray<ASWAgent*> Victims;
+	for (ASWLeviathan* Lv : Leviathans)
+	{
+		if (IsValid(Lv)) Lv->Step(Dt, Victims);
+	}
+	for (ASWAgent* V : Victims)
+	{
+		if (!IsValid(V)) continue;
+		const int32 Idx = Agents.Find(V);
+		if (Idx == INDEX_NONE) continue;
+		Deaths++;
+		DeathsPredation++;
+		// deaths.csv already carries a 'cause' column, so this needs no schema change.
+		Logger.LogDeath(SimTime, *V, TEXT("predation"));
+		const bool bWasSelected = (SelectedAgent == V);
+		if (bWasSelected) SelectedAgent = nullptr;
+		V->Destroy();
+		Agents.RemoveAtSwap(Idx);
+		if (bWasSelected && bAutoSelect && Agents.Num() > 0)
+		{
+			// Deliberately NOT CycleSelection(): that draws from the seeded simulation
+			// stream, so a predation event would shift the RNG and make -SWAutoSelect=1
+			// (a screenshot-only flag) change the run. Lowest living id is deterministic.
+			ASWAgent* Next = nullptr;
+			for (ASWAgent* A : Agents)
+			{
+				if (!IsValid(A)) continue;
+				if (!Next || A->GetAgentId() < Next->GetAgentId()) Next = A;
+			}
+			if (Next) SelectAgent(Next);
+		}
+	}
 }
 
 FVector ASWWorldManager::RandomArenaPoint(float Margin)
@@ -570,6 +641,15 @@ void ASWWorldManager::StepWorld(float Dt)
 			Agents.RemoveAtSwap(i);
 			if (bWasSelected && bAutoSelect) CycleSelection();
 		}
+	}
+
+	// 2a) Leviathan: the river predator patrols the channel and strikes organisms
+	//     that are in the water. Spatial selection pressure, not a species — see
+	//     ASWLeviathan. Runs after the agents have moved this substep so a kill
+	//     reflects where the organism actually ended up.
+	if (Settings.bLeviathan && Leviathans.Num() > 0)
+	{
+		LeviathanStep(Dt);
 	}
 
 	// 2b) External policies: organisms assigned to a server prepared their decision in Step()
