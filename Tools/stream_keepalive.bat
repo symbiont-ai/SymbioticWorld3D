@@ -10,6 +10,9 @@ setlocal enabledelayedexpansion
 set "HERE=%~dp0"
 for %%I in ("%HERE%..") do set "REPO=%%~fI"
 cd /d "%REPO%"
+rem System32 paths on purpose: launched from Git Bash, PATH puts GNU timeout/find ahead of the Windows ones,
+rem and a failing "timeout"/"find" turns this loop into a relaunch storm (it did once: 47 sims in 20 s).
+set "SYS=%SystemRoot%\System32"
 if exist Saved\stop_stream del Saved\stop_stream
 :loop
 if exist Saved\stop_stream goto :done
@@ -18,9 +21,9 @@ echo.> Saved\launch_marker
 start "SymbioticWorld stream" /b python Tools\run_sim.py --mode C --seed 1 --windowed --offscreen --speed 1 --duration 36000 --stream %*
 set /a waited=0
 :waitup
-timeout /t 5 /nobreak >nul
+"%SYS%\timeout.exe" /t 5 /nobreak >nul
 set /a waited+=5
-tasklist /FI "IMAGENAME eq UnrealEditor.exe" 2>nul | find /I "UnrealEditor.exe" >nul || goto :exited
+"%SYS%\tasklist.exe" /FI "IMAGENAME eq UnrealEditor.exe" 2>nul | "%SYS%\findstr.exe" /I /C:"UnrealEditor.exe" >nul || goto :exited
 rem the new process rotates the old log to a backup and writes a fresh SymbioticWorld.log (newer than the marker)
 powershell -NoProfile -Command "$l='Saved\Logs\SymbioticWorld.log'; if ((Test-Path $l) -and ((Get-Item $l).LastWriteTime -gt (Get-Item 'Saved\launch_marker').LastWriteTime) -and (Select-String -Path $l -Pattern 'control file:' -Quiet)) { exit 0 } else { exit 1 }" >nul 2>&1
 if not errorlevel 1 goto :up
