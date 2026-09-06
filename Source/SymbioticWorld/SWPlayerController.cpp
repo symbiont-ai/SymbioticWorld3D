@@ -2,6 +2,7 @@
 #include "SWWorldManager.h"
 #include "SWAgent.h"
 #include "SWCameraPawn.h"
+#include "SymbioticWorld.h"
 #include "Components/InputComponent.h"
 #include "Engine/World.h"
 
@@ -44,6 +45,7 @@ void ASWPlayerController::SetupInputComponent()
 	InputComponent->BindAction("ResetRun",       IE_Pressed, this, &ASWPlayerController::OnResetRun);
 	InputComponent->BindAction("ToggleHelp",     IE_Pressed, this, &ASWPlayerController::OnToggleHelp);
 	InputComponent->BindAction("FollowSelected", IE_Pressed, this, &ASWPlayerController::OnFollowSelected);
+	InputComponent->BindAction("ToggleScientists", IE_Pressed, this, &ASWPlayerController::OnToggleScientists);
 }
 
 void ASWPlayerController::OnSelectAgent()
@@ -84,6 +86,19 @@ void ASWPlayerController::OnTogglePause()
 void ASWPlayerController::OnToggleDrought()
 {
 	if (ASWWorldManager* M = GetManager()) M->ToggleDrought();
+}
+
+void ASWPlayerController::OnToggleScientists()
+{
+	// The mode toggle between god-view (default) and the embodied field team.
+	// Visual only, so flipping it mid-run cannot change the run (the avatars
+	// spawn/despawn on the next frame; witnessing continues bridge-side).
+	if (ASWWorldManager* M = GetManager())
+	{
+		M->Look.bScientistAvatars = !M->Look.bScientistAvatars;
+		UE_LOG(LogSymbioticWorld, Log, TEXT("Scientist avatars %s (V)"),
+			M->Look.bScientistAvatars ? TEXT("ON") : TEXT("OFF"));
+	}
 }
 
 void ASWPlayerController::OnCycleMode()

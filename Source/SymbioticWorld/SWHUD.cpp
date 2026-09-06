@@ -418,7 +418,7 @@ void ASWHUD::DrawHelp(float X, float Y)
 	y = DrawLine(x, y, TEXT("KEYS  (H hides this)"), ColDim);
 	y = DrawLine(x, y, TEXT("LMB select organism   Tab youngest Lumen   F follow selected"), ColText);
 	y = DrawLine(x, y, TEXT("1 / 2 / 3  speed 1x / 10x / 50x     Space pause     R reset run"), ColText);
-	y = DrawLine(x, y, TEXT("P drought on/off     M cycle mode A > B > C > N (resets run)"), ColText);
+	y = DrawLine(x, y, TEXT("P drought on/off     M cycle mode A > B > C > N (resets run)     V scientists"), ColText);
 	y = DrawLine(x, y, TEXT("WASD/QE move   hold RMB to look   wheel zoom"), ColText);
 	y += 4.f;
 	y = DrawLine(x, y, TEXT("A learning off | B learning, genome fixed | C learning + evolution | N neutral drift"), ColDim);
