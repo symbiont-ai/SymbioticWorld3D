@@ -141,3 +141,12 @@ full live stream (percepts, Q tables, genomes, rewards) is distilled into
 citable `live_*` evidence windows (60 sim-seconds each) in `lab.sqlite`.
 Run `python -m Lab.lab session` and `python -m Lab.lab ui` against the same DB
 and the scientists hold meetings about the world as it runs.
+
+## A button on the world itself
+
+`python Tools/add_lab_button.py` (run on the stream host, idempotent,
+`--remove` restores) patches the served Pixel Streaming player pages with a
+floating **🧪 Symbiotic Lab** button that opens the dashboard on the same
+host at :8765 — so anyone watching the world is one click from the
+scientists' conversations and Vega's reports, and the dashboard's World tab
+brings them straight back.
