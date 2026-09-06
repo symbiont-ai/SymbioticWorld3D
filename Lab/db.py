@@ -97,7 +97,7 @@ def now():
 def connect(path=None):
     p = Path(path) if path else config.DB_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(p)
+    con = sqlite3.connect(p, timeout=30)   # observer + session may share this file
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
     return con
@@ -116,10 +116,17 @@ def add_evidence(con, run_id, stat, value, provenance):
                       (run_id, stat)).fetchone()
     if row:
         return row["id"]
-    eid = next_id(con, "evidence", "E")
-    con.execute("INSERT INTO evidence VALUES(?,?,?,?,?,?)",
-                (eid, run_id, stat, value, provenance, now()))
-    return eid
+    # IDs are COUNT+1; with two writers (observe + session) the same number can be minted twice, so
+    # retry with a fresh count instead of letting the IntegrityError kill the bridge thread.
+    for _attempt in range(8):
+        eid = next_id(con, "evidence", "E")
+        try:
+            con.execute("INSERT INTO evidence VALUES(?,?,?,?,?,?)",
+                        (eid, run_id, stat, value, provenance, now()))
+            return eid
+        except sqlite3.IntegrityError:
+            con.rollback()
+    raise RuntimeError("evidence id collision persisted after 8 attempts")
 
 
 def log_intervention(con, meeting_id, kind, params, actor):

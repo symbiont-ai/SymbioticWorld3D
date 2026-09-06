@@ -1,4 +1,4 @@
-"""Embodied field observers: the seven scientists as virtual bodies in the arena.
+"""Embodied field observers: eight bodies (the seven voting scientists plus Vega) in the arena.
 
 Enabled with `python -m Lab.lab observe --embody` (a mode toggle; off keeps
 the plain instrument-style observer). Each scientist gets a position in the
@@ -168,7 +168,7 @@ class EmbodiedScientist:
 
 
 class EmbodiedField:
-    """All seven bodies plus per-window evidence minting."""
+    """All eight bodies (Vega mints no evidence) plus per-window evidence minting."""
 
     def __init__(self, run_id, world_half_size):
         self.run_id = run_id

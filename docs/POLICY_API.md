@@ -128,14 +128,15 @@ being applied to the next substep).
 
 Printed in the UE log as `[host:port] text`.
 
-### server -> sim: `scientists` (optional, visual only)
+### 5. `scientists` (server -> sim), optional, visual only
 
 ```json
 {"type":"scientists","team":[{"name":"Vesper","x":-1200.5,"y":350.0}]}
 ```
 
 Reports embodied field observers (the Symbiotic Lab's `observe --embody`) for
-the sim's avatar layer: the sim renders one labelled mannequin per entry and
+the sim's avatar layer: the sim renders one labelled body per entry (the Manny/Quinn
+mannequin when the host project has that content, else an engine capsule) and
 smooths movement between reports. `Look.bScientistAvatars` gates the layer and
 is OFF by default (the plain god-view is the stable demo configuration); turn
 it on at launch with `-SWSet "Look.bScientistAvatars=true"` or live through

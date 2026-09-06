@@ -104,6 +104,19 @@ performs that comparison across seeds.
   from the existing `on_land` percept and the `avoid` action. With
   `bLeviathan` false every run is byte-identical to the pre-predator build
   (verified seed 7, 120 s).
+- **Scientist avatars** (Symbiotic Lab field team, contributed 2026-09-06, off by
+  default). Not a mechanism: no genome, no learner, no `ESWSpecies` entry, no
+  percept field, no trace deposit, no collision, no draw from the seeded stream,
+  so `hello`/`decide`/`actions` are unchanged. `Look.bScientistAvatars` (default
+  false; `-SWSet "Look.bScientistAvatars=1"` at launch, `set Look.bScientistAvatars=1`
+  in the control file, or key V) renders one labelled body per entry of the
+  bridge's `scientists` side message (docs/POLICY_API.md §5), positions the Lab
+  computes from the decide stream. Bodies spawn, move (wall-clock smoothing,
+  like the camera) and retire on the rendered frame, never inside a substep, and
+  hide when no report has arrived for 20 logical seconds. Determinism: with no
+  policy server the layer never spawns, so a run with the flag on is byte-identical
+  to one with it off; with a bridge attached the run already depends on that
+  server's replies (§ fallback rules), and the avatars add nothing to that.
 - Signals: a signalling Lumen broadcasts its nearest known resource location
   to same-species neighbours within `NeighbourRange · (0.5 + social)`;
   receivers accept with probability `social`.

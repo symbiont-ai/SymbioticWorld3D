@@ -350,6 +350,7 @@ bool FSWPolicyClient::HandleSideMessage(FSWPolicyServer& S, const TSharedPtr<FJs
 	}
 	if (Type == TEXT("scientists"))
 	{
+		if (S.bDropScientistPings) return true;   // sent after the previous run's last actions reply: the old run's team
 		// Embodied field team (Lab observe --embody): replace the ping set.
 		// Malformed entries are skipped; an empty/missing team clears the set.
 		// Nothing here touches the simulation or the seeded stream.
@@ -482,6 +483,7 @@ void FSWPolicyClient::Exchange(int32 Step, const TArray<FString>& RequestLines, 
 				}
 			}
 			bGot = true;
+			S.bDropScientistPings = false;   // the bridge has answered this run's decide, so later reports are this run's
 			S.Replies++;
 			S.RoundTripMsSum += (FPlatformTime::Seconds() - S.SendTime) * 1000.0;
 			if (S.Replies == 1)

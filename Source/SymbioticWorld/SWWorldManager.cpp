@@ -119,6 +119,7 @@ void ASWWorldManager::DestroyScientistAvatars()
 {
 	for (ASWScientistAvatar* A : ScientistAvatars) if (IsValid(A)) A->Destroy();
 	ScientistAvatars.Empty();
+	ScientistStampSeen = 0;   // the next non-stale frame re-applies the bridge's current team (V off -> on)
 }
 
 void ASWWorldManager::UpdateScientistAvatars(float DeltaSeconds)
@@ -129,17 +130,27 @@ void ASWWorldManager::UpdateScientistAvatars(float DeltaSeconds)
 		return;
 	}
 
-	// Stale bridge (lab gone, or plain observer without --embody): hide, keep.
-	const bool bStale = PolicyClient.GetScientistLastWall() <= 0.0 ||
-		FPlatformTime::Seconds() - PolicyClient.GetScientistLastWall() > 20.0;
-	for (ASWScientistAvatar* A : ScientistAvatars)
-		if (IsValid(A) && A->IsHidden() != bStale) A->SetActorHiddenInGame(bStale);
-	if (bStale) return;
-
+	// New team report: (re)position everyone, spawn newcomers, retire names no longer reported.
+	// Spawn count is capped at the parser's 16 so a misbehaving bridge cannot flood the world with actors.
 	if (PolicyClient.GetScientistStamp() != ScientistStampSeen)
 	{
 		ScientistStampSeen = PolicyClient.GetScientistStamp();
+		ScientistLastPingSim = SimTime;
 		const TArray<FSWScientistPing>& Pings = PolicyClient.GetScientistPings();
+		for (int32 i = ScientistAvatars.Num() - 1; i >= 0; --i)
+		{
+			ASWScientistAvatar* A = ScientistAvatars[i];
+			bool bReported = false;
+			if (IsValid(A))
+			{
+				for (const FSWScientistPing& P : Pings) if (P.Name == A->GetScientistName()) { bReported = true; break; }
+			}
+			if (!bReported)
+			{
+				if (IsValid(A)) A->Destroy();
+				ScientistAvatars.RemoveAt(i);
+			}
+		}
 		for (int32 i = 0; i < Pings.Num(); ++i)
 		{
 			ASWScientistAvatar* Avatar = nullptr;
@@ -147,6 +158,7 @@ void ASWWorldManager::UpdateScientistAvatars(float DeltaSeconds)
 				if (IsValid(A) && A->GetScientistName() == Pings[i].Name) { Avatar = A; break; }
 			if (!Avatar)
 			{
+				if (ScientistAvatars.Num() >= 16) break;
 				Avatar = GetWorld()->SpawnActor<ASWScientistAvatar>();
 				if (!Avatar) continue;
 				Avatar->Init(this, Pings[i].Name, ScientistAvatars.Num());
@@ -157,6 +169,13 @@ void ASWWorldManager::UpdateScientistAvatars(float DeltaSeconds)
 			Avatar->SetTargetXY(Pings[i].X, Pings[i].Y);
 		}
 	}
+
+	// Stale bridge (lab gone, or a plain observer without --embody): hide, keep. Measured on the logical
+	// clock, so a paused world keeps its team visible and the threshold follows the time scale.
+	const bool bStale = ScientistLastPingSim < 0.f || SimTime - ScientistLastPingSim > 20.f;
+	for (ASWScientistAvatar* A : ScientistAvatars)
+		if (IsValid(A) && A->IsHidden() != bStale) A->SetActorHiddenInGame(bStale);
+	if (bStale) return;
 
 	for (ASWScientistAvatar* A : ScientistAvatars)
 		if (IsValid(A)) A->UpdateVisual(DeltaSeconds);
@@ -421,6 +440,9 @@ void ASWWorldManager::ClearWorld()
 	for (ASWAgent* A : PendingSpawns) if (IsValid(A)) A->Destroy();
 	for (ASWResourcePatch* P : Patches) if (IsValid(P)) P->Destroy();
 	for (ASWLeviathan* Lv : Leviathans) if (IsValid(Lv)) Lv->Destroy();
+	DestroyScientistAvatars();
+	PolicyClient.ClearScientistPings();
+	ScientistLastPingSim = -1.f;
 	Agents.Reset();
 	PendingSpawns.Reset();
 	Patches.Reset();

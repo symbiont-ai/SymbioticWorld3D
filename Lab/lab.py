@@ -157,7 +157,7 @@ def main():
                    help="drive assigned organisms with the lab's population-management "
                         "doctrine (default: observe only)")
     s.add_argument("--embody", action="store_true",
-                   help="mode toggle: the seven scientists walk the arena as virtual "
+                   help="mode toggle: eight bodies (the seven voting scientists plus Vega) walk the arena as virtual "
                         "bodies and mint witnessed-only evidence (default: plain "
                         "instrument observer)")
     s.set_defaults(fn=cmd_observe)

@@ -11,8 +11,8 @@
 
 namespace
 {
-	// Manny / Quinn from the standard mannequin content (present on the host as
-	// Content examples). Every path is soft-loaded with a capsule fallback, so a
+	// Manny / Quinn from Epic's third-person mannequin content (optional; NOT part of
+	// this project). Every path is soft-loaded quietly with a capsule fallback, so a
 	// clone without the pack still runs and still shows the field team.
 	const TCHAR* MannequinMesh[2] = {
 		TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny.SKM_Manny"),
@@ -75,16 +75,16 @@ void ASWScientistAvatar::Init(ASWWorldManager* InManager, const FString& InName,
 	ScientistName = InName;
 
 	const int32 Variant = InIndex % 2;   // even = Manny, odd = Quinn
-	USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, MannequinMesh[Variant]);
-	if (!Mesh) Mesh = LoadObject<USkeletalMesh>(nullptr, MannequinMeshSimple[Variant]);
+	USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, MannequinMesh[Variant], nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!Mesh) Mesh = LoadObject<USkeletalMesh>(nullptr, MannequinMeshSimple[Variant], nullptr, LOAD_NoWarn | LOAD_Quiet);
 	if (Mesh)
 	{
 		Body->SetSkeletalMesh(Mesh);
-		if (UClass* AnimClass = LoadClass<UAnimInstance>(nullptr, MannequinAnim[Variant]))
+		if (UClass* AnimClass = LoadClass<UAnimInstance>(nullptr, MannequinAnim[Variant], nullptr, LOAD_NoWarn | LOAD_Quiet))
 		{
 			Body->SetAnimInstanceClass(AnimClass);
 		}
-		else if (UClass* MannyAnim = LoadClass<UAnimInstance>(nullptr, MannequinAnim[0]))
+		else if (UClass* MannyAnim = LoadClass<UAnimInstance>(nullptr, MannequinAnim[0], nullptr, LOAD_NoWarn | LOAD_Quiet))
 		{
 			Body->SetAnimInstanceClass(MannyAnim);   // Quinn shares Manny's skeleton
 		}
