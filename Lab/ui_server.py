@@ -35,6 +35,11 @@ def snapshot(db_path):
                 out[t] = [dict(r) for r in con.execute(f"SELECT * FROM {t}")]
             except sqlite3.OperationalError:
                 out[t] = []
+        try:   # newest evidence only (the World tab's live ticker)
+            out["evidence"] = [dict(r) for r in con.execute(
+                "SELECT * FROM evidence ORDER BY rowid DESC LIMIT 200")]
+        except sqlite3.OperationalError:
+            out["evidence"] = []
         try:
             row = con.execute("SELECT value FROM lab_meta WHERE key='generation'").fetchone()
             out["generation"] = int(row["value"]) if row else 0
@@ -83,7 +88,10 @@ def make_handler(db_path):
     return Handler
 
 
-def serve(db_path=None, port=8765, host="127.0.0.1"):
+def serve(db_path=None, port=8765, host="0.0.0.0"):
+    """Read-only; defaults to all interfaces so LAN viewers of the streamed
+    world can open the dashboard next to it (pass --host 127.0.0.1 to keep it
+    local)."""
     db_path = str(db_path or config.DB_PATH)
     httpd = ThreadingHTTPServer((host, port), make_handler(db_path))
     print(f"Lab dashboard: http://{host}:{port}  (db: {db_path})")

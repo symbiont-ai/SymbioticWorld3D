@@ -115,9 +115,9 @@ def main():
     s = sub.add_parser("textbook", help="print the inherited object (registry + open questions)")
     s.set_defaults(fn=cmd_textbook)
 
-    s = sub.add_parser("ui", help="serve the read-only lab dashboard")
+    s = sub.add_parser("ui", help="serve the read-only lab dashboard (LAN-visible)")
     s.add_argument("--port", type=int, default=8765)
-    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--host", default="0.0.0.0")
     s.set_defaults(fn=cmd_ui)
 
     s = sub.add_parser("observe",

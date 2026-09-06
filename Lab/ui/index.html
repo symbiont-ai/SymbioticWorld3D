@@ -62,7 +62,13 @@
   .empty{color:var(--dim);padding:30px;text-align:center}
   .claim{color:var(--text)}
   details summary{cursor:pointer;color:var(--dim)}
-  @media(max-width:800px){.grid2{grid-template-columns:1fr}}
+  .world{display:grid;grid-template-columns:1fr 330px;gap:12px;align-items:start}
+  .world iframe{width:100%;height:calc(100vh - 110px);min-height:420px;border:1px solid var(--line);
+                border-radius:10px;background:#000}
+  .side{max-height:calc(100vh - 110px);overflow-y:auto}
+  .tick{font-size:12px;padding:2px 0;border-bottom:1px dotted var(--line)}
+  .tick b{color:var(--cyan)}
+  @media(max-width:800px){.grid2,.world{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -73,8 +79,8 @@
 </header>
 <main id="main"><div class="empty">loading…</div></main>
 <script>
-const TABS = ["Conversation","Experiments","Registry","Conservation","Data","Lab"];
-let S = null, tab = "Conversation";
+const TABS = ["World","Conversation","Experiments","Registry","Conservation","Data","Lab"];
+let S = null, tab = "World";
 
 const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const ag = n => `<span class="agent ${esc(n)}">${esc(n)}</span>`;
@@ -124,6 +130,46 @@ function stancesFor(mid){
           ${esc(s.agent)} ${s.stance} ${(+s.confidence).toFixed(2)}${s.downgraded?" ⤵":""}</span>`).join("")
       + `</div>`;
   }).join("");
+}
+
+function streamUrl(){
+  // Same host as this page by default (dashboard :8765 beside the stream :80);
+  // override with ?stream=<url> when they run on different machines.
+  return new URLSearchParams(location.search).get("stream")
+      || `http://${location.hostname}/?AFKDetection=false&HoveringMouse=true`;
+}
+
+function worldSide(){
+  const m = S.meetings[S.meetings.length - 1];
+  const live = (S.evidence || []).filter(e => e.stat.startsWith("live_")).slice(0, 10);
+  const fig = S.figs[S.figs.length - 1];
+  const exps = [...S.experiments].reverse().slice(0, 3);
+  return `
+    <div class="card"><h3>Live telemetry <span class="dim">(policy bridge)</span></h3>
+      ${live.length ? live.map(e => `<div class="tick"><b>${esc(e.id)}</b>
+          ${esc(e.stat.replace("live_",""))} = ${(+e.value).toFixed(3)}</div>`).join("")
+        : `<span class="dim">not attached — run <b>python -m Lab.lab observe</b> and launch the
+           sim with <b>--policy</b> (docs/POLICY_API.md)</span>`}</div>
+    <div class="card"><h3>Latest minutes</h3>
+      ${m && m.minutes ? `<span class="dim">meeting ${m.id}:</span> <i>${esc(m.minutes)}</i>`
+                       : `<span class="dim">no meetings yet</span>`}</div>
+    <div class="card"><h3>Experiments</h3>
+      ${exps.length ? exps.map(e => `<div class="tick">${e.id} ${st(e.status)}
+          ${e.verdict ? st(e.verdict) : ""}</div>`).join("")
+        : `<span class="dim">none yet</span>`}</div>
+    ${fig ? `<div class="card"><h3>Vega's latest</h3>
+      <img class="fig" src="/figs/${esc(fig)}" alt="${esc(fig)}"></div>` : ""}`;
+}
+
+function vWorld(){
+  return `<div class="world">
+    <div><iframe id="world-frame" src="${esc(streamUrl())}"
+      allow="autoplay; fullscreen" title="Symbiotic World live stream"></iframe>
+      <div class="dim" style="margin-top:4px;font-size:12px">Live world via Pixel Streaming —
+        <a style="color:var(--cyan)" href="${esc(streamUrl())}" target="_blank">open full screen</a>.
+        If the frame stays black, the stream host may not be running or blocks embedding.</div></div>
+    <div class="side" id="world-side">${worldSide()}</div>
+  </div>`;
 }
 
 function vConversation(){
@@ -240,9 +286,14 @@ function vLab(){
 function render(){
   nav();
   if (!S) return;
-  const views = {Conversation:vConversation, Experiments:vExperiments, Registry:vRegistry,
-                 Conservation:vConservation, Data:vData, Lab:vLab};
-  document.getElementById("main").innerHTML = views[tab]();
+  const views = {World:vWorld, Conversation:vConversation, Experiments:vExperiments,
+                 Registry:vRegistry, Conservation:vConservation, Data:vData, Lab:vLab};
+  // Never re-render the stream iframe on a poll — update only the side panel.
+  if (tab === "World" && document.getElementById("world-frame")) {
+    document.getElementById("world-side").innerHTML = worldSide();
+  } else {
+    document.getElementById("main").innerHTML = views[tab]();
+  }
   document.getElementById("meta").textContent =
     `gen ${S.generation} · ${S.meetings.length} meetings · ${S.experiments.length} experiments · ${S.runs.length} runs`;
 }
