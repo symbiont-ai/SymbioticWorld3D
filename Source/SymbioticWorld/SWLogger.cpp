@@ -18,6 +18,7 @@ void FSWRunLogger::Open(const FString& InRunId, int32 InSeed, ESWLearningMode In
 	BirthsPath = FPaths::Combine(Directory, TEXT("births.csv"));
 	DeathsPath = FPaths::Combine(Directory, TEXT("deaths.csv"));
 	PopulationPath = FPaths::Combine(Directory, TEXT("population.csv"));
+	CommandsPath = FPaths::Combine(Directory, TEXT("commands.csv"));
 
 	FString AgentHeader = TEXT("run_id,seed,mode,sim_time,generation,drought_state,agent_id,parent_id,species,age,energy,alpha,epsilon,social,env_effect,energy_bin,current_action,explored,reward,decisions,trace_x,trace_y");
 	static const TCHAR* BinNames[SW_NUM_ENERGY_BINS] = { TEXT("low"), TEXT("mid"), TEXT("high") };
@@ -34,6 +35,7 @@ void FSWRunLogger::Open(const FString& InRunId, int32 InSeed, ESWLearningMode In
 	FFileHelper::SaveStringToFile(TEXT("run_id,sim_time,parent_id,child_id,species,child_generation,child_alpha,child_epsilon,child_social,child_env_effect,parent_alpha,parent_epsilon,parent_social,parent_env_effect,parent_age,parent_energy\n"), *BirthsPath, FFileHelper::EEncodingOptions::ForceAnsi);
 	FFileHelper::SaveStringToFile(TEXT("run_id,sim_time,agent_id,species,generation,age,energy,cause,alpha,epsilon,social,env_effect,decisions\n"), *DeathsPath, FFileHelper::EEncodingOptions::ForceAnsi);
 	FFileHelper::SaveStringToFile(TEXT("run_id,seed,mode,sim_time,species,n,mean_alpha,sd_alpha,mean_epsilon,sd_epsilon,mean_social,sd_social,mean_env_effect,sd_env_effect,mean_generation,max_generation,births,deaths,resource_A,resource_B,drought_state,trace_X_mean,trace_Y_mean,ext_decisions,ext_fallbacks\n"), *PopulationPath, FFileHelper::EEncodingOptions::ForceAnsi);
+	FFileHelper::SaveStringToFile(TEXT("run_id,sim_time,wall_utc,command,result\n"), *CommandsPath, FFileHelper::EEncodingOptions::ForceAnsi);
 
 	bOpen = true;
 	UE_LOG(LogSymbioticWorld, Log, TEXT("Run log opened: %s"), *Directory);
@@ -103,6 +105,26 @@ void FSWRunLogger::LogPopulation(float SimTime, ESWSpecies Species, int32 N,
 		MeanAlpha, SdAlpha, MeanEps, SdEps, MeanSocial, SdSocial, MeanEnv, SdEnv, MeanGen, MaxGen,
 		Births, Deaths, ResourceA, ResourceB, bDrought ? 1 : 0, TraceXMean, TraceYMean, ExtDecisions, ExtFallbacks));
 	if (PopulationBuf.Num() >= 100) Append(PopulationPath, PopulationBuf);
+}
+
+namespace
+{
+	// RFC 4180 quoting: wrap in double quotes, double any inner quote; CR/LF become spaces so one row stays one line.
+	FString CsvQuote(const FString& In)
+	{
+		FString S = In;
+		S.ReplaceInline(TEXT("\r"), TEXT(" "));
+		S.ReplaceInline(TEXT("\n"), TEXT(" "));
+		S.ReplaceInline(TEXT("\""), TEXT("\"\""));
+		return FString::Printf(TEXT("\"%s\""), *S);
+	}
+}
+
+void FSWRunLogger::LogCommand(float SimTime, const FString& Command, const FString& Result)
+{
+	if (!bOpen) return;
+	const FString Row = FString::Printf(TEXT("%s,%.2f,%s,%s,%s\n"), *RunId, SimTime, *FDateTime::UtcNow().ToIso8601(), *CsvQuote(Command), *CsvQuote(Result));
+	FFileHelper::SaveStringToFile(Row, *CommandsPath, FFileHelper::EEncodingOptions::ForceAnsi, &IFileManager::Get(), FILEWRITE_Append);
 }
 
 void FSWRunLogger::Append(const FString& Path, TArray<FString>& Buf)

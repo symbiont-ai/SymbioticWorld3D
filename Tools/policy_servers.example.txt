@@ -1,0 +1,18 @@
+# Symbiotic World: external policy servers (docs/POLICY_API.md, "Adding servers while the sim runs").
+#
+# The running sim polls this file every 3 s of wall time (Settings.PolicyFilePollSec). Add, change or
+# remove a line, save, and within one poll the new servers are connected, removed ones are closed and
+# their organisms go back to the built-in bandit; no restart. Default location while the sim runs:
+#   <repo>/Saved/policy_servers.txt        (-SWPolicyFile=path or run_sim.py --policy-file PATH to move it)
+#
+# Syntax, one server per line:
+#   host:port=Species        Species = Lumen | Tecton | Both   (case-insensitive)
+# '#' starts a comment, blank lines are ignored, whitespace is trimmed. A malformed line is logged once
+# (with its line number) and skipped; the other lines still apply. The same host:port given both here
+# and at launch (-SWPolicy / --policy): this file's species wins. The same host:port twice in this file:
+# the later line wins.
+#
+# Tools/policy_probe.py --write Saved/policy_servers.txt appends every reachable server on the wifi.
+
+10.228.152.5:9000=Lumen
+10.228.152.7:9000=Tecton

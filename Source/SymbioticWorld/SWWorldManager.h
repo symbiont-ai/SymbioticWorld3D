@@ -10,6 +10,7 @@
 
 class ASWAgent;
 class ASWResourcePatch;
+class ASWLeviathan;
 
 USTRUCT()
 struct FSWSpeciesStats
@@ -53,6 +54,8 @@ public:
 	const FSWLookSettings& GetLook() const { return Look; }
 	// Height an organism stands at, from the terrain field (pure function; no traces).
 	float GetGroundZ(float X, float Y) const;
+	// How far the drought has currently lowered the water (0 when not in drought).
+	float GetDroughtWaterDrop() const;
 	void SetEnvironment(class ASWEnvironment* Env) { Environment = Env; }
 	class ASWEnvironment* GetEnvironment() const { return Environment; }
 
@@ -66,6 +69,16 @@ public:
 	void ToggleDrought();
 	bool IsDrought() const { return bDrought; }
 	void CycleMode();   // A -> B -> C -> N -> A, then resets the run
+	void SetMode(ESWLearningMode NewMode);   // switch mode and reset the run (CycleMode and the control file both end here)
+
+	// ---- Live control file (docs/CONTROL_FILE.md) ----
+	// Executes one command line (grammar in docs/CONTROL_FILE.md) through the same functions the keys use
+	// (ToggleDrought / SetTimeScale / TogglePause / ApplyParameterOverrides / ResetRun / SetMode), logs
+	// "control: <line> -> <result>" and appends a row to <run dir>/commands.csv. Returns the result text.
+	FString ExecuteControlCommand(const FString& Line);
+	bool HasControlFile() const { return !ControlFilePath.IsEmpty(); }
+	int32 GetControlCommandsExecuted() const { return ControlCommandsExecuted; }   // accepted commands this run (HUD "ctrl")
+	const FString& GetLatestNote() const { return LatestNote; }                    // last "note=" text, empty until one arrives
 
 	// ---- Simulation services used by agents ----
 	FRandomStream& GetRng() { return Rng; }
@@ -93,6 +106,8 @@ public:
 	int32 GetBirths() const { return Births; }
 	int32 GetDeaths() const { return Deaths; }
 	int32 GetDeathsStarvation() const { return DeathsStarvation; }
+	int32 GetDeathsPredation() const { return DeathsPredation; }
+	const TArray<ASWLeviathan*>& GetLeviathans() const { return Leviathans; }
 	float GetResourceTotal(int32 Type) const { return Type == 0 ? ResourceTotalA : ResourceTotalB; }
 	float GetResourceCapacity(int32 Type) const { return Type == 0 ? ResourceCapA : ResourceCapB; }
 	int32 GetLivingCount() const { return Agents.Num(); }
@@ -115,6 +130,7 @@ public:
 protected:
 	UPROPERTY() TArray<ASWAgent*> Agents;
 	UPROPERTY() TArray<ASWResourcePatch*> Patches;
+	UPROPERTY() TArray<ASWLeviathan*> Leviathans;
 	UPROPERTY() ASWAgent* SelectedAgent = nullptr;
 	UPROPERTY() class ASWEnvironment* Environment = nullptr;
 
@@ -129,6 +145,7 @@ protected:
 	int32 Births = 0;
 	int32 Deaths = 0;
 	int32 DeathsStarvation = 0;
+	int32 DeathsPredation = 0;
 	float ResourceTotalA = 0.f, ResourceTotalB = 0.f;
 	float ResourceCapA = 0.f, ResourceCapB = 0.f;
 	float NeutralBirthTimer = 0.f;
@@ -152,6 +169,9 @@ protected:
 	void StepWorld(float Dt);
 	void SpawnFounders();
 	void SpawnPatches();
+	void SpawnLeviathans();
+	// Advances every leviathan and reaps the organisms they took (cause "predation").
+	void LeviathanStep(float Dt);
 	ASWAgent* SpawnAgent(ESWSpecies Species, const FSWGenome& Genome, const FVector& Loc, int32 ParentId, int32 Generation, float Energy);
 	FSWGenome MakeFounderGenome();
 	FSWGenome MakeChildGenome(const FSWGenome& Parent);
@@ -159,8 +179,9 @@ protected:
 	void ApplyCommandLineOverrides();
 	// -SWSet="Settings.PatchRegenPerSec=5;Lumen.ReproThreshold=85;Tecton.MaxAge=400"
 	// Sets any numeric/bool UPROPERTY on Settings / LumenParams / TectonParams
-	// by name via reflection, so parameter sweeps need no recompile.
-	void ApplyParameterOverrides(const FString& Spec);
+	// by name via reflection, so parameter sweeps need no recompile. Returns the
+	// number of fields set; OutRequested (optional) receives the number of items in Spec.
+	int32 ApplyParameterOverrides(const FString& Spec, int32* OutRequested = nullptr);
 	bool SetStructPropertyByName(UScriptStruct* StructType, void* StructPtr, const FString& Name, const FString& Value);
 	// -SWShot=5,60,120 : request a screenshot (Saved/Screenshots) at these sim times.
 	TArray<float> ScreenshotTimes;
@@ -182,6 +203,44 @@ protected:
 	void PolicyExchange();
 	FString BuildHelloLine() const;
 	FString BuildDecideLine(int32 ServerIdx, const TArray<ASWAgent*>& Due) const;
+
+	// Server list file (Settings.PolicyServerFile), watched on the WALL clock from Tick(), never from a
+	// substep. Effective set = -SWPolicy entries + file entries (same host:port: the file wins for the
+	// species). A change is applied between substeps: removed servers are closed and their organisms
+	// unbound, new servers connect, unbound organisms of a species whose servers changed go through
+	// AssignPolicy() (the birth-time rule, so the seeded stream is drawn only when share < 1 or several
+	// servers serve the species). Nothing here runs, and no stream draw happens, without any server.
+	TArray<FSWPolicyServerSpec> LaunchPolicySpecs;      // from Settings.PolicyServers (-SWPolicy), fixed for the process
+	TArray<FSWPolicyServerSpec> EffectivePolicySpecs;   // what PolicyClient currently holds (same order)
+	FString PolicyFilePath;                             // resolved absolute path, empty = not watching
+	double PolicyFileNextPoll = 0.0;                    // wall clock (FPlatformTime)
+	double PolicyReportNextTime = 0.0;                  // wall clock: binding summary every 10 s while servers exist
+	FDateTime PolicyFileStamp;                          // last seen modification time (MinValue = absent)
+	int64 PolicyFileSize = -1;                          // last seen size (-1 = absent)
+	bool bPolicyFileEverPolled = false;
+	void InitPolicyServers();                           // BeginPlay: launch entries + first read of the file
+	void PollPolicyFile(bool bForce);                   // stat, re-parse on change, apply the diff
+	bool ReadPolicyFile(TArray<FSWPolicyServerSpec>& Out) const;   // false = file absent; bad lines logged and skipped
+	void ApplyPolicyServerSet(const TArray<FSWPolicyServerSpec>& Desired, const FString& Source);
+	void RebindPolicies(const TArray<int32>& OldToNew, const bool bSpeciesChanged[2], int32& OutBound, int32& OutUnbound);
+
+	// Live control file (Settings.ControlFile), watched on the WALL clock from Tick(), before the fixed-step loop,
+	// never from a substep. The file is an append-only command log: the line count at startup is the cursor and
+	// those lines are ignored; on every size/mtime change the lines beyond the cursor are executed once, in
+	// order. Only newline-terminated lines count, so a line still being written is picked up on the next poll.
+	// A shrunken or removed file resets the cursor. Nothing here draws from the seeded stream.
+	FString ControlFilePath;                            // resolved absolute path, empty = not watching
+	double ControlFileNextPoll = 0.0;                   // wall clock (FPlatformTime)
+	FDateTime ControlFileStamp;                         // last seen modification time (MinValue = absent)
+	int64 ControlFileSize = -1;                         // last seen size (-1 = absent)
+	int32 ControlFileCursor = 0;                        // newline-terminated lines already consumed
+	TArray<FString> ControlFileSeen;                    // lines as last read: a rewrite that changes a consumed line resets the cursor
+	int32 ControlCommandsExecuted = 0;                  // accepted commands since StartRun (a reset command counts for the run it created)
+	FString LatestNote;
+	void InitControlFile();                             // BeginPlay: resolve the path, count and skip existing lines
+	void PollControlFile();                             // Tick: stat, read on change, execute new lines
+	bool ReadControlLines(TArray<FString>& OutLines) const;   // newline-terminated lines, untrimmed; false = file absent
+	FString RunControlCommand(const FString& Line, bool& bOutAccepted);   // the grammar; no logging
 	void NeutralBirthStep(float Dt);
 	void LogTick(float Dt);
 	FVector RandomArenaPoint(float Margin);

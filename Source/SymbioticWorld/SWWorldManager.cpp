@@ -2,6 +2,7 @@
 #include "SWAgent.h"
 #include "SWResourcePatch.h"
 #include "SWEnvironment.h"
+#include "SWLeviathan.h"
 #include "SWProcMesh.h"
 #include "SymbioticWorld.h"
 #include "EngineUtils.h"
@@ -9,6 +10,9 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Misc/DateTime.h"
+#include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
+#include "HAL/FileManager.h"
 #include "HAL/PlatformTime.h"
 #include "HAL/PlatformMisc.h"
 #include "GameFramework/PlayerController.h"
@@ -69,10 +73,14 @@ ASWWorldManager::ASWWorldManager()
 	TectonParams.PreferredResourceType = 1;
 }
 
+float ASWWorldManager::GetDroughtWaterDrop() const
+{
+	return Environment ? Look.DroughtWaterDrop * Environment->GetDroughtFactor() : 0.f;
+}
+
 float ASWWorldManager::GetGroundZ(float X, float Y) const
 {
-	const float Drop = Environment ? Look.DroughtWaterDrop * Environment->GetDroughtFactor() : 0.f;
-	return SWProc::GroundZ(Look, X, Y, Drop);
+	return SWProc::GroundZ(Look, X, Y, GetDroughtWaterDrop());
 }
 
 ASWWorldManager* ASWWorldManager::Get(UWorld* World)
@@ -89,10 +97,8 @@ void ASWWorldManager::BeginPlay()
 {
 	Super::BeginPlay();
 	ApplyCommandLineOverrides();
-	if (!Settings.PolicyServers.IsEmpty())
-	{
-		PolicyClient.Configure(Settings.PolicyServers, Settings.PolicyTimeoutMs);
-	}
+	InitPolicyServers();   // -SWPolicy entries + the server list file (docs/POLICY_API.md)
+	InitControlFile();     // live control file: existing lines are skipped, new ones executed (docs/CONTROL_FILE.md)
 	StartRun();
 }
 
@@ -155,6 +161,18 @@ void ASWWorldManager::ApplyCommandLineOverrides()
 	{
 		Settings.PolicyShare = FMath::Clamp(PolicyShare, 0.f, 1.f);
 	}
+	// Server list file watched while the sim runs (run_sim: --policy-file). Also reachable as -SWSet Settings.PolicyServerFile=...
+	FString PolicyFile;
+	if (FParse::Value(FCommandLine::Get(), TEXT("SWPolicyFile="), PolicyFile))
+	{
+		Settings.PolicyServerFile = PolicyFile.TrimStartAndEnd().TrimQuotes();
+	}
+	// Live control file watched while the sim runs (run_sim: --control-file). Also reachable as -SWSet Settings.ControlFile=...
+	FString ControlFile;
+	if (FParse::Value(FCommandLine::Get(), TEXT("SWControlFile="), ControlFile))
+	{
+		Settings.ControlFile = ControlFile.TrimStartAndEnd().TrimQuotes();
+	}
 	bool bAuto = false;
 	if (FParse::Bool(FCommandLine::Get(), TEXT("SWAutoSelect="), bAuto) && bAuto)
 	{
@@ -214,27 +232,36 @@ bool ASWWorldManager::SetStructPropertyByName(UScriptStruct* StructType, void* S
 	return true;
 }
 
-void ASWWorldManager::ApplyParameterOverrides(const FString& Spec)
+int32 ASWWorldManager::ApplyParameterOverrides(const FString& Spec, int32* OutRequested)
 {
 	TArray<FString> Items;
 	Spec.ParseIntoArray(Items, TEXT(";"), true);
+	int32 Requested = 0, Applied = 0;
 	for (FString Item : Items)
 	{
 		Item.TrimStartAndEndInline();
+		if (Item.IsEmpty()) continue;
+		Requested++;
 		FString Key, Value;
-		if (!Item.Split(TEXT("="), &Key, &Value)) continue;
+		if (!Item.Split(TEXT("="), &Key, &Value)) { UE_LOG(LogSymbioticWorld, Warning, TEXT("SWSet: '%s' is not Scope.Field=value"), *Item); continue; }
+		Key.TrimStartAndEndInline();
+		Value.TrimStartAndEndInline();
 		FString Scope, Name;
 		if (!Key.Split(TEXT("."), &Scope, &Name)) { Scope = TEXT("Settings"); Name = Key; }
 		Scope = Scope.ToLower();
-		if (Scope == TEXT("settings"))     SetStructPropertyByName(FSWRunSettings::StaticStruct(),   &Settings,     Name, Value);
-		else if (Scope == TEXT("lumen"))   SetStructPropertyByName(FSWSpeciesParams::StaticStruct(), &LumenParams,  Name, Value);
-		else if (Scope == TEXT("tecton"))  SetStructPropertyByName(FSWSpeciesParams::StaticStruct(), &TectonParams, Name, Value);
+		bool bOk = false;
+		if (Scope == TEXT("settings"))     bOk = SetStructPropertyByName(FSWRunSettings::StaticStruct(),   &Settings,     Name, Value);
+		else if (Scope == TEXT("lumen"))   bOk = SetStructPropertyByName(FSWSpeciesParams::StaticStruct(), &LumenParams,  Name, Value);
+		else if (Scope == TEXT("tecton"))  bOk = SetStructPropertyByName(FSWSpeciesParams::StaticStruct(), &TectonParams, Name, Value);
 		else if (Scope == TEXT("genome") || Scope == TEXT("founder"))
-			SetStructPropertyByName(FSWGenome::StaticStruct(), &Settings.FounderGenome, Name, Value);
+			bOk = SetStructPropertyByName(FSWGenome::StaticStruct(), &Settings.FounderGenome, Name, Value);
 		else if (Scope == TEXT("look"))
-			SetStructPropertyByName(FSWLookSettings::StaticStruct(), &Look, Name, Value);
+			bOk = SetStructPropertyByName(FSWLookSettings::StaticStruct(), &Look, Name, Value);
 		else UE_LOG(LogSymbioticWorld, Warning, TEXT("SWSet: unknown scope '%s' (use Settings/Lumen/Tecton/Genome/Look)"), *Scope);
+		if (bOk) Applied++;
 	}
+	if (OutRequested) *OutRequested = Requested;
+	return Applied;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,13 +275,14 @@ void ASWWorldManager::StartRun()
 	Rng.Initialize(Settings.Seed);
 	SimTime = 0.f;
 	Accumulator = 0.f;
-	Births = Deaths = DeathsStarvation = 0;
+	Births = Deaths = DeathsStarvation = DeathsPredation = 0;
 	NextAgentId = 1;
 	bDrought = false;
 	NeutralBirthTimer = AgentLogTimer = PopLogTimer = StatsTimer = 0.f;
 	ExtDecisions[0] = ExtDecisions[1] = ExtFallbacks[0] = ExtFallbacks[1] = 0;
 	ExternalCount = 0;
 	StepCounter = 0;
+	ControlCommandsExecuted = 0;   // a control command that resets counts for the run it created (incremented after the reset)
 	InitialLumenTarget = Settings.InitialLumen;
 	InitialTectonTarget = Settings.InitialTecton;
 
@@ -276,6 +304,7 @@ void ASWWorldManager::StartRun()
 	PopHistory.Reset();
 	SpawnPatches();
 	SpawnFounders();
+	SpawnLeviathans();
 	RecomputeStats();
 	if (bAutoSelect) CycleSelection();
 
@@ -290,13 +319,20 @@ void ASWWorldManager::ResetRun()
 
 void ASWWorldManager::CycleMode()
 {
+	ESWLearningMode Next = ESWLearningMode::LearningOff;
 	switch (Settings.Mode)
 	{
-	case ESWLearningMode::LearningOff:       Settings.Mode = ESWLearningMode::LearningOn; break;
-	case ESWLearningMode::LearningOn:        Settings.Mode = ESWLearningMode::LearningEvolution; break;
-	case ESWLearningMode::LearningEvolution: Settings.Mode = ESWLearningMode::NeutralControl; break;
-	default:                                 Settings.Mode = ESWLearningMode::LearningOff; break;
+	case ESWLearningMode::LearningOff:       Next = ESWLearningMode::LearningOn; break;
+	case ESWLearningMode::LearningOn:        Next = ESWLearningMode::LearningEvolution; break;
+	case ESWLearningMode::LearningEvolution: Next = ESWLearningMode::NeutralControl; break;
+	default:                                 Next = ESWLearningMode::LearningOff; break;
 	}
+	SetMode(Next);
+}
+
+void ASWWorldManager::SetMode(ESWLearningMode NewMode)
+{
+	Settings.Mode = NewMode;
 	ResetRun();
 }
 
@@ -313,9 +349,74 @@ void ASWWorldManager::ClearWorld()
 	for (ASWAgent* A : Agents) if (IsValid(A)) A->Destroy();
 	for (ASWAgent* A : PendingSpawns) if (IsValid(A)) A->Destroy();
 	for (ASWResourcePatch* P : Patches) if (IsValid(P)) P->Destroy();
+	for (ASWLeviathan* Lv : Leviathans) if (IsValid(Lv)) Lv->Destroy();
 	Agents.Reset();
 	PendingSpawns.Reset();
 	Patches.Reset();
+	Leviathans.Reset();
+}
+
+void ASWWorldManager::SpawnLeviathans()
+{
+	UWorld* World = GetWorld();
+	if (!World || !Settings.bLeviathan) return;
+
+	FActorSpawnParameters SP;
+	SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	for (int32 i = 0; i < Settings.LeviathanCount; ++i)
+	{
+		ASWLeviathan* Lv = World->SpawnActor<ASWLeviathan>(ASWLeviathan::StaticClass(), FTransform::Identity, SP);
+		if (!Lv) continue;
+		// Init() places the animal on the channel; it draws only from its own visual
+		// stream, so adding or removing leviathans does not shift the simulation RNG.
+		Lv->Init(this, i);
+		Leviathans.Add(Lv);
+	}
+	if (Leviathans.Num() > 0)
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("Leviathan: %d patrolling the channel (strike radius %.0f uu, cooldown %.1f s)"),
+			Leviathans.Num(), Settings.LeviathanStrikeRadius, Settings.LeviathanStrikeCooldown);
+	}
+}
+
+void ASWWorldManager::LeviathanStep(float Dt)
+{
+	// Every leviathan moves and nominates its victims first; the reaping happens
+	// here, in one place, so death accounting matches the starvation/age path and
+	// two animals cannot both claim the same organism.
+	TArray<ASWAgent*> Victims;
+	for (ASWLeviathan* Lv : Leviathans)
+	{
+		if (IsValid(Lv)) Lv->Step(Dt, Victims);
+	}
+	for (ASWAgent* V : Victims)
+	{
+		if (!IsValid(V)) continue;
+		const int32 Idx = Agents.Find(V);
+		if (Idx == INDEX_NONE) continue;
+		Deaths++;
+		DeathsPredation++;
+		// deaths.csv already carries a 'cause' column, so this needs no schema change.
+		Logger.LogDeath(SimTime, *V, TEXT("predation"));
+		const bool bWasSelected = (SelectedAgent == V);
+		if (bWasSelected) SelectedAgent = nullptr;
+		V->Destroy();
+		Agents.RemoveAtSwap(Idx);
+		if (bWasSelected && bAutoSelect && Agents.Num() > 0)
+		{
+			// Deliberately NOT CycleSelection(): that draws from the seeded simulation
+			// stream, so a predation event would shift the RNG and make -SWAutoSelect=1
+			// (a screenshot-only flag) change the run. Lowest living id is deterministic.
+			ASWAgent* Next = nullptr;
+			for (ASWAgent* A : Agents)
+			{
+				if (!IsValid(A)) continue;
+				if (!Next || A->GetAgentId() < Next->GetAgentId()) Next = A;
+			}
+			if (Next) SelectAgent(Next);
+		}
+	}
 }
 
 FVector ASWWorldManager::RandomArenaPoint(float Margin)
@@ -446,7 +547,28 @@ bool ASWWorldManager::TryReproduce(ASWAgent* Parent)
 void ASWWorldManager::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	if (PolicyClient.HasServers()) PolicyClient.Tick();
+	// Server list file: wall-clock poll, applied here, between frames, so never between an organism's
+	// PrepareDecision() and ResolveDecision() (both happen inside one substep) and never inside the
+	// fixed-step loop below. Without any server this is a timestamp check every PolicyFilePollSec.
+	PollPolicyFile(false);
+	// Live control file: same placement and the same rules (wall clock, between frames, never inside a substep,
+	// no seeded draws). Polled while paused too, so "pause=off" works. Without a file this is one stat every
+	// ControlFilePollSec; without new lines nothing in the sim changes.
+	PollControlFile();
+	if (PolicyClient.HasServers())
+	{
+		PolicyClient.Tick();
+		const double NowWall = FPlatformTime::Seconds();
+		if (NowWall >= PolicyReportNextTime)
+		{
+			PolicyReportNextTime = NowWall + 10.0;
+			int32 Bound[2] = { 0, 0 };
+			for (const ASWAgent* A : Agents) if (IsValid(A) && A->IsAlive() && A->IsExternal()) Bound[static_cast<int32>(A->GetSpecies())]++;
+			UE_LOG(LogSymbioticWorld, Log, TEXT("Policy servers: %d configured, %d connected; bound organisms %d/%d (Lumen %d, Tecton %d); external decisions %d, fallbacks %d"),
+				PolicyClient.NumServers(), PolicyClient.NumConnected(), Bound[0] + Bound[1], Agents.Num(), Bound[0], Bound[1],
+				ExtDecisions[0] + ExtDecisions[1], ExtFallbacks[0] + ExtFallbacks[1]);
+		}
+	}
 	if (bPaused || TimeScale <= 0.f) return;
 
 	const double T0 = FPlatformTime::Seconds();
@@ -547,6 +669,15 @@ void ASWWorldManager::StepWorld(float Dt)
 			Agents.RemoveAtSwap(i);
 			if (bWasSelected && bAutoSelect) CycleSelection();
 		}
+	}
+
+	// 2a) Leviathan: the river predator patrols the channel and strikes organisms
+	//     that are in the water. Spatial selection pressure, not a species — see
+	//     ASWLeviathan. Runs after the agents have moved this substep so a kill
+	//     reflects where the organism actually ended up.
+	if (Settings.bLeviathan && Leviathans.Num() > 0)
+	{
+		LeviathanStep(Dt);
 	}
 
 	// 2b) External policies: organisms assigned to a server prepared their decision in Step()
@@ -908,6 +1039,449 @@ void ASWWorldManager::AssignPolicy(ASWAgent* A)
 	if (Share < 1.f && Rng.FRand() >= Share) return;
 	const int32 Pick = Candidates.Num() == 1 ? Candidates[0] : Candidates[Rng.RandRange(0, Candidates.Num() - 1)];
 	A->SetPolicyServer(Pick);
+}
+
+// ---------------------------------------------------------------------------
+// Server list file (docs/POLICY_API.md, "Adding servers while the sim runs")
+// ---------------------------------------------------------------------------
+
+void ASWWorldManager::InitPolicyServers()
+{
+	PolicyClient.SetTimeoutMs(Settings.PolicyTimeoutMs);
+	LaunchPolicySpecs.Reset();
+	if (!Settings.PolicyServers.IsEmpty())
+	{
+		FSWPolicyClient::ParseServerList(Settings.PolicyServers, LaunchPolicySpecs);
+	}
+	PolicyFilePath.Empty();
+	const FString FileSetting = Settings.PolicyServerFile.TrimStartAndEnd();
+	if (!FileSetting.IsEmpty())
+	{
+		PolicyFilePath = FPaths::IsRelative(FileSetting) ? FPaths::Combine(FPaths::ProjectDir(), FileSetting) : FileSetting;
+		PolicyFilePath = FPaths::ConvertRelativePathToFull(PolicyFilePath);
+		FPaths::NormalizeFilename(PolicyFilePath);
+	}
+	PolicyFileStamp = FDateTime::MinValue();
+	PolicyFileSize = -1;
+	bPolicyFileEverPolled = false;
+	PolicyFileNextPoll = 0.0;
+	PolicyReportNextTime = 0.0;
+	PollPolicyFile(true);   // launch entries + whatever the file holds now, applied in one go
+}
+
+bool ASWWorldManager::ReadPolicyFile(TArray<FSWPolicyServerSpec>& Out) const
+{
+	FString Content;
+	if (PolicyFilePath.IsEmpty() || !FFileHelper::LoadFileToString(Content, *PolicyFilePath)) return false;
+	TArray<FString> Lines;
+	Content.ParseIntoArray(Lines, TEXT("\n"), false);   // keep empty lines so the numbers in warnings match the file
+	for (int32 i = 0; i < Lines.Num(); ++i)
+	{
+		FString Line = Lines[i];
+		int32 Hash = INDEX_NONE;
+		if (Line.FindChar(TEXT('#'), Hash)) Line.LeftInline(Hash);
+		Line.TrimStartAndEndInline();   // also drops a trailing '\r'
+		if (Line.IsEmpty()) continue;
+		FSWPolicyServerSpec S;
+		FString Err;
+		if (!FSWPolicyClient::ParseServerEntry(Line, S, Err))
+		{
+			UE_LOG(LogSymbioticWorld, Warning, TEXT("Policy file %s line %d: '%s' skipped: %s"), *PolicyFilePath, i + 1, *Line, *Err);
+			continue;
+		}
+		// The same host:port twice in the file: the later line wins.
+		const int32 Existing = Out.IndexOfByPredicate([&S](const FSWPolicyServerSpec& O) { return O.SameServer(S); });
+		if (Existing != INDEX_NONE) Out[Existing] = S; else Out.Add(S);
+	}
+	return true;
+}
+
+void ASWWorldManager::PollPolicyFile(bool bForce)
+{
+	const double Now = FPlatformTime::Seconds();
+	if (!bForce)
+	{
+		if (PolicyFilePath.IsEmpty() || Now < PolicyFileNextPoll) return;
+	}
+	PolicyFileNextPoll = Now + FMath::Max(Settings.PolicyFilePollSec, 0.25f);
+
+	bool bChanged = !bPolicyFileEverPolled;   // the first poll always applies (launch entries, plus the file if present)
+	bool bPresent = false;
+	if (!PolicyFilePath.IsEmpty())
+	{
+		IFileManager& FM = IFileManager::Get();
+		const int64 Size = FM.FileSize(*PolicyFilePath);   // -1 when absent
+		const FDateTime Stamp = Size >= 0 ? FM.GetTimeStamp(*PolicyFilePath) : FDateTime::MinValue();
+		bPresent = Size >= 0;
+		if (Size != PolicyFileSize || Stamp != PolicyFileStamp)
+		{
+			bChanged = true;
+			PolicyFileSize = Size;
+			PolicyFileStamp = Stamp;
+		}
+	}
+	const bool bFirst = !bPolicyFileEverPolled;
+	bPolicyFileEverPolled = true;
+	if (!bChanged) return;
+
+	// Effective set: launch entries first (in -SWPolicy order), then file entries; the same host:port in
+	// both takes the file's species. Read errors and bad lines never stop the sim.
+	TArray<FSWPolicyServerSpec> Desired = LaunchPolicySpecs;
+	const FString Source = PolicyFilePath.IsEmpty() ? FString(TEXT("-SWPolicy only, no file")) : FString::Printf(TEXT("file %s"), *PolicyFilePath);
+	if (!PolicyFilePath.IsEmpty())
+	{
+		TArray<FSWPolicyServerSpec> FromFile;
+		if (ReadPolicyFile(FromFile))
+		{
+			for (const FSWPolicyServerSpec& F : FromFile)
+			{
+				const int32 Existing = Desired.IndexOfByPredicate([&F](const FSWPolicyServerSpec& O) { return O.SameServer(F); });
+				if (Existing != INDEX_NONE) Desired[Existing] = F; else Desired.Add(F);
+			}
+			if (bFirst)
+			{
+				UE_LOG(LogSymbioticWorld, Log, TEXT("Policy file %s: %d server line(s), polled every %.1f s"), *PolicyFilePath, FromFile.Num(), FMath::Max(Settings.PolicyFilePollSec, 0.25f));
+			}
+		}
+		else if (bFirst)
+		{
+			UE_LOG(LogSymbioticWorld, Log, TEXT("Policy file not present, watching %s (polled every %.1f s; one host:port=Lumen|Tecton|Both per line)"), *PolicyFilePath, FMath::Max(Settings.PolicyFilePollSec, 0.25f));
+		}
+		else if (!bPresent)
+		{
+			UE_LOG(LogSymbioticWorld, Log, TEXT("Policy file %s removed; its servers are dropped, still watching"), *PolicyFilePath);
+		}
+	}
+	ApplyPolicyServerSet(Desired, Source);
+}
+
+void ASWWorldManager::ApplyPolicyServerSet(const TArray<FSWPolicyServerSpec>& Desired, const FString& Source)
+{
+	// Diff against the current effective set; also which species' server sets change at all.
+	FString Diff;
+	bool bSpeciesChanged[2] = { false, false };
+	auto Note = [&bSpeciesChanged](const FSWPolicyServerSpec& S) { if (S.bLumen) bSpeciesChanged[0] = true; if (S.bTecton) bSpeciesChanged[1] = true; };
+	for (const FSWPolicyServerSpec& D : Desired)
+	{
+		const FSWPolicyServerSpec* Old = EffectivePolicySpecs.FindByPredicate([&D](const FSWPolicyServerSpec& O) { return O.SameServer(D); });
+		if (!Old)                      { Diff += FString::Printf(TEXT(" +%s=%s"), *D.Name, D.SpeciesLabel()); Note(D); }
+		else if (!Old->SameSpecies(D)) { Diff += FString::Printf(TEXT(" ~%s=%s"), *D.Name, D.SpeciesLabel()); Note(*Old); Note(D); }
+	}
+	for (const FSWPolicyServerSpec& O : EffectivePolicySpecs)
+	{
+		if (!Desired.FindByPredicate([&O](const FSWPolicyServerSpec& D) { return D.SameServer(O); }))
+		{
+			Diff += FString::Printf(TEXT(" -%s=%s"), *O.Name, O.SpeciesLabel());
+			Note(O);
+		}
+	}
+	if (Diff.IsEmpty())
+	{
+		if (EffectivePolicySpecs.Num() > 0)
+		{
+			UE_LOG(LogSymbioticWorld, Log, TEXT("Policy servers: unchanged (%s)"), *Source);
+		}
+		return;
+	}
+
+	TArray<int32> OldToNew;
+	PolicyClient.ApplyServerSet(Desired, OldToNew);
+	EffectivePolicySpecs = Desired;
+	int32 Bound = 0, Unbound = 0;
+	RebindPolicies(OldToNew, bSpeciesChanged, Bound, Unbound);
+	// The hello lists the served species, so refresh the stored line for the connect of every new server.
+	// It is not re-sent to servers already connected: for them a hello means "new run" (the reference
+	// server forgets its organisms on hello). StartRun() still sends it to everyone on every reset.
+	PolicyClient.SetHello(BuildHelloLine(), /*bSendNow*/ false);
+	UE_LOG(LogSymbioticWorld, Log, TEXT("Policy servers:%s (%s); %d server(s); organisms bound %d, unbound %d, external now %d/%d"),
+		*Diff, *Source, PolicyClient.NumServers(), Bound, Unbound, ExternalCount, Agents.Num());
+}
+
+void ASWWorldManager::RebindPolicies(const TArray<int32>& OldToNew, const bool bSpeciesChanged[2], int32& OutBound, int32& OutUnbound)
+{
+	OutBound = OutUnbound = 0;
+	auto Visit = [&](ASWAgent* A)
+	{
+		if (!IsValid(A) || !A->IsAlive()) return;
+		const int32 Sp = static_cast<int32>(A->GetSpecies());
+		const int32 Old = A->GetPolicyServer();
+		if (Old >= 0)
+		{
+			// Follow the server to its new index; drop the binding if the server went away or its species
+			// mapping no longer covers this organism.
+			int32 New = OldToNew.IsValidIndex(Old) ? OldToNew[Old] : -1;
+			if (New >= 0 && !PolicyClient.GetServer(New).Controls(A->GetSpecies())) New = -1;
+			A->SetPolicyServer(New);
+			if (New < 0)
+			{
+				OutUnbound++;
+				// Cannot happen between frames (a prepared decision is resolved in the same substep), but if a
+				// decision were still open it finishes with the built-in bandit and counts as a fallback.
+				if (A->IsDecisionDue()) { A->ResolveDecision(nullptr); ExtFallbacks[Sp]++; }
+			}
+		}
+		if (A->GetPolicyServer() < 0 && bSpeciesChanged[Sp])
+		{
+			// Unbound organism of a species whose server set changed: the birth-time rule decides again.
+			// AssignPolicy() draws from the seeded stream only when PolicyShare < 1 or several servers serve
+			// the species (a real choice), exactly as at birth; with one server per species and share 1 no
+			// draw happens, so a run without any server stays byte-identical. Organisms of a species whose
+			// servers did not change are left alone (no repeated share draws on unrelated edits).
+			AssignPolicy(A);
+			if (A->GetPolicyServer() >= 0) OutBound++;
+		}
+	};
+	for (ASWAgent* A : Agents) Visit(A);
+	for (ASWAgent* A : PendingSpawns) Visit(A);
+	ExternalCount = 0;
+	for (const ASWAgent* A : Agents) if (IsValid(A) && A->IsAlive() && A->IsExternal()) ExternalCount++;
+}
+
+// ---------------------------------------------------------------------------
+// Live control file (docs/CONTROL_FILE.md)
+// ---------------------------------------------------------------------------
+
+void ASWWorldManager::InitControlFile()
+{
+	ControlFilePath.Empty();
+	ControlFileStamp = FDateTime::MinValue();
+	ControlFileSize = -1;
+	ControlFileCursor = 0;
+	ControlFileNextPoll = 0.0;
+	LatestNote.Empty();
+	const FString FileSetting = Settings.ControlFile.TrimStartAndEnd();
+	if (FileSetting.IsEmpty())
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("control file: disabled (Settings.ControlFile is empty)"));
+		return;
+	}
+	ControlFilePath = FPaths::IsRelative(FileSetting) ? FPaths::Combine(FPaths::ProjectDir(), FileSetting) : FileSetting;
+	ControlFilePath = FPaths::ConvertRelativePathToFull(ControlFilePath);
+	FPaths::NormalizeFilename(ControlFilePath);
+
+	IFileManager& FM = IFileManager::Get();
+	ControlFileSize = FM.FileSize(*ControlFilePath);   // -1 when absent
+	ControlFileStamp = ControlFileSize >= 0 ? FM.GetTimeStamp(*ControlFilePath) : FDateTime::MinValue();
+	const float PollSec = FMath::Max(Settings.ControlFilePollSec, 0.25f);
+	TArray<FString> Existing;
+	if (ReadControlLines(Existing))
+	{
+		ControlFileCursor = Existing.Num();
+		UE_LOG(LogSymbioticWorld, Log, TEXT("control file: %s, %d existing lines ignored, watching (polled every %.1f s)"), *ControlFilePath, ControlFileCursor, PollSec);
+	}
+	else
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("control file: %s not present, watching (polled every %.1f s; one command per line, see docs/CONTROL_FILE.md)"), *ControlFilePath, PollSec);
+	}
+}
+
+bool ASWWorldManager::ReadControlLines(TArray<FString>& OutLines) const
+{
+	OutLines.Reset();
+	FString Content;
+	if (ControlFilePath.IsEmpty() || !FFileHelper::LoadFileToString(Content, *ControlFilePath)) return false;
+	// Only newline-terminated lines count: a line that is still being appended (no newline yet) is left for the
+	// next poll, so the cursor never lands in the middle of a command. A trailing CR is dropped by the trim at execution.
+	int32 Start = 0;
+	for (int32 i = 0; i < Content.Len(); ++i)
+	{
+		if (Content[i] == TEXT('\n'))
+		{
+			OutLines.Add(Content.Mid(Start, i - Start));
+			Start = i + 1;
+		}
+	}
+	return true;
+}
+
+void ASWWorldManager::PollControlFile()
+{
+	if (ControlFilePath.IsEmpty()) return;
+	const double Now = FPlatformTime::Seconds();
+	if (Now < ControlFileNextPoll) return;
+	ControlFileNextPoll = Now + FMath::Max(Settings.ControlFilePollSec, 0.25f);
+
+	IFileManager& FM = IFileManager::Get();
+	const int64 Size = FM.FileSize(*ControlFilePath);
+	const FDateTime Stamp = Size >= 0 ? FM.GetTimeStamp(*ControlFilePath) : FDateTime::MinValue();
+	if (Size == ControlFileSize && Stamp == ControlFileStamp) return;   // pure stat: nothing else happens
+	ControlFileSize = Size;
+	ControlFileStamp = Stamp;
+
+	TArray<FString> Lines;
+	if (!ReadControlLines(Lines))
+	{
+		if (ControlFileCursor != 0)
+		{
+			UE_LOG(LogSymbioticWorld, Log, TEXT("control file: %s removed; cursor reset from %d to 0, still watching"), *ControlFilePath, ControlFileCursor);
+			ControlFileCursor = 0;
+		}
+		ControlFileSeen.Reset();
+		return;
+	}
+	// A rewrite that keeps the line count (truncate + append inside one poll window) is invisible to the
+	// cursor alone: if any already-consumed line changed, the file is new content and starts from line 1.
+	{
+		const int32 Common = FMath::Min(ControlFileCursor, FMath::Min(ControlFileSeen.Num(), Lines.Num()));
+		for (int32 i = 0; i < Common; ++i)
+		{
+			if (!Lines[i].Equals(ControlFileSeen[i]))
+			{
+				UE_LOG(LogSymbioticWorld, Log, TEXT("control file: %s rewritten (line %d changed); cursor reset to 0"), *ControlFilePath, i + 1);
+				ControlFileCursor = 0;
+				break;
+			}
+		}
+	}
+	if (Lines.Num() < ControlFileCursor)
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("control file: %s shrank from %d to %d lines; cursor reset to %d (existing lines are not re-executed)"), *ControlFilePath, ControlFileCursor, Lines.Num(), Lines.Num());
+		ControlFileCursor = Lines.Num();
+		ControlFileSeen = Lines;
+		return;
+	}
+	// Execute every new line once, in file order. The cursor moves before each command, so nothing is replayed.
+	while (ControlFileCursor < Lines.Num())
+	{
+		FString Line = Lines[ControlFileCursor++];
+		Line.TrimStartAndEndInline();   // also drops a trailing CR
+		if (Line.IsEmpty() || Line.StartsWith(TEXT("#"))) continue;
+		ExecuteControlCommand(Line);
+	}
+	ControlFileSeen = Lines;
+}
+
+FString ASWWorldManager::ExecuteControlCommand(const FString& Line)
+{
+	bool bAccepted = false;
+	const FString Result = RunControlCommand(Line, bAccepted);
+	if (bAccepted) ControlCommandsExecuted++;
+	UE_LOG(LogSymbioticWorld, Log, TEXT("control: %s -> %s"), *Line, *Result);
+	// After a reset the logger belongs to the new run, so reset/mode rows land in the run they created.
+	Logger.LogCommand(SimTime, Line, Result);
+	return Result;
+}
+
+FString ASWWorldManager::RunControlCommand(const FString& InLine, bool& bOutAccepted)
+{
+	bOutAccepted = false;
+	FString Line = InLine.TrimStartAndEnd();
+	if (Line.IsEmpty()) return TEXT("rejected: empty line");
+
+	// Keyword = everything before the first '=' or space, case-insensitive; the rest is the argument.
+	int32 Eq = INDEX_NONE, Sp = INDEX_NONE;
+	Line.FindChar(TEXT('='), Eq);
+	Line.FindChar(TEXT(' '), Sp);
+	int32 Cut = Line.Len();
+	if (Eq != INDEX_NONE) Cut = FMath::Min(Cut, Eq);
+	if (Sp != INDEX_NONE) Cut = FMath::Min(Cut, Sp);
+	const FString Key = Line.Left(Cut).TrimStartAndEnd().ToLower();
+	FString Arg = Cut < Line.Len() ? Line.Mid(Cut + 1) : FString();
+	Arg.TrimStartAndEndInline();
+	bool bHasEq = Eq != INDEX_NONE && Eq == Cut;
+	if (!bHasEq && Arg.StartsWith(TEXT("=")))   // "drought = on": spaces around '=' are tolerated
+	{
+		bHasEq = true;
+		Arg.RightChopInline(1);
+		Arg.TrimStartAndEndInline();
+	}
+
+	auto OnOff = [](const FString& V, bool& bOut, bool& bToggle) -> bool
+	{
+		const FString L = V.ToLower();
+		bToggle = false;
+		if (L == TEXT("on") || L == TEXT("1") || L == TEXT("true"))        { bOut = true;  return true; }
+		if (L == TEXT("off") || L == TEXT("0") || L == TEXT("false"))      { bOut = false; return true; }
+		if (L == TEXT("toggle"))                                            { bToggle = true; return true; }
+		return false;
+	};
+
+	if (Key == TEXT("note"))
+	{
+		// Everything after "note=" verbatim (may contain '#', '=', ','). Kept for the HUD / GetLatestNote().
+		if (!bHasEq) return TEXT("rejected: note needs '=': note=<text>");
+		LatestNote = Arg;
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: note recorded (%d chars)"), Arg.Len());
+	}
+
+	// Inline "# comment" (a '#' preceded by a space) is dropped for every other command.
+	{
+		const int32 Hash = Arg.Find(TEXT(" #"));
+		if (Hash != INDEX_NONE) { Arg.LeftInline(Hash); Arg.TrimStartAndEndInline(); }
+	}
+
+	if (Key == TEXT("drought"))
+	{
+		bool bWant = false, bToggle = false;
+		if (!bHasEq || !OnOff(Arg, bWant, bToggle)) return TEXT("rejected: drought=on|off|toggle");
+		if (!bToggle && bWant == bDrought) { bOutAccepted = true; return FString::Printf(TEXT("ok: drought already %s"), bDrought ? TEXT("on") : TEXT("off")); }
+		ToggleDrought();   // the P key's path (ASWPlayerController::OnToggleDrought)
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: drought %s at t=%.1f"), bDrought ? TEXT("on") : TEXT("off"), SimTime);
+	}
+	if (Key == TEXT("pause"))
+	{
+		bool bWant = false, bToggle = false;
+		if (!bHasEq || !OnOff(Arg, bWant, bToggle) || bToggle) return TEXT("rejected: pause=on|off");
+		if (bWant == bPaused) { bOutAccepted = true; return FString::Printf(TEXT("ok: already %s"), bPaused ? TEXT("paused") : TEXT("running")); }
+		TogglePause();     // the Space key's path (ASWPlayerController::OnTogglePause)
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: %s at t=%.1f"), bPaused ? TEXT("paused") : TEXT("running"), SimTime);
+	}
+	if (Key == TEXT("speed"))
+	{
+		if (!bHasEq || Arg.IsEmpty() || !Arg.IsNumeric()) return TEXT("rejected: speed=<float>");
+		const float Want = FCString::Atof(*Arg);
+		if (!FMath::IsFinite(Want) || Want < 0.f) return TEXT("rejected: speed must be >= 0");
+		SetTimeScale(Want);   // the 1/2/3 keys' path (ASWPlayerController::OnSpeed1/10/50); clamps to [0, 1000]
+		bOutAccepted = true;
+		return FMath::IsNearlyEqual(Want, TimeScale) ? FString::Printf(TEXT("ok: speed %.2fx"), TimeScale)
+		                                             : FString::Printf(TEXT("ok: speed %.2fx (requested %.2f, clamped)"), TimeScale, Want);
+	}
+	if (Key == TEXT("set"))
+	{
+		if (bHasEq || Arg.IsEmpty()) return TEXT("rejected: set <Scope.Field>=<value> (Scope: Settings, Lumen, Tecton, Genome, Look)");
+		int32 Requested = 0;
+		const int32 Applied = ApplyParameterOverrides(Arg, &Requested);   // the -SWSet path, on the live objects
+		if (Applied == 0) return FString::Printf(TEXT("rejected: 0/%d field(s) set (see the SWSet warning above)"), Requested);
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: %d/%d field(s) set"), Applied, Requested);
+	}
+	if (Key == TEXT("reset"))
+	{
+		const FString Prev = RunId;
+		const float PrevT = SimTime;
+		if (!Arg.IsEmpty())
+		{
+			FString SeedKey, SeedVal;
+			if (bHasEq || !Arg.Split(TEXT("="), &SeedKey, &SeedVal) || SeedKey.TrimStartAndEnd().ToLower() != TEXT("seed"))
+				return TEXT("rejected: reset | reset seed=<int>");
+			SeedVal.TrimStartAndEndInline();
+			if (SeedVal.IsEmpty() || !SeedVal.IsNumeric() || SeedVal.Contains(TEXT("."))) return TEXT("rejected: reset seed=<int>");
+			Settings.Seed = FCString::Atoi(*SeedVal);
+		}
+		ResetRun();   // the R key's path (ASWPlayerController::OnResetRun)
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: run %s ended at t=%.1f; started %s (seed %d, mode %s)"), *Prev, PrevT, *RunId, Settings.Seed, SWModeName(Settings.Mode));
+	}
+	if (Key == TEXT("mode"))
+	{
+		const FString M = Arg.ToUpper();
+		ESWLearningMode NewMode = ESWLearningMode::LearningEvolution;
+		if (!bHasEq || M.Len() != 1) return TEXT("rejected: mode=A|B|C|N");
+		else if (M == TEXT("A")) NewMode = ESWLearningMode::LearningOff;
+		else if (M == TEXT("B")) NewMode = ESWLearningMode::LearningOn;
+		else if (M == TEXT("C")) NewMode = ESWLearningMode::LearningEvolution;
+		else if (M == TEXT("N")) NewMode = ESWLearningMode::NeutralControl;
+		else return TEXT("rejected: mode=A|B|C|N");
+		const FString Prev = RunId;
+		const float PrevT = SimTime;
+		SetMode(NewMode);   // the M key's path ends here too (CycleMode -> SetMode -> ResetRun)
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: run %s ended at t=%.1f; started %s (mode %s, seed %d)"), *Prev, PrevT, *RunId, SWModeName(Settings.Mode), Settings.Seed);
+	}
+	return TEXT("rejected: unknown command (drought | speed | pause | set | reset | mode | note)");
 }
 
 namespace

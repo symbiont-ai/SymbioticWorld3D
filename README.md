@@ -10,6 +10,7 @@ mutated learning parameters (α, ε, social) and an environmental-effect strengt
 Spec: `docs/SPEC_TEXT.txt` (text of the hack-day specification; concept plates in
 `docs/plates/`). Mechanism definitions: `DESIGN.md`.
 Build plan with exit conditions: `CHECKLIST.md`.
+Contributing (Mac collaborators, coding agents, recipes for actions/percepts/species/learners/perturbations/analysis): `docs/CONTRIBUTING.md`.
 
 ## Requirements
 
@@ -95,6 +96,9 @@ Command-line flags understood by the sim (all optional):
                         # so a scripted render never captures your keystrokes (M/P/1-3 would change the run)
 -SWPolicy="host:port=Lumen|host:port=Tecton"   # external policy servers (run_sim: --policy); '|' and '=' only, no ',' or ';'
 -SWPolicyTimeoutMs=200  -SWPolicyShare=1.0     # run_sim: --policy-timeout / --policy-share; see docs/POLICY_API.md
+-SWSet="Settings.bLeviathan=1"                  # river predator (off by default; DESIGN.md §4); live: control "set Settings.bLeviathan=1" then "reset"
+-SWPolicyFile=Saved/policy_servers.txt         # server list file polled every 3 s while running (run_sim: --policy-file); edit it to add/remove servers
+-SWControlFile=Saved/control.txt               # live control file polled every 2 s (run_sim: --control-file): append "drought=on", "set Lumen.MaxAge=200", "reset seed=3" ... (docs/CONTROL_FILE.md)
 ```
 
 `-SWSet` reaches any numeric/bool/colour/string field of `FSWRunSettings` (scope `Settings`),
@@ -128,25 +132,46 @@ pip installs: `Tools/policy_server.py` is standard library only (Python 3.9+, ru
 macOS). The sim connects to *their* machine, sends each organism's percept, feasibility
 mask and its own bandit table once per decision, and acts on the reply; anything late
 or infeasible falls back to the organism's built-in bandit and is counted. Protocol,
-field list and fallback rules: `docs/POLICY_API.md`.
+field list and fallback rules: `docs/POLICY_API.md`. To go beyond the policy API and
+change the sim itself (C++ the host builds for you): `docs/CONTRIBUTING.md`.
 
 On the Mac (4 commands, nothing to install):
 
 ```bash
 git clone <this repo> && cd Symbiotic_Word_3D          # or just copy Tools/policy_server.py
-python3 Tools/policy_server.py --agent my --port 9000   # edit MyAgent.act() in that file; --agent random|bandit are the references
+python3 Tools/policy_server.py --agent my --port 9000   # edit MyAgent.act() in that file; see the agent list below
 python3 Tools/policy_client_check.py --port 9000        # optional self-test from a second terminal
 ipconfig getifaddr en0                                  # tell the host this IP
 ```
 
-On the host:
+Example agents in `Tools/policy_server.py` (`--agent`):
+
+* `random`: uniform over the feasible actions, the floor to beat.
+* `bandit`: the sim's own tabular contextual bandit (γ = 0) re-implemented in Python, α/ε from the genome.
+* `heuristic`: fixed rules on the percept (forage when food is known and energy is not HIGH, avoid other-species neighbours when LOW, rest when LOW with nothing known, else explore).
+* `tracefollower`: Lumen follow up a strong Trace X gradient, Tecton modify (Trace Y) on land at HIGH energy, else forage/explore.
+* `my`: yours.
+
+No Unreal on your machine? `python3 Tools/policy_server.py --record run.jsonl` logs every
+exchange, `python3 Tools/policy_replay.py --agent my --file docs/samples/decide_sample.jsonl`
+replays a recording against your class offline (mask violations, action distribution,
+timing), and the repo ships a 300-exchange sample. See "Offline development on a Mac" in
+`docs/POLICY_API.md`.
+
+On the host, while the sim runs (no restart): add one line per server to
+`Saved/policy_servers.txt` and save. The sim polls the file every 3 s, connects new servers,
+closes removed ones and rebinds organisms (`docs/POLICY_API.md`, "Adding servers while the
+sim runs"; template `Tools/policy_servers.example.txt`). `Tools/policy_probe.py` finds the
+servers on the wifi and can append them for you:
 
 ```bash
-python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --windowed --policy "10.228.152.5:9000=Lumen|10.228.152.7:9000=Tecton"
+python Tools/policy_probe.py --write Saved/policy_servers.txt   # scans the host's own /24 for port 9000, appends "host:port=Both" lines
+python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --windowed                     # the default file is watched automatically
+python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --windowed --policy "10.228.152.5:9000=Lumen|10.228.152.7:9000=Tecton"   # launch-time alternative
 ```
 
 Species per server: `Lumen`, `Tecton` or `Both`; several servers share one world. The
-HUD title shows `ext N/M` (externally driven organisms / total), the inspector shows
+HUD title shows `ext N/M` (organisms currently bound to a server / total), the inspector shows
 `policy: external host:port`, and the UE log prints connect / hello / timeout lines
 once per state change plus a round-trip summary every 10 s. Allow `UnrealEditor.exe`
 through Windows Firewall on private networks if the host cannot reach a Mac.
@@ -161,14 +186,38 @@ fetch Epic's signalling server with the engine's script
 
 ```bash
 Tools\start_stream_server.bat
-python Tools/run_sim.py --mode C --seed 1 --windowed --speed 1 --duration 36000 --stream
+Tools\stream_keepalive.bat
 ```
 
-Viewers open `http://<host LAN IP>/` and click to start. Mouse and keyboard from the
+`stream_keepalive.bat` runs `run_sim.py --stream --offscreen` for the day and relaunches it
+after any exit (create `Saved\stop_stream` to stop the loop). Viewers open
+`http://<host LAN IP>/?AFKDetection=false&HoveringMouse=true` and click to start. The two
+parameters matter: the player page's idle timeout disconnects a still viewer after 120 s and
+that disconnect has aborted the Pixel Streaming media layer three times (exit 0xC0000409,
+no crash report); hovering-mouse mode makes clicks select organisms instead of grabbing the
+camera. Mouse and keyboard from the
 browser reach the sim (select, follow, drought, speed, camera), so agree on one driver at a
 time. Allow `node.exe` on private networks when Windows Firewall asks. The stream is
 encoded on the host GPU (NVENC on NVIDIA); hackathon wifi that isolates clients from each
 other blocks it, in which case fall back to screen sharing.
+
+To perturb the running world from a script or a second terminal instead of its keyboard (drought,
+speed, pause, any `--set` parameter, reset, mode), append lines to `Saved/control.txt`:
+`python Tools/control.py "drought=on"`; every executed command is logged to the run's `commands.csv`.
+Grammar and which settings take effect live: `docs/CONTROL_FILE.md`.
+
+## Scientist agents: experiment service
+
+`python Tools/experiment_service.py` (host, port 8800, no authentication: LAN only) turns the
+closed loop into a JSON API for scientist agents on other machines: `POST /runs` queues headless
+runs (mode x seeds, `--set` overrides, one at a time next to the demo), `GET /runs/<id>` returns
+each run's statistics (population, lifetime bandit-table drift, parent/child correlation,
+per-generation means, and a Welch test of C vs N end-of-run mean α when a job has both modes),
+`GET /runs/<id>/files/population.csv` the raw logs, `GET /live` the running world's latest
+population rows, `POST /control` appends a validated line to `Saved/control.txt`, `POST /notes`
+keeps a shared notebook. Client: `python3 Tools/scientist_client.py --host <host-ip> runs --mode C N
+--seeds 1 2 3 --duration 600 --wait`. Endpoints, summary fields, control grammar and an
+experiment recipe: `docs/SCIENTIST_API.md`.
 
 ## What is verified (2026-09-05)
 
@@ -203,7 +252,12 @@ Source/SymbioticWorld/
 Config/              legacy input mappings, renderer settings (Lumen GI, VSM, TSR)
 Content/Maps/Valley  empty startup level
 Tools/               run_sim.py (launcher), sweep.py (parameter sweeps), make_valley_map.py,
-                     policy_server.py (reference agents: random / bandit / MyAgent stub), policy_client_check.py
+                     policy_server.py (reference agents: random / bandit / heuristic / tracefollower / MyAgent stub),
+                     policy_client_check.py (one fake exchange), policy_replay.py (offline replay of a --record file),
+                     policy_probe.py (finds servers on the wifi, writes the server list file), policy_servers.example.txt,
+                     control.py (appends validated commands to the live control file, --tail shows what ran; docs/CONTROL_FILE.md),
+                     experiment_service.py (HTTP API for scientist agents: queued runs, summaries, live view, control, notes),
+                     scientist_client.py (stdlib client + CLI for it; docs/SCIENTIST_API.md)
 .claude/             agents/implementer.md, agents/tester.md, skills/phase (Manager Loop)
 Analysis/            analyze_run.py
 ```

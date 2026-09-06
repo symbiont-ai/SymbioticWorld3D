@@ -53,6 +53,21 @@ struct FSWPolicyServer
 
 	bool Controls(ESWSpecies S) const { return S == ESWSpecies::Lumen ? bLumen : bTecton; }
 	float MeanRoundTripMs() const { return Replies > 0 ? static_cast<float>(RoundTripMsSum / Replies) : 0.f; }
+	const TCHAR* SpeciesLabel() const { return bLumen && bTecton ? TEXT("Both") : (bLumen ? TEXT("Lumen") : TEXT("Tecton")); }
+};
+
+// One parsed "host:port=Species" entry (from -SWPolicy or the server list file), before it has a socket.
+struct FSWPolicyServerSpec
+{
+	FString Host;
+	int32 Port = 0;
+	FString Name;                    // "host:port"
+	bool bLumen = false;
+	bool bTecton = false;
+
+	bool SameServer(const FSWPolicyServerSpec& O) const { return Name.Equals(O.Name, ESearchCase::IgnoreCase); }
+	bool SameSpecies(const FSWPolicyServerSpec& O) const { return bLumen == O.bLumen && bTecton == O.bTecton; }
+	const TCHAR* SpeciesLabel() const { return bLumen && bTecton ? TEXT("Both") : (bLumen ? TEXT("Lumen") : TEXT("Tecton")); }
 };
 
 class FSWPolicyClient
@@ -60,8 +75,19 @@ class FSWPolicyClient
 public:
 	~FSWPolicyClient();
 
-	// "host:port=Lumen|host:port=Tecton|host:port=Both". Returns the number of servers parsed.
-	int32 Configure(const FString& Spec, int32 InTimeoutMs);
+	// Parses one "host:port=Lumen|Tecton|Both" entry (species case-insensitive, whitespace trimmed).
+	// False with a reason in OutError when the entry is malformed. Pure: no sockets, no logging.
+	static bool ParseServerEntry(const FString& Entry, FSWPolicyServerSpec& Out, FString& OutError);
+	// "host:port=Lumen|host:port=Tecton|host:port=Both" (-SWPolicy). Bad entries are logged and skipped.
+	static int32 ParseServerList(const FString& Spec, TArray<FSWPolicyServerSpec>& Out);
+
+	void SetTimeoutMs(int32 InTimeoutMs) { TimeoutMs = FMath::Clamp(InTimeoutMs, 1, 60000); }
+	// Makes the server list exactly Desired (in that order). A server already present (same host:port,
+	// case-insensitive) keeps its socket, stats and reconnect timer and only takes the new species flags;
+	// a new one starts disconnected with an immediate connect attempt on the next Tick() (same path as
+	// launch-time servers); one no longer listed is closed. OutOldToNew[old index] = new index, or -1
+	// when removed, so the owner can remap organisms bound by index. Returns the number of servers now.
+	int32 ApplyServerSet(const TArray<FSWPolicyServerSpec>& Desired, TArray<int32>& OutOldToNew);
 	void Shutdown();
 
 	bool HasServers() const { return Servers.Num() > 0; }
@@ -75,8 +101,10 @@ public:
 	// lines, and a periodic stats line. Call once per rendered frame.
 	void Tick();
 
-	// Sent to every connected server now, and re-sent automatically after a reconnect.
-	void SetHello(const FString& HelloLine);
+	// Stored for every (re)connect. bSendNow also sends it to every server connected right now
+	// (run start / reset); false only updates the stored line (server set changed while running,
+	// so that connected servers do not treat it as a new run and forget their organisms).
+	void SetHello(const FString& HelloLine, bool bSendNow = true);
 
 	// One request per server (empty string = nothing to send to that server). Blocks up to
 	// TimeoutMs for the replies. OutActions[server][agent id] = action index 0..6.
@@ -93,6 +121,8 @@ private:
 
 	bool TryConnect(FSWPolicyServer& S);
 	void Disconnect(FSWPolicyServer& S, const TCHAR* Reason);
+	// Closes the socket without the "disconnected, retrying" warning (shutdown / removed from the set).
+	void CloseSocket(FSWPolicyServer& S);
 	bool SendLine(FSWPolicyServer& S, const FString& Line);
 	// Reads one complete line if available before DeadlineWall (0 = do not wait). False on nothing / disconnect.
 	bool ReadLine(FSWPolicyServer& S, double DeadlineWall, FString& OutLine);

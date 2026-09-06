@@ -3,6 +3,7 @@
 Unreal Engine 5.7 C++ ecosystem sim for Sundai Hack 139 (2026-09-06).
 Read `README.md` (build/run), `DESIGN.md` (exact mechanism definitions),
 `CHECKLIST.md` (phases + exit conditions), `PROGRESS.md` (what passed).
+Collaborators: read `docs/CONTRIBUTING.md` before changing the sim.
 
 ## Commands (repo root)
 

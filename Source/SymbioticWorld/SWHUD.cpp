@@ -160,6 +160,15 @@ void ASWHUD::DrawTitle(const ASWWorldManager& M)
 		// external organisms / total (docs/POLICY_API.md); the servers' connection state is in the log
 		Line += FString::Printf(TEXT("   ext %d/%d"), M.GetExternalCount(), M.GetLivingCount());
 	}
+	if (M.GetControlCommandsExecuted() > 0)
+	{
+		Line += TEXT("   ctrl");   // at least one control-file command was executed this run (docs/CONTROL_FILE.md)
+	}
+	if (S.bLeviathan)
+	{
+		// Predation deaths so far (deaths.csv carries them individually, cause = "predation").
+		Line += FString::Printf(TEXT("   predation %d"), M.GetDeathsPredation());
+	}
 	DrawLine(30.f, Y + 2.f, Line, ColDim);
 }
 
