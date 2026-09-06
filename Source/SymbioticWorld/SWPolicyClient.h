@@ -56,6 +56,16 @@ struct FSWPolicyServer
 	const TCHAR* SpeciesLabel() const { return bLumen && bTecton ? TEXT("Both") : (bLumen ? TEXT("Lumen") : TEXT("Tecton")); }
 };
 
+// One embodied field scientist reported by a policy server (the Symbiotic Lab's
+// "scientists" side message). Visual only: the world manager renders avatars at
+// these positions; nothing in the simulation reads them.
+struct FSWScientistPing
+{
+	FString Name;
+	float X = 0.f;
+	float Y = 0.f;
+};
+
 // One parsed "host:port=Species" entry (from -SWPolicy or the server list file), before it has a socket.
 struct FSWPolicyServerSpec
 {
@@ -112,8 +122,17 @@ public:
 
 	int32 GetTimeoutMs() const { return TimeoutMs; }
 
+	// Latest "scientists" side message (visual field team, Lab observe --embody).
+	// Stamp increments on every update; LastWall is FPlatformTime::Seconds() of it.
+	const TArray<FSWScientistPing>& GetScientistPings() const { return ScientistPings; }
+	uint32 GetScientistStamp() const { return ScientistStamp; }
+	double GetScientistLastWall() const { return ScientistLastWall; }
+
 private:
 	TArray<FSWPolicyServer> Servers;
+	TArray<FSWScientistPing> ScientistPings;
+	uint32 ScientistStamp = 0;
+	double ScientistLastWall = 0.0;
 	int32 TimeoutMs = 200;
 	FString HelloLine;
 	static constexpr double ReconnectSeconds = 5.0;

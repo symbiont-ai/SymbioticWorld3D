@@ -368,6 +368,14 @@ struct FSWLookSettings
 	UPROPERTY(EditAnywhere) float WaterfallWidth = 300.f;
 	UPROPERTY(EditAnywhere) float WaterfallGlow = 1.5f;
 	UPROPERTY(EditAnywhere) bool bMoon = true;
+	// Field-team avatars for the Symbiotic Lab's embodied observers (visual only,
+	// driven by the policy bridge's "scientists" side message; Lab observe --embody).
+	// DEFAULT OFF: the plain god-view is the demo's stable configuration; the
+	// avatar layer is extra rendering the lab does not need (witnessing happens
+	// bridge-side either way). Enable at launch (-SWSet "Look.bScientistAvatars=true")
+	// or live via the control file (set Look.bScientistAvatars=1) — and back off
+	// again the same way; the layer spawns/despawns cleanly at runtime.
+	UPROPERTY(EditAnywhere) bool bScientistAvatars = false;
 	// Elevation/azimuth are measured from the world origin; the moon sits MoonDistance away, so from the start camera
 	// (86 m behind the origin, pitch -15, ~49 deg vertical FOV => frame top ~+9.5 deg, HUD stat boxes cover the top
 	// ~4 deg) elevation 8 reads as ~3.5 deg: a 4 deg disc just above the hero crown (-1 deg) and 9 deg right of the

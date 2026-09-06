@@ -11,6 +11,7 @@
 class ASWAgent;
 class ASWResourcePatch;
 class ASWLeviathan;
+class ASWScientistAvatar;
 
 USTRUCT()
 struct FSWSpeciesStats
@@ -244,4 +245,13 @@ protected:
 	void NeutralBirthStep(float Dt);
 	void LogTick(float Dt);
 	FVector RandomArenaPoint(float Margin);
+
+	// Embodied field-team avatars (Lab observe --embody; docs/POLICY_API.md
+	// "scientists" side message). Visual layer only, driven from Tick on the
+	// rendered frame: spawn/update/hide never happens inside a substep and
+	// never draws from the seeded stream. Look.bScientistAvatars toggles it.
+	UPROPERTY() TArray<ASWScientistAvatar*> ScientistAvatars;
+	uint32 ScientistStampSeen = 0;
+	void UpdateScientistAvatars(float DeltaSeconds);
+	void DestroyScientistAvatars();
 };
