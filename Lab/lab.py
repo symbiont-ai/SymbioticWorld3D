@@ -30,12 +30,12 @@ def cmd_session(args):
     mr = MeetingRunner(con, profiles, llm)
     for i in range(args.meetings):
         mr.run(kind="generation-boundary" if i == args.meetings - 1 else "regular")
-        if runner.engine_available():
+        if runner.engine_available() or runner.service_client():
             runner.execute_queued(con)
         else:
             n = con.execute("SELECT COUNT(*) FROM experiments WHERE status='queued'").fetchone()[0]
             if n:
-                print(f"  [runner] {n} experiment(s) queued; no UE engine here -> awaiting-sim")
+                print(f"  [runner] {n} experiment(s) queued; no UE engine or service -> awaiting-sim")
                 con.execute("UPDATE experiments SET status='awaiting-sim' WHERE status='queued'")
                 con.commit()
     print("\n=== CONSOLIDATION ===")
@@ -59,8 +59,11 @@ def cmd_run_queued(args):
     con = db.connect(args.db)
     con.execute("UPDATE experiments SET status='queued' WHERE status='awaiting-sim'")
     con.commit()
-    if not runner.engine_available():
-        raise SystemExit("UE engine not found on this machine (see Tools/run_sim.py ENGINE).")
+    if not runner.engine_available() and runner.service_client() is None:
+        raise SystemExit(
+            "UE engine not found here and no experiment service reachable. Either run "
+            "on the sim machine, or set LAB_SIM_SERVICE=<host[:port]> to a running "
+            "Tools/experiment_service.py (docs/SCIENTIST_API.md).")
     n = runner.execute_queued(con)
     print(f"executed {n} experiment(s)")
     rp, tp = report.generate(con)

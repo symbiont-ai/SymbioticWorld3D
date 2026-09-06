@@ -32,6 +32,48 @@ def engine_available():
     return run_sim.EDITOR_CMD.exists()
 
 
+def service_client(log=print):
+    """Client for a Tools/experiment_service.py on the sim host, when
+    LAB_SIM_SERVICE=<host[:port]> is set and the service answers /health.
+    Lets a lab without the UE engine execute its queue remotely: runs happen
+    on the host, the CSVs are downloaded under Saved/SymbioticWorld/ here,
+    and every scoring rule then applies unchanged."""
+    import os
+    spec = os.environ.get("LAB_SIM_SERVICE", "")
+    if not spec:
+        return None
+    host, _, port = spec.partition(":")
+    import scientist_client   # Tools/ is on sys.path (see run_sim import)
+    client = scientist_client.Client(host, int(port or 8800), timeout=30.0)
+    try:
+        client.health()
+        return client
+    except Exception as ex:
+        log(f"  [runner] experiment service {spec} unreachable ({ex})")
+        return None
+
+
+def _run_arm_remote(client, mode, set_spec, seeds, duration, label, log):
+    """One arm through the experiment service; returns local run dirs."""
+    job = client.submit_runs(mode, list(seeds), duration=duration, speed=200,
+                             set_spec=set_spec or "", label=label[:80])
+    jid = job["job_id"]
+    log(f"  [runner] service job {jid}: mode={mode} seeds={list(seeds)} "
+        f"duration={duration} set={set_spec or '-'}")
+    done = client.wait(jid, poll_s=5.0, timeout_s=3600, verbose=False)
+    dirs = []
+    for r in done["runs"]:
+        if r["status"] != "done" or not r.get("sim_run_id"):
+            raise RuntimeError(f"service run {r['run_id']}: {r.get('error') or r['status']}")
+        dest = config.SAVED / r["sim_run_id"]
+        dest.mkdir(parents=True, exist_ok=True)
+        for name in ("population", "agents", "births", "deaths"):
+            client.download_csv(r["run_id"], name, dest / f"{name}.csv")
+        dirs.append(dest)
+        log(f"  [runner]   {r['sim_run_id']} downloaded ({r['wall_s']:.0f}s wall)")
+    return dirs
+
+
 def metric_value(run_dir, metric):
     import analyze_run
     run = analyze_run.load_run(run_dir)
@@ -53,18 +95,26 @@ def _run_arm(mode, set_spec, seeds, duration, log):
 def execute_experiment(con, exp_id, log=print):
     exp = con.execute("SELECT * FROM experiments WHERE id=?", (exp_id,)).fetchone()
     proto = json.loads(exp["protocol"])
+    remote = None
     if not engine_available():
-        con.execute("UPDATE experiments SET status='awaiting-sim' WHERE id=?", (exp_id,))
-        con.commit()
-        log(f"  [runner] {exp_id}: UE engine not on this machine -> awaiting-sim")
-        return None
+        remote = service_client(log)
+        if remote is None:
+            con.execute("UPDATE experiments SET status='awaiting-sim' WHERE id=?", (exp_id,))
+            con.commit()
+            log(f"  [runner] {exp_id}: no UE engine and no experiment service -> awaiting-sim")
+            return None
+
+    def arm(mode, set_spec, label):
+        if remote:
+            return _run_arm_remote(remote, mode, set_spec, proto["seeds"],
+                                   proto["duration"], label, log)
+        return _run_arm(mode, set_spec, proto["seeds"], proto["duration"], log)
 
     try:
-        t_dirs = _run_arm(proto["intervention_mode"], proto["intervention_set"],
-                          proto["seeds"], proto["duration"], log)
+        t_dirs = arm(proto["intervention_mode"], proto["intervention_set"],
+                     f"{exp_id} treatment")
         c_dirs = [] if proto.get("kind") == "assessment" else \
-            _run_arm(proto["control_mode"], proto["control_set"],
-                     proto["seeds"], proto["duration"], log)
+            arm(proto["control_mode"], proto["control_set"], f"{exp_id} control")
     except Exception as ex:
         con.execute("UPDATE experiments SET status='failed', metric_result=? WHERE id=?",
                     (f"launch error: {ex}", exp_id))
