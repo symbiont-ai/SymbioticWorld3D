@@ -87,7 +87,8 @@ def cmd_ui(args):
 def cmd_observe(args):
     from . import live_observer
     from .config import DB_PATH
-    live_observer.serve(db_path=args.db or DB_PATH, port=args.port, host=args.host)
+    live_observer.serve(db_path=args.db or DB_PATH, port=args.port, host=args.host,
+                        manage=args.manage)
 
 
 def main():
@@ -121,9 +122,12 @@ def main():
     s.set_defaults(fn=cmd_ui)
 
     s = sub.add_parser("observe",
-                       help="join the live sim through the policy bridge (observe-only)")
+                       help="join the live sim through the policy bridge")
     s.add_argument("--port", type=int, default=9000)
     s.add_argument("--host", default="0.0.0.0")
+    s.add_argument("--manage", action="store_true",
+                   help="drive assigned organisms with the lab's population-management "
+                        "doctrine (default: observe only)")
     s.set_defaults(fn=cmd_observe)
 
     args = ap.parse_args()

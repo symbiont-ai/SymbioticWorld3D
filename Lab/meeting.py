@@ -49,6 +49,7 @@ class MeetingRunner:
         stance_map = self._stance_round(mid, cards, digest)
         disputes = self._crux_or_dissent(mid, cards, stance_map)
         conservation.advance(con, self, mid, stance_map, self.log)
+        self._management_round(mid)
         exp_id = self._design_round(mid, disputes, cards, stance_map)
         self._commit(mid, findings, new_cards, cards, stance_map, disputes, exp_id)
         con.commit()
@@ -372,6 +373,49 @@ class MeetingRunner:
                  f"(metric {proto['metric']}, {len(proto['seeds'])} seeds x2 arms, "
                  f"{proto['duration']:.0f}s) with 6 preregistered predictions")
         return exp_id
+
+    # ------------------------------------------------------------------ manage
+
+    DOCTRINE_DEFAULTS = {"Lumen": (20, 60), "Tecton": (8, 25)}
+
+    def _management_round(self, mid):
+        """The scientists set the live-management doctrine (floors/targets per
+        species) from the newest live-telemetry windows. The policy bridge
+        reloads these lab_meta keys every window, so what is decided here is
+        what the manager does out in the world. Formulaic and fully logged:
+        a shrinking population raises its floor (grow it back); a species
+        with an active conservation docket gets the same; a population
+        thriving above target gets its target ratified upward."""
+        decisions = []
+        for sp, (dfloor, dtarget) in self.DOCTRINE_DEFAULTS.items():
+            rows = self.con.execute(
+                "SELECT value FROM evidence WHERE stat=? ORDER BY rowid DESC LIMIT 3",
+                (f"live_{sp.lower()}_n",)).fetchall()
+            if not rows:
+                continue
+            ns = [r["value"] for r in rows][::-1]          # oldest -> newest
+            latest, trend = ns[-1], ns[-1] - ns[0]
+            floor = int(db.get_meta(self.con, f"doctrine_floor_{sp}", dfloor))
+            target = int(db.get_meta(self.con, f"doctrine_target_{sp}", dtarget))
+            docket = self.con.execute(
+                "SELECT 1 FROM programs WHERE species=? AND status IN "
+                "('debating','assessing','introducing')", (sp,)).fetchone()
+            if trend < 0 or docket:
+                floor = max(floor, min(int(latest * 1.2) + 1, target - 5))
+            if trend > 0 and latest > target:
+                target = int(latest)
+            db.set_meta(self.con, f"doctrine_floor_{sp}", floor)
+            db.set_meta(self.con, f"doctrine_target_{sp}", target)
+            decisions.append({"species": sp, "latest_n": latest, "trend": trend,
+                              "floor": floor, "target": target,
+                              "conservation_docket": bool(docket)})
+        if decisions:
+            db.log_turn(self.con, mid, "MANAGEMENT", "Archie",
+                        {"doctrine": decisions,
+                         "note": "floors/targets for the live population manager"})
+            self.log("  [management] doctrine: " + "; ".join(
+                f"{d['species']} floor {d['floor']} target {d['target']} "
+                f"(n={d['latest_n']:.0f}, trend {d['trend']:+.0f})" for d in decisions))
 
     # ------------------------------------------------------------------ commit
 

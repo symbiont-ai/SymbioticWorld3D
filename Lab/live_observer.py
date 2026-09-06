@@ -22,6 +22,7 @@ import socketserver
 import threading
 
 from . import config, db
+from .population_manager import PopulationManager
 
 WINDOW_S = 60.0     # sim-seconds per evidence window
 
@@ -90,6 +91,7 @@ class ObserverHandler(socketserver.StreamRequestHandler):
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
         print(f"[observe] sim connected from {peer}")
         run_id, window = None, None
+        manager = PopulationManager() if srv.manage else None
         con = db.connect(srv.lab_db_path)     # this thread's own connection
         try:
             for raw in self.rfile:
@@ -102,6 +104,8 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                 if mtype == "hello":
                     run_id = msg.get("run_id", "live")
                     window = _Window(0)
+                    if manager:
+                        manager.load_doctrine(con)
                     print(f"[observe] hello: run {run_id}, mode {msg.get('mode_name')}, "
                           f"seed {msg.get('seed')}, controls {msg.get('controls')}")
                     if not con.execute("SELECT 1 FROM runs WHERE run_id=?",
@@ -111,21 +115,37 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                                      int(msg.get("seed", -1)), 0.0, "policy-bridge", db.now()))
                         con.commit()
                     self._send({"type": "log",
-                                "text": "Symbiotic Lab connected: observing only, "
-                                        "no actions will be driven"})
+                                "text": ("Symbiotic Lab connected: population management ON"
+                                         if manager else
+                                         "Symbiotic Lab connected: observing only, "
+                                         "no actions will be driven")})
 
                 elif mtype == "decide":
-                    # Reply FIRST and empty: the sim must never wait on the lab,
-                    # and no organism is ever driven from here.
-                    self._send({"type": "actions", "step": msg.get("step"), "actions": {}})
+                    agents = msg.get("agents", [])
+                    t = float(msg.get("t", 0.0))
+                    actions = {}
+                    if manager:
+                        manager.observe_cohort(t, agents)
+                        for a in agents:
+                            act = manager.act(a)
+                            if act is not None:
+                                actions[str(a.get("id"))] = act
+                    # Reply first — the sim must never wait on the lab.
+                    self._send({"type": "actions", "step": msg.get("step"),
+                                "actions": actions})
                     if window is None:
                         continue
-                    t = float(msg.get("t", 0.0))
                     k = int(t // WINDOW_S)
                     if k > window.index:
                         self._flush(con, run_id, window)
+                        if manager:
+                            changed = manager.load_doctrine(con)   # scientists' latest
+                            if changed:
+                                self._send({"type": "log",
+                                            "text": "doctrine update: " + ", ".join(changed)})
+                            self._send({"type": "log", "text": manager.summary()})
                         window = _Window(k)
-                    for a in msg.get("agents", []):
+                    for a in agents:
                         window.add(a)
         finally:
             if window is not None and run_id:
@@ -134,8 +154,11 @@ class ObserverHandler(socketserver.StreamRequestHandler):
             print(f"[observe] sim disconnected ({peer})")
 
     def _send(self, obj):
-        self.wfile.write((json.dumps(obj) + "\n").encode())
-        self.wfile.flush()
+        try:
+            self.wfile.write((json.dumps(obj) + "\n").encode())
+            self.wfile.flush()
+        except OSError:
+            pass   # peer gone (run over); the final window flush still lands in the DB
 
     def _flush(self, con, run_id, window):
         t0, t1 = window.index * WINDOW_S, (window.index + 1) * WINDOW_S
@@ -172,17 +195,24 @@ def my_lan_ip():
         s.close()
 
 
-def serve(db_path=None, port=9000, host="0.0.0.0"):
+def serve(db_path=None, port=9000, host="0.0.0.0", manage=False):
     srv = _Server((host, port), ObserverHandler)
     srv.lab_db_path = str(db_path or config.DB_PATH)
+    srv.manage = manage
     ip = my_lan_ip()
-    print(f"Symbiotic Lab live observer on {host}:{port} (db: {srv.lab_db_path})")
+    role = "POPULATION MANAGER (driving organisms)" if manage else "observer (read-only)"
+    print(f"Symbiotic Lab live bridge on {host}:{port} — {role} (db: {srv.lab_db_path})")
     print("On the sim host, attach the lab to a run with:")
     print(f'  python Tools/run_sim.py --mode C --seed 7 --duration 900 --speed 20 '
           f'--policy "{ip}:{port}=Both"')
-    print("The lab replies with no actions: organisms keep their built-in bandits; "
-          "the lab only reads. Run meetings on the same DB while observing:")
-    print("  python -m Lab.lab session --meetings 1 --llm ollama")
+    if manage:
+        print("Managed organisms follow the lab's population doctrine "
+              "(Lab/population_manager.py); infeasible or missing replies fall "
+              "back to each organism's own bandit.")
+    else:
+        print("The lab replies with no actions: organisms keep their built-in bandits; "
+              "the lab only reads.")
+    print("Run meetings on the same DB meanwhile: python -m Lab.lab session --meetings 1")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

@@ -11,6 +11,8 @@ scientists' conversations, experiments, and Vega's data reports live.
     python Tools/add_lab_button.py            # patch (idempotent, re-run safe)
     python Tools/add_lab_button.py --remove   # restore
     python Tools/add_lab_button.py --www <dir>  # explicit frontend dir
+    python Tools/add_lab_button.py --lab-url http://10.228.152.187:8765
+                                              # dashboard on another machine
 
 Standard library only. Run it on the host; refresh the browser afterwards —
 no server restart needed (static files are read per request).
@@ -23,15 +25,20 @@ from pathlib import Path
 MARKER = "<!-- symbiotic-lab-button -->"
 LAB_PORT = 8765
 
-SNIPPET = f"""{MARKER}
+
+def snippet(lab_url=None):
+    href = (f"document.getElementById('symbiotic-lab-btn').href = {lab_url!r};"
+            if lab_url else
+            f"document.getElementById('symbiotic-lab-btn').href = "
+            f"'http://' + location.hostname + ':{LAB_PORT}';")
+    return f"""{MARKER}
 <a id="symbiotic-lab-btn" target="_blank" rel="noopener"
    style="position:fixed;right:18px;bottom:18px;z-index:9999;
           font:600 14px/1 -apple-system,Segoe UI,Roboto,sans-serif;
           color:#0b1016;background:#3fd1ff;border-radius:22px;
           padding:11px 18px;text-decoration:none;letter-spacing:.04em;
           box-shadow:0 2px 14px rgba(63,209,255,.55)">&#129514; Symbiotic Lab</a>
-<script>document.getElementById('symbiotic-lab-btn').href =
-  'http://' + location.hostname + ':{LAB_PORT}';</script>
+<script>{href}</script>
 {MARKER}
 """
 
@@ -46,14 +53,19 @@ def default_www():
     return None
 
 
-def patch(www, remove=False):
+def patch(www, remove=False, lab_url=None):
     pages = sorted(www.glob("*.html")) + sorted(www.glob("**/index.html"))
     if not pages:
         sys.exit(f"no .html pages under {www}")
+    snip = snippet(lab_url)
     done = 0
     for page in dict.fromkeys(pages):          # dedupe, keep order
         text = page.read_text(encoding="utf-8", errors="replace")
         has = MARKER in text
+        if has and not remove:                 # re-run: replace (lab_url may differ)
+            head, _, rest = text.partition(MARKER)
+            _, _, tail = rest.partition(MARKER)
+            text, has = head + tail.lstrip("\n"), False
         if remove:
             if has:
                 head, _, rest = text.partition(MARKER)
@@ -62,13 +74,10 @@ def patch(www, remove=False):
                 print(f"restored {page}")
                 done += 1
             continue
-        if has:
-            print(f"already patched {page}")
-            continue
         if "</body>" in text:
-            text = text.replace("</body>", SNIPPET + "</body>", 1)
+            text = text.replace("</body>", snip + "</body>", 1)
         else:
-            text += SNIPPET
+            text += snip
         page.write_text(text, encoding="utf-8")
         print(f"patched {page}")
         done += 1
@@ -82,12 +91,15 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--www", help="the signalling server's static frontend directory")
     ap.add_argument("--remove", action="store_true", help="remove the button again")
+    ap.add_argument("--lab-url", help="explicit dashboard URL when the lab runs on a "
+                                      "different machine than the stream (default: "
+                                      f"same host, port {LAB_PORT})")
     args = ap.parse_args()
     www = Path(args.www) if args.www else default_www()
     if not www or not www.is_dir():
         sys.exit("frontend dir not found — pass --www <dir> (the SignallingWebServer's "
                  "www/ folder; run get_ps_servers.bat first, see start_stream_server.bat)")
-    patch(www, remove=args.remove)
+    patch(www, remove=args.remove, lab_url=args.lab_url)
 
 
 if __name__ == "__main__":
