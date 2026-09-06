@@ -162,6 +162,10 @@ def advance(con, meeting_runner, mid, stance_map, log=print):
                 if exp_id:
                     con.execute("UPDATE programs SET status='assessing', "
                                 "assessment_exp=? WHERE id=?", (exp_id, pid))
+                    db.log_intervention(con, mid, "conservation",
+                                        {"program": pid, "species": species,
+                                         "stage": "assessment", "experiment": exp_id,
+                                         "debate": w}, "credibility-weighted debate")
                     log(f"  [conservation] {pid}: debate carried "
                         f"({w['agree']:.2f} vs {w['disagree']:.2f}) -> "
                         f"stage-1 assessment {exp_id} queued")
@@ -186,6 +190,10 @@ def advance(con, meeting_runner, mid, stance_map, log=print):
                         con.execute("UPDATE programs SET status='introducing', stage="
                                     "'introduction', introduction_exp=? WHERE id=?",
                                     (exp_id, pid))
+                        db.log_intervention(con, mid, "conservation",
+                                            {"program": pid, "species": species,
+                                             "stage": "introduction",
+                                             "experiment": exp_id}, "assessment verdict")
                         log(f"  [conservation] {pid}: assessment passed -> "
                             f"stage-2 introduction {exp_id} queued with predictions")
                 else:

@@ -91,6 +91,45 @@ class OllamaLLM:
         raise RuntimeError("unreachable")
 
 
+class ClaudeCLILLM:
+    """Generated (non-scripted) turns through the local `claude` CLI in print
+    mode. Nothing is hardcoded: each profile is a system prompt, the schema is
+    stated in the prompt, and the same code-side validation applies (invalid
+    citations dropped, protocols clamped) — never trust the model. Model via
+    LAB_CLAUDE_MODEL (default haiku for speed/cost)."""
+
+    def __init__(self, model=None):
+        import os
+        import shutil
+        self.exe = shutil.which("claude")
+        self.model = model or os.environ.get("LAB_CLAUDE_MODEL",
+                                             "claude-haiku-4-5-20251001")
+
+    def available(self):
+        return bool(self.exe)
+
+    def turn(self, profile, kind, prompt, ctx=None):
+        import subprocess
+        schema = json.dumps(SCHEMAS[kind])
+        full = (profile.system_prompt() + "\n\n" + prompt +
+                "\n\nRespond with ONLY a JSON object matching this JSON schema "
+                "(no prose, no code fences):\n" + schema)
+        for attempt in range(2):
+            out = subprocess.run(
+                [self.exe, "-p", full, "--model", self.model],
+                capture_output=True, text=True, timeout=300).stdout.strip()
+            if out.startswith("```"):
+                out = out.strip("`\n")
+                out = out[out.find("{"):]
+            try:
+                start, end = out.index("{"), out.rindex("}") + 1
+                return json.loads(out[start:end])
+            except (ValueError, json.JSONDecodeError):
+                if attempt:
+                    raise RuntimeError(
+                        f"claude CLI returned no parseable JSON for {kind}: {out[:200]}")
+
+
 # --- deterministic mock ------------------------------------------------------
 
 def _h(*parts):
@@ -244,6 +283,12 @@ class MockLLM:
 def make_llm(backend):
     if backend == "mock":
         return MockLLM()
+    if backend == "claude":
+        llm = ClaudeCLILLM()
+        if not llm.available():
+            raise SystemExit("`claude` CLI not found on PATH; install Claude Code "
+                             "or run with --llm mock / --llm ollama.")
+        return llm
     llm = OllamaLLM()
     if not llm.available():
         raise SystemExit(

@@ -90,7 +90,7 @@ class ObserverHandler(socketserver.StreamRequestHandler):
         srv = self.server
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
         print(f"[observe] sim connected from {peer}")
-        run_id, window = None, None
+        run_id, window, field = None, None, None
         manager = PopulationManager() if srv.manage else None
         con = db.connect(srv.lab_db_path)     # this thread's own connection
         try:
@@ -104,6 +104,9 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                 if mtype == "hello":
                     run_id = msg.get("run_id", "live")
                     window = _Window(0)
+                    if srv.embody:
+                        from .embodiment import EmbodiedField
+                        field = EmbodiedField(run_id, msg.get("world_half_size"))
                     if manager:
                         manager.load_doctrine(con)
                     print(f"[observe] hello: run {run_id}, mode {msg.get('mode_name')}, "
@@ -135,9 +138,17 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                                 "actions": actions})
                     if window is None:
                         continue
+                    if field:
+                        field.step(t, agents)
                     k = int(t // WINDOW_S)
                     if k > window.index:
                         self._flush(con, run_id, window)
+                        if field:
+                            note = field.flush(con, window.index,
+                                               window.index * WINDOW_S,
+                                               (window.index + 1) * WINDOW_S)
+                            print(f"[observe] {note}")
+                            self._send({"type": "log", "text": note})
                         if manager:
                             changed = manager.load_doctrine(con)   # scientists' latest
                             if changed:
@@ -150,6 +161,9 @@ class ObserverHandler(socketserver.StreamRequestHandler):
         finally:
             if window is not None and run_id:
                 self._flush(con, run_id, window)
+                if field:
+                    field.flush(con, window.index, window.index * WINDOW_S,
+                                (window.index + 1) * WINDOW_S)
             con.close()
             print(f"[observe] sim disconnected ({peer})")
 
@@ -195,12 +209,15 @@ def my_lan_ip():
         s.close()
 
 
-def serve(db_path=None, port=9000, host="0.0.0.0", manage=False):
+def serve(db_path=None, port=9000, host="0.0.0.0", manage=False, embody=False):
     srv = _Server((host, port), ObserverHandler)
     srv.lab_db_path = str(db_path or config.DB_PATH)
     srv.manage = manage
+    srv.embody = embody
     ip = my_lan_ip()
     role = "POPULATION MANAGER (driving organisms)" if manage else "observer (read-only)"
+    if embody:
+        role += " + EMBODIED FIELD TEAM (seven walking observers, witnessed-only evidence)"
     print(f"Symbiotic Lab live bridge on {host}:{port} — {role} (db: {srv.lab_db_path})")
     print("On the sim host, attach the lab to a run with:")
     print(f'  python Tools/run_sim.py --mode C --seed 7 --duration 900 --speed 20 '

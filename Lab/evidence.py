@@ -138,9 +138,22 @@ def cross_run_stats(con):
     return out
 
 
-def evidence_digest(con, limit=40):
-    """Compact evidence listing given to agents in context. Newest first."""
-    rows = con.execute(
-        "SELECT id, run_id, stat, value, provenance FROM evidence "
-        "ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)).fetchall()
+def evidence_digest(con, limit=40, agent=None):
+    """Compact evidence listing given to agents in context. Newest first.
+
+    With `agent` set (embodied mode), the listing is what that scientist can
+    personally read: all shared instrument evidence (run CSVs, the plain
+    bridge windows, experiment results) plus ONLY their own witnessed rows —
+    another scientist's field observations are not theirs to present."""
+    if agent is None:
+        rows = con.execute(
+            "SELECT id, run_id, stat, value, provenance FROM evidence "
+            "ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)).fetchall()
+    else:
+        rows = con.execute(
+            "SELECT id, run_id, stat, value, provenance FROM evidence "
+            "WHERE provenance NOT LIKE 'witnessed by %' "
+            "   OR provenance LIKE ? "
+            "ORDER BY created_at DESC, id DESC LIMIT ?",
+            (f"witnessed by {agent} %", limit)).fetchall()
     return [f"{r['id']}: {r['stat']}={r['value']:.4g} — {r['provenance']}" for r in rows]

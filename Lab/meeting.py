@@ -71,8 +71,12 @@ class MeetingRunner:
         if not digest:
             self.log("  [evidence] no runs ingested yet; observers have nothing to cite")
             return findings
-        ev_text = "\n".join(digest)
         for agent in OBSERVERS:
+            # embodied mode: each observer reads shared instruments plus ONLY
+            # their own witnessed rows (identical to the full digest when no
+            # witnessed evidence exists)
+            own = evidence.evidence_digest(self.con, agent=agent)
+            ev_text = "\n".join(own)
             # competitive advantage: credible observers hold more floor time
             weight = scorer.vote_weight(self.con, agent, self.profiles[agent].domains)
             quota = config.MAX_FINDINGS_PER_OBSERVER if weight >= 1.0 \
@@ -80,7 +84,7 @@ class MeetingRunner:
             prompt = (f"ROUND 1 — EVIDENCE. Present up to {quota} "
                       f"findings from your domain, each anchored to an evidence ID.\n"
                       f"Available evidence:\n{ev_text}")
-            raw = self._turn(agent, "findings", prompt, {"evidence": digest})
+            raw = self._turn(agent, "findings", prompt, {"evidence": own})
             kept = []
             for f in raw.get("findings", [])[:quota]:
                 ids = [e for e in f.get("evidence_ids", []) if db.evidence_exists(self.con, e)]
@@ -395,8 +399,8 @@ class MeetingRunner:
                 continue
             ns = [r["value"] for r in rows][::-1]          # oldest -> newest
             latest, trend = ns[-1], ns[-1] - ns[0]
-            floor = int(db.get_meta(self.con, f"doctrine_floor_{sp}", dfloor))
-            target = int(db.get_meta(self.con, f"doctrine_target_{sp}", dtarget))
+            floor = old_floor = int(db.get_meta(self.con, f"doctrine_floor_{sp}", dfloor))
+            target = old_target = int(db.get_meta(self.con, f"doctrine_target_{sp}", dtarget))
             docket = self.con.execute(
                 "SELECT 1 FROM programs WHERE species=? AND status IN "
                 "('debating','assessing','introducing')", (sp,)).fetchone()
@@ -406,6 +410,13 @@ class MeetingRunner:
                 target = int(latest)
             db.set_meta(self.con, f"doctrine_floor_{sp}", floor)
             db.set_meta(self.con, f"doctrine_target_{sp}", target)
+            if (floor, target) != (old_floor, old_target):
+                db.log_intervention(self.con, mid, "doctrine",
+                                    {"species": sp,
+                                     "floor": [old_floor, floor],
+                                     "target": [old_target, target],
+                                     "latest_n": latest, "trend": trend},
+                                    "management round")
             decisions.append({"species": sp, "latest_n": latest, "trend": trend,
                               "floor": floor, "target": target,
                               "conservation_docket": bool(docket)})

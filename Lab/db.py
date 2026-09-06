@@ -69,6 +69,14 @@ CREATE TABLE IF NOT EXISTS forecasts(         -- Vega's, non-voting, report-only
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT, metric TEXT, horizon REAL,
     predicted REAL, lower REAL, upper REAL, actual REAL, created_at TEXT);
+CREATE TABLE IF NOT EXISTS embodiment(        -- field-observer track (--embody)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT, window INTEGER, agent TEXT,
+    x REAL, y REAL, seen INTEGER, t REAL);
+CREATE TABLE IF NOT EXISTS interventions(     -- every decided act on the world
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id INTEGER, kind TEXT,   -- doctrine | conservation | experiment
+    params TEXT, actor TEXT, created_at TEXT);
 """
 
 
@@ -112,6 +120,14 @@ def add_evidence(con, run_id, stat, value, provenance):
     con.execute("INSERT INTO evidence VALUES(?,?,?,?,?,?)",
                 (eid, run_id, stat, value, provenance, now()))
     return eid
+
+
+def log_intervention(con, meeting_id, kind, params, actor):
+    """Every decided act on the live world is a recorded row, never implicit."""
+    import json as _json
+    con.execute("INSERT INTO interventions(meeting_id, kind, params, actor, created_at) "
+                "VALUES(?,?,?,?,?)",
+                (meeting_id, kind, _json.dumps(params), actor, now()))
 
 
 def evidence_exists(con, eid):

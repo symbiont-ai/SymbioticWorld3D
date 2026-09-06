@@ -98,7 +98,7 @@ def cmd_observe(args):
     from . import live_observer
     from .config import DB_PATH
     live_observer.serve(db_path=args.db or DB_PATH, port=args.port, host=args.host,
-                        manage=args.manage)
+                        manage=args.manage, embody=args.embody)
 
 
 def main():
@@ -109,7 +109,7 @@ def main():
 
     s = sub.add_parser("session", help="run a research session")
     s.add_argument("--meetings", type=int, default=2)
-    s.add_argument("--llm", choices=["ollama", "mock"], default="ollama")
+    s.add_argument("--llm", choices=["ollama", "mock", "claude"], default="ollama")
     s.add_argument("--ingest", nargs="*", help="run directories to ingest first")
     s.set_defaults(fn=cmd_session)
 
@@ -142,6 +142,10 @@ def main():
     s.add_argument("--manage", action="store_true",
                    help="drive assigned organisms with the lab's population-management "
                         "doctrine (default: observe only)")
+    s.add_argument("--embody", action="store_true",
+                   help="mode toggle: the seven scientists walk the arena as virtual "
+                        "bodies and mint witnessed-only evidence (default: plain "
+                        "instrument observer)")
     s.set_defaults(fn=cmd_observe)
 
     args = ap.parse_args()

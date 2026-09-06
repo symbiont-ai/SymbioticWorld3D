@@ -22,7 +22,8 @@ FIG_DIR = config.REPORT_DIR / "figs"
 
 TABLES = ["meetings", "runs", "hypotheses", "stances", "challenges", "disputes",
           "experiments", "predictions", "credibility", "open_questions",
-          "transcript", "programs", "forecasts", "agent_params"]
+          "transcript", "programs", "forecasts", "agent_params",
+          "embodiment", "interventions"]
 
 
 def snapshot(db_path):
