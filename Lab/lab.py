@@ -84,6 +84,12 @@ def cmd_ui(args):
     ui_server.serve(db_path=args.db or DB_PATH, port=args.port, host=args.host)
 
 
+def cmd_observe(args):
+    from . import live_observer
+    from .config import DB_PATH
+    live_observer.serve(db_path=args.db or DB_PATH, port=args.port, host=args.host)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="Lab", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -113,6 +119,12 @@ def main():
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--host", default="127.0.0.1")
     s.set_defaults(fn=cmd_ui)
+
+    s = sub.add_parser("observe",
+                       help="join the live sim through the policy bridge (observe-only)")
+    s.add_argument("--port", type=int, default=9000)
+    s.add_argument("--host", default="0.0.0.0")
+    s.set_defaults(fn=cmd_observe)
 
     args = ap.parse_args()
     args.fn(args)

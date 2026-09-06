@@ -129,3 +129,15 @@ do NOT drive organisms through the policy bridge (PRD non-goal: no controlling
 individual creatures) — but a scripted policy served from `policy_server.py`
 is a legitimate future *intervention arm* for experiments ("does a
 forage-greedy Lumen policy change the selection gradient on alpha?").
+
+## Joining the live simulator (`observe`)
+
+`python -m Lab.lab observe` starts a policy-bridge server (docs/POLICY_API.md)
+that the running sim connects to when launched with
+`--policy "<lab ip>:9000=Both"`. The bridge replies to every `decide` with an
+empty actions dict — by the protocol's fallback rule each organism keeps
+choosing with its own built-in bandit, so behavior is untouched — while the
+full live stream (percepts, Q tables, genomes, rewards) is distilled into
+citable `live_*` evidence windows (60 sim-seconds each) in `lab.sqlite`.
+Run `python -m Lab.lab session` and `python -m Lab.lab ui` against the same DB
+and the scientists hold meetings about the world as it runs.
