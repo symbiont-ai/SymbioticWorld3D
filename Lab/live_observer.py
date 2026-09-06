@@ -91,6 +91,7 @@ class ObserverHandler(socketserver.StreamRequestHandler):
         peer = f"{self.client_address[0]}:{self.client_address[1]}"
         print(f"[observe] sim connected from {peer}")
         run_id, window, field = None, None, None
+        last_team_sent = -1.0
         manager = PopulationManager() if srv.manage else None
         con = db.connect(srv.lab_db_path)     # this thread's own connection
         try:
@@ -140,6 +141,13 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                         continue
                     if field:
                         field.step(t, agents)
+                        # Avatar layer: report the team's positions at most twice
+                        # per sim-second. Old sim builds ignore the message type;
+                        # organisms never see it (visual only, docs/POLICY_API.md).
+                        if t - last_team_sent >= 0.5:
+                            last_team_sent = t
+                            self._send({"type": "scientists",
+                                        "team": field.team_positions()})
                     k = int(t // WINDOW_S)
                     if k > window.index:
                         self._flush(con, run_id, window)

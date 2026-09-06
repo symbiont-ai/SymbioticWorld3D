@@ -11,6 +11,7 @@ and Vega's quarantine (figures + forecasts exist; no stances or predictions).
   python3 Lab/tests/test_smoke.py [work_dir]
 """
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,10 @@ def _session(dbp, meetings, ingest=()):
 
 def main():
     work = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix="lab_smoke_"))
+    # Hermetic: sessions (this process and the subprocesses, which inherit the
+    # environment) must never sweep the machine's real Saved/SymbioticWorld
+    # runs into the fixture lab — that changes what the fixtures assert.
+    os.environ["LAB_SAVED"] = str(work / "saved_isolated")
     fixtures = work / "fixtures"
     treatment, control = [], []
     for seed in (1, 2, 3):

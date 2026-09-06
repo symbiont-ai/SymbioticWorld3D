@@ -7,7 +7,9 @@ LAB_DIR = ROOT / "Lab"
 PROFILE_DIR = LAB_DIR / "profiles"
 REPORT_DIR = LAB_DIR / "reports"
 DB_PATH = LAB_DIR / "lab.sqlite"
-SAVED = ROOT / "Saved" / "SymbioticWorld"           # where run CSVs land (both backends)
+# Where run CSVs land (both backends). LAB_SAVED overrides for hermetic tests:
+# without it, a test session would sweep the real runs into its fixture lab.
+SAVED = Path(os.environ.get("LAB_SAVED", str(ROOT / "Saved" / "SymbioticWorld")))
 ANALYSIS_DIR = ROOT / "Analysis"
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")

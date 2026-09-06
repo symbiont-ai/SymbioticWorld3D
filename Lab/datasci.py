@@ -72,7 +72,9 @@ def update_actuals(con):
     """Fill in actuals for old forecasts when a longer run of the same mode and
     seed has since been ingested (forecasts are falsifiable too)."""
     filled = 0
-    for f in con.execute("SELECT rowid, * FROM forecasts WHERE actual IS NULL").fetchall():
+    # NB: forecasts.id is INTEGER PRIMARY KEY, i.e. the rowid alias — "SELECT
+    # rowid" would come back named "id", so select and key on id directly.
+    for f in con.execute("SELECT * FROM forecasts WHERE actual IS NULL").fetchall():
         src = con.execute("SELECT mode, seed FROM runs WHERE run_id=?", (f["run_id"],)).fetchone()
         if not src:
             continue
@@ -81,15 +83,23 @@ def update_actuals(con):
             (src["mode"], src["seed"], f["horizon"], f["run_id"])).fetchone()
         if not longer:
             continue
-        run = analyze_run.load_run(longer["path"])
+        try:
+            run = analyze_run.load_run(longer["path"])
+        except OSError:
+            continue   # run directory gone or unreadable; verify against a later one
         species = "Lumen" if f["metric"].startswith("lumen") else "Tecton"
         p = analyze_run.population_trajectory(run["population"], species)
         if p.empty:
             continue
         col = "n" if f["metric"].endswith("_n") else "mean_alpha"
-        idx = (p["sim_time"] - f["horizon"]).abs().idxmin()
-        con.execute("UPDATE forecasts SET actual=? WHERE rowid=?",
-                    (float(p.loc[idx, col]), f["rowid"]))
+        if col not in p.columns or "sim_time" not in p.columns:
+            continue
+        try:
+            idx = (p["sim_time"] - f["horizon"]).abs().idxmin()
+            actual = float(p.loc[idx, col])
+        except (KeyError, IndexError, ValueError):
+            continue   # a run this forecast cannot be read against stays unverified
+        con.execute("UPDATE forecasts SET actual=? WHERE id=?", (actual, f["id"]))
         filled += 1
     con.commit()
     return filled

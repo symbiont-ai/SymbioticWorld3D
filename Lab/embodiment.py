@@ -34,7 +34,13 @@ STYLES = {
     "Fisher":  ("grid_sweep", None),           # statistician runs a systematic transect
     "Karla":   ("random_waypoints", None),     # skeptic samples where nobody chose to look
     "Archie":  ("spiral", None),               # archivist walks a slow outward spiral
+    "Vega":    ("random_waypoints", None),     # data scientist roams; report-only presence
 }
+
+# Vega is non-voting and report-only by construction (Lab/README.md): her body
+# walks and is rendered like the others, but she mints NO witnessed evidence,
+# so nothing she sees can enter a stance, a finding, or the registry.
+NO_EVIDENCE = {"Vega"}
 
 
 def _seed_of(run_id, name):
@@ -177,6 +183,11 @@ class EmbodiedField:
             s.move(agents, dt)
             s.witness(agents)
 
+    def team_positions(self):
+        """[{name, x, y}] for the sim's avatar layer (docs/POLICY_API.md)."""
+        return [{"name": s.name, "x": round(s.x, 1), "y": round(s.y, 1)}
+                for s in self.team]
+
     def flush(self, con, window_index, t0, t1):
         """Mint per-scientist witnessed evidence + a track row; reset windows."""
         lines = []
@@ -193,7 +204,7 @@ class EmbodiedField:
             for sp in ("Lumen", "Tecton"):
                 n = len(s.seen[sp])
                 n_tot += n
-                if n == 0:
+                if n == 0 or s.name in NO_EVIDENCE:
                     continue
                 pre = f"obs_{sp.lower()}"
                 db.add_evidence(con, wid, f"{pre}_n", float(n),

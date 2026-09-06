@@ -128,6 +128,21 @@ being applied to the next substep).
 
 Printed in the UE log as `[host:port] text`.
 
+### server -> sim: `scientists` (optional, visual only)
+
+```json
+{"type":"scientists","team":[{"name":"Vesper","x":-1200.5,"y":350.0}]}
+```
+
+Reports embodied field observers (the Symbiotic Lab's `observe --embody`) for
+the sim's avatar layer: the sim renders one labelled mannequin per entry
+(`Look.bScientistAvatars`, default on) and smooths movement between reports.
+Coordinates are arena uu, the same space as organism `position`. Send at most
+a few per sim-second; entries beyond 16 are ignored. STRICTLY visual: no
+organism can perceive an avatar, nothing enters the seeded stream, the CSVs,
+or the percepts, so a run reproduces byte-identically with or without them.
+Builds older than this message ignore it.
+
 ## Fallback rules (the organism uses its own built-in bandit for that one decision)
 
 * the server is not connected (also at the first decision, which happens at birth, before any exchange);
