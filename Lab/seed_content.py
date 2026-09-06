@@ -42,6 +42,7 @@ CONJECTURES = [
 
 
 def seed(con, log=print):
+    from . import victory
     n = 0
     for qid, text, origin in OPEN_QUESTIONS:
         if not con.execute("SELECT 1 FROM open_questions WHERE id=?", (qid,)).fetchone():
@@ -58,5 +59,6 @@ def seed(con, log=print):
             memory.create_card(con, claim, mech, scope, "Textbook", 0, status="conjecture")
             n += 1
     con.commit()
+    victory.sync_questions(con)   # spec §1 victory conditions -> standing open questions
     if n:
         log(f"  [seed] {n} textbook objects seeded")

@@ -103,6 +103,9 @@ def generate(con, session_label=None, annex_lines=None):
             L.append(f"| {c['agent']} | {c['domain']} | {c['weight']:.2f} | {c['n_scored']} |")
         L.append("")
 
+    from . import victory
+    L += victory.report_section(con)
+
     L += ["## Open questions", ""]
     for q in _rows(con, "SELECT * FROM open_questions ORDER BY id"):
         L.append(f"- {q['id']} ({q['status']}): {q['text']}")

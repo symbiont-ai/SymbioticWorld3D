@@ -23,6 +23,7 @@ consequential is enforced in code, never by the model's judgment:
 | endangerment detection + two-stage conservation programs | `conservation.py` |
 | lab evolution between generations | `evolution.py` |
 | Vega's data annex (non-voting, report-only) | `datasci.py` |
+| victory conditions (spec §1) scored from evidence | `victory.py::scorecard` |
 
 ## Running
 
@@ -33,6 +34,7 @@ python -m Lab.lab ingest Saved/SymbioticWorld/<run_id>   # feed it existing runs
 python -m Lab.lab run-queued                             # sim machine: execute experiments
 python -m Lab.lab report                                 # regenerate outputs
 python -m Lab.lab textbook                               # print the inherited object
+python -m Lab.lab victory                                # score the spec's six victory conditions
 ```
 
 Outputs land in `Lab/reports/` (lab report + transcript with the stance ledger
@@ -67,6 +69,20 @@ Being right in public is a competitive advantage, on two timescales:
   toward the fittest agent, with noise, clamped. Identity and priors persist —
   the lab evolves temperament, not personality. Parameters live per generation
   in `agent_params` and overlay the YAML profiles at load.
+
+## Victory conditions (spec §1 — minimum proof of challenge fit)
+
+The spec's six-step "minimum proof" is held in `victory.py` as the lab's
+standing victory conditions **about the organisms** — the scientists observe
+and verify them, code scores them. Each condition maps to registered metrics
+(median lifetime Q drift with a mode A control for "learned because of
+experience"; parent/child genome correlation in [0.5, 0.995] for "related but
+mutated"; a passed C-vs-N experiment for population-level selection; a
+regen-cut arm with survival plus continued Q drift for drought adaptation).
+Every session scores the scorecard into the report, and each condition not
+yet met stands as an open question (`OQ-VC-*`) so the meetings keep aiming
+experiments at the spec's own definition of done. `python -m Lab.lab victory`
+prints it on demand.
 
 ## Conservation dockets
 

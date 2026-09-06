@@ -78,6 +78,16 @@ def cmd_textbook(args):
     print(json.dumps(memory.textbook(con), indent=2))
 
 
+def cmd_victory(args):
+    from . import victory
+    con = db.connect(args.db)
+    victory.sync_questions(con)
+    for row in victory.scorecard(con):
+        cite = (" [" + ", ".join(row["evidence_ids"]) + "]") if row["evidence_ids"] else ""
+        print(f"{row['id']} {row['status'].upper():8s} {row['text']}")
+        print(f"       {row['why']}{cite}")
+
+
 def cmd_ui(args):
     from . import ui_server
     from .config import DB_PATH
@@ -115,6 +125,10 @@ def main():
 
     s = sub.add_parser("textbook", help="print the inherited object (registry + open questions)")
     s.set_defaults(fn=cmd_textbook)
+
+    s = sub.add_parser("victory",
+                       help="score the spec's six victory conditions against the evidence")
+    s.set_defaults(fn=cmd_victory)
 
     s = sub.add_parser("ui", help="serve the read-only lab dashboard (LAN-visible)")
     s.add_argument("--port", type=int, default=8765)
