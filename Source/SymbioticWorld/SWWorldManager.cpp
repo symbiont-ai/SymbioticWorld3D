@@ -3,6 +3,7 @@
 #include "SWResourcePatch.h"
 #include "SWEnvironment.h"
 #include "SWLeviathan.h"
+#include "SWScientistAvatar.h"
 #include "SWProcMesh.h"
 #include "SymbioticWorld.h"
 #include "EngineUtils.h"
@@ -104,9 +105,61 @@ void ASWWorldManager::BeginPlay()
 
 void ASWWorldManager::EndPlay(const EEndPlayReason::Type Reason)
 {
+	DestroyScientistAvatars();
 	PolicyClient.Shutdown();
 	Logger.Close();
 	Super::EndPlay(Reason);
+}
+
+// ---------------------------------------------------------------------------
+// Embodied field-team avatars (visual only; docs/POLICY_API.md "scientists")
+// ---------------------------------------------------------------------------
+
+void ASWWorldManager::DestroyScientistAvatars()
+{
+	for (ASWScientistAvatar* A : ScientistAvatars) if (IsValid(A)) A->Destroy();
+	ScientistAvatars.Empty();
+}
+
+void ASWWorldManager::UpdateScientistAvatars(float DeltaSeconds)
+{
+	if (!Look.bScientistAvatars || !PolicyClient.HasServers())
+	{
+		if (ScientistAvatars.Num() > 0) DestroyScientistAvatars();
+		return;
+	}
+
+	// Stale bridge (lab gone, or plain observer without --embody): hide, keep.
+	const bool bStale = PolicyClient.GetScientistLastWall() <= 0.0 ||
+		FPlatformTime::Seconds() - PolicyClient.GetScientistLastWall() > 20.0;
+	for (ASWScientistAvatar* A : ScientistAvatars)
+		if (IsValid(A) && A->IsHidden() != bStale) A->SetActorHiddenInGame(bStale);
+	if (bStale) return;
+
+	if (PolicyClient.GetScientistStamp() != ScientistStampSeen)
+	{
+		ScientistStampSeen = PolicyClient.GetScientistStamp();
+		const TArray<FSWScientistPing>& Pings = PolicyClient.GetScientistPings();
+		for (int32 i = 0; i < Pings.Num(); ++i)
+		{
+			ASWScientistAvatar* Avatar = nullptr;
+			for (ASWScientistAvatar* A : ScientistAvatars)
+				if (IsValid(A) && A->GetScientistName() == Pings[i].Name) { Avatar = A; break; }
+			if (!Avatar)
+			{
+				Avatar = GetWorld()->SpawnActor<ASWScientistAvatar>();
+				if (!Avatar) continue;
+				Avatar->Init(this, Pings[i].Name, ScientistAvatars.Num());
+				ScientistAvatars.Add(Avatar);
+				UE_LOG(LogSymbioticWorld, Log, TEXT("Field team: %s joined (%d avatars)"),
+					*Pings[i].Name, ScientistAvatars.Num());
+			}
+			Avatar->SetTargetXY(Pings[i].X, Pings[i].Y);
+		}
+	}
+
+	for (ASWScientistAvatar* A : ScientistAvatars)
+		if (IsValid(A)) A->UpdateVisual(DeltaSeconds);
 }
 
 void ASWWorldManager::ApplyCommandLineOverrides()
@@ -587,6 +640,10 @@ void ASWWorldManager::Tick(float DeltaSeconds)
 				ExtDecisions[0] + ExtDecisions[1], ExtFallbacks[0] + ExtFallbacks[1]);
 		}
 	}
+	// Field-team avatars: rendered-frame visual layer, updated while paused too
+	// (the labels should face the camera even when time is stopped).
+	UpdateScientistAvatars(DeltaSeconds);
+
 	if (bPaused || TimeScale <= 0.f) return;
 
 	const double T0 = FPlatformTime::Seconds();
