@@ -118,6 +118,11 @@ function renderTurn(t){
     body = `<div class="dim">drafted a protocol — see Experiments tab</div>`;
   } else if (t.round === "MINUTES" && p) {
     body = `<i>${esc(p.summary)}</i>`;
+  } else if (t.round === "AGENDA" && p) {
+    body = (p.priorities || []).map(x => `<div>▸ ${esc(x)}</div>`).join("")
+         + `<span class="dim">focus metric: ${esc(p.focus_metric || "-")} — ${esc(p.rationale || "")}</span>`;
+  } else if (t.round === "ARBITRATION" && p) {
+    body = `<b>${p.uphold ? "veto upheld" : "veto overruled"}</b> — ${esc(p.reason || "")}`;
   } else {
     body = `<details><summary>raw</summary><pre>${esc(JSON.stringify(p, null, 1))}</pre></details>`;
   }

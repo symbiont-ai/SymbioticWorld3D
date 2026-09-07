@@ -6,7 +6,7 @@ import yaml
 
 from . import config
 
-TURN_ORDER = ["Vesper", "Bastion", "Mendel", "Ada", "Fisher", "Karla", "Archie"]
+TURN_ORDER = ["Humboldt", "Vesper", "Bastion", "Mendel", "Ada", "Fisher", "Karla", "Archie"]
 OBSERVERS = ["Vesper", "Bastion", "Mendel"]
 # Non-voting staff: loaded, but never in a meeting round, never a stance,
 # never a vote. Vega's outputs go to the report annex only.

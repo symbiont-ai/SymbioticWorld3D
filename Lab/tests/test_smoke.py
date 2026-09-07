@@ -128,7 +128,9 @@ def main():
     intro = prog["introduction_exp"]
     n_preds = con.execute("SELECT COUNT(*) FROM predictions WHERE experiment_id=?",
                           (intro,)).fetchone()[0]
-    assert n_preds == 6, f"introduction predictions {n_preds}, expected 6"
+    from Lab.profiles import TURN_ORDER
+    want = len(TURN_ORDER) - 1          # every voting scientist except Archie
+    assert n_preds == want, f"introduction predictions {n_preds}, expected {want}"
     v = runner.score_experiment(con, intro, treatment, control)
     print(f"introduction {intro} verdict: {v}")
     assert v is not None

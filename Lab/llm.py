@@ -55,6 +55,8 @@ SCHEMAS = {
         "confidence": _N(), "reason": _S()}),
     "challenge": _obj({"text": _S()}),
     "minutes": _obj({"summary": _S()}),
+    "agenda": _obj({"priorities": _A(_S()), "focus_metric": _S(), "rationale": _S()}),
+    "arbitration": _obj({"uphold": _B(), "reason": _S()}),
 }
 
 
@@ -341,6 +343,20 @@ class MockLLM:
 
     def _minutes(self, profile, ctx):
         return {"summary": ctx.get("draft", "Meeting held; see structured records.")}
+
+    def _agenda(self, profile, ctx):
+        qs = [q for q in ctx.get("open_questions", [])][:2]
+        return {"priorities": qs or ["What governs population stability under drought?"],
+                "focus_metric": "lumen_min_n",
+                "rationale": "Populations first; the registry's open questions set the docket."}
+
+    def _arbitration(self, profile, ctx):
+        vr = (ctx.get("veto_reason") or "").lower()
+        uphold = "identical" in vr or "missing control" in vr
+        return {"uphold": uphold,
+                "reason": ("Without a control the data is uninterpretable; veto stands."
+                           if uphold else
+                           "The design is imperfect but controlled; run it and let the data argue.")}
 
 
 def make_llm(backend):
