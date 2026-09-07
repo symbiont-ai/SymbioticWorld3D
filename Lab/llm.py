@@ -168,10 +168,11 @@ class OpenRouterLLM:
             "response_format": {"type": "json_schema", "json_schema": {
                 "name": kind, "strict": True, "schema": schema}},
         }
+        import time
         out = ""
-        for attempt in range(3):
-            if attempt == 2:
-                body.pop("response_format", None)   # last try: prompt only
+        for attempt in range(4):
+            if attempt >= 2:
+                body.pop("response_format", None)   # late tries: prompt only
             req = urllib.request.Request(
                 self.URL, data=json.dumps(body).encode(),
                 headers={"Content-Type": "application/json",
@@ -183,6 +184,16 @@ class OpenRouterLLM:
                 # A model without json_schema support 4xxes the response_format;
                 # drop it and retry rather than fail the turn.
                 if ex.code < 500 and body.pop("response_format", None) is not None:
+                    continue
+                if ex.code >= 500 and attempt < 3:   # provider hiccup
+                    time.sleep(2 * attempt + 1)
+                    continue
+                raise
+            except OSError:
+                # Connection reset / DNS blip / timeout: transient — an
+                # always-on lab must outlive them, not die mid-meeting.
+                if attempt < 3:
+                    time.sleep(2 * attempt + 1)
                     continue
                 raise
             out = (reply.get("choices") or [{}])[0].get("message", {}).get("content") or ""

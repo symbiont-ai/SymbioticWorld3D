@@ -90,15 +90,21 @@ def main():
         assert out == {"summary": "ok"}
         assert "response_format" not in json.loads(calls[1].data)
 
-        # 5. Persistent garbage: RuntimeError after 3 attempts.
+        # 5. Persistent garbage: RuntimeError after 4 attempts, schema dropped late.
         calls = _install([_chat("no json here")])
         try:
             backend.turn(_profile(), "minutes", "x")
             raise AssertionError("expected RuntimeError")
         except RuntimeError as ex:
             assert "no parseable JSON" in str(ex)
-        assert len(calls) == 3
-        assert "response_format" not in json.loads(calls[2].data)
+        assert len(calls) == 4
+        assert "response_format" not in json.loads(calls[3].data)
+
+        # 6. Connection reset (transient network): retried, then succeeds.
+        calls = _install([ConnectionResetError(54, "reset by peer"),
+                          _chat('{"summary": "ok"}')])
+        out = backend.turn(_profile(), "minutes", "x")
+        assert out == {"summary": "ok"} and len(calls) == 2
     finally:
         llm_mod.urllib.request.urlopen = real_urlopen
     print("test_openrouter: all assertions passed")

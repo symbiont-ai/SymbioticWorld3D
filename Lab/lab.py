@@ -60,6 +60,19 @@ def cmd_loop(args):
     k = 0
     while True:
         k += 1
+        try:
+            _loop_cycle(con, llm, args, k)
+        except KeyboardInterrupt:
+            raise
+        except Exception as ex:                    # noqa: BLE001
+            # The always-on lab outlives a bad meeting: log, rest, reconvene.
+            con.rollback()
+            print(f"  [loop] cycle {k} failed ({type(ex).__name__}: {ex}); "
+                  f"reconvening in {args.interval:.0f}s")
+        time.sleep(args.interval)
+
+
+def _loop_cycle(con, llm, args, k):
         profiles = load_profiles(con=con)
         mr = MeetingRunner(con, profiles, llm)
         boundary = args.consolidate_every > 0 and k % args.consolidate_every == 0
@@ -80,7 +93,6 @@ def cmd_loop(args):
             rp, tp = report.generate(con, annex_lines=annex)
             print(f"lab report: {rp}\ntranscript: {tp}")
         print(f"  [loop] cycle {k} done; next meeting in {args.interval:.0f}s")
-        time.sleep(args.interval)
 
 
 def cmd_ingest(args):
