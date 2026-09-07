@@ -40,6 +40,7 @@ def main():
     # environment) must never sweep the machine's real Saved/SymbioticWorld
     # runs into the fixture lab — that changes what the fixtures assert.
     os.environ["LAB_SAVED"] = str(work / "saved_isolated")
+    os.environ["LAB_TURN_PACE"] = "0"   # no demo pacing in tests
     fixtures = work / "fixtures"
     treatment, control = [], []
     for seed in (1, 2, 3):

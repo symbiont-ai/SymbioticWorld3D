@@ -15,6 +15,7 @@ one protocol slot, the docket is ranked by credibility-weighted interest
 (sum of vote weights of agents holding a non-abstain stance on the card).
 """
 import json
+import time
 
 from . import config, conservation, db, evidence, memory, scorer
 from .profiles import OBSERVERS, TURN_ORDER
@@ -26,6 +27,13 @@ class MeetingRunner:
         self.con, self.profiles, self.llm, self.log = con, profiles, llm, log
 
     def _turn(self, agent, kind, prompt, ctx):
+        # Demo pacing (config.TURN_PACE_S): scientists speak no faster than
+        # one turn per pace interval, so the dashboard shows the conversation
+        # forming rather than a finished meeting appearing at once.
+        wait = getattr(self, "_next_turn_at", 0.0) - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        self._next_turn_at = time.monotonic() + config.TURN_PACE_S
         prof = self.profiles[agent]
         try:
             return self.llm.turn(prof, kind, prompt, ctx=ctx)
@@ -337,13 +345,35 @@ class MeetingRunner:
                          (exp_id, card["id"], json.dumps(proto), "proposed",
                           None, None, None, mid))
 
-        # Karla review (her veto on running a flawed protocol is checked in code)
-        review = self._turn("Karla", "review",
-                            f"Review this protocol for {card['id']} (\"{card['claim']}\"): "
-                            f"{json.dumps(proto)}. List objections; veto only for a missing "
-                            f"control or an unfalsifiable design.",
-                            {"protocol": proto, "claim": card["claim"]})
-        db.log_turn(self.con, mid, "REVIEW", "Karla", review)
+        # Karla review (her veto on running a flawed protocol is checked in
+        # code). One revise-and-resubmit: on objections Fisher revises the
+        # protocol once, addressing them, before a veto is final.
+        for attempt in range(2):
+            review = self._turn("Karla", "review",
+                                f"Review this protocol for {card['id']} (\"{card['claim']}\"): "
+                                f"{json.dumps(proto)}. Quote the arm values before calling "
+                                f"them identical. List objections; veto only for a missing "
+                                f"control or an unfalsifiable design.",
+                                {"protocol": proto, "claim": card["claim"]})
+            db.log_turn(self.con, mid, "REVIEW", "Karla", review)
+            if review.get("approve", True) or not review.get("veto_reason"):
+                break
+            if attempt == 0:
+                objections = "; ".join(review.get("objections", [])) or review["veto_reason"]
+                self.log(f"  [design] {exp_id} revise-and-resubmit: {review['veto_reason']}")
+                raw = self._turn("Fisher", "protocol",
+                                 prompt + f"\n\nKarla's review of your first draft: "
+                                 f"{objections}\nRevise the protocol to answer every "
+                                 f"objection (differing arms, a proper control).",
+                                 {"claim": card["claim"], "crux": crux or {}})
+                db.log_turn(self.con, mid, "DESIGN", "Fisher", raw)
+                revised, err = self._validate_protocol(raw, crux)
+                if err:
+                    self.log(f"  [design] Fisher's revision rejected in code: {err}")
+                    break                      # veto stands on the original
+                proto = revised
+                self.con.execute("UPDATE experiments SET protocol=? WHERE id=?",
+                                 (json.dumps(proto), exp_id))
         if not review.get("approve", True) and review.get("veto_reason"):
             self.con.execute("UPDATE experiments SET status='vetoed' WHERE id=?", (exp_id,))
             self.log(f"  [design] {exp_id} VETOED by Karla: {review['veto_reason']}")
