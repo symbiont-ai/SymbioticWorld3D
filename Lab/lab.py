@@ -48,6 +48,41 @@ def cmd_session(args):
     print(f"\nlab report: {rp}\ntranscript: {tp}")
 
 
+def cmd_loop(args):
+    """The always-on lab: meeting -> experiments -> interval -> next meeting,
+    until stopped. Every Nth meeting is a generation boundary (consolidation,
+    evolution, fresh report). Profiles reload each cycle so evolved parameters
+    and edited YAMLs take effect without a restart."""
+    import time
+    con = db.connect(args.db)
+    llm = make_llm(args.llm)
+    seed_content.seed(con)
+    k = 0
+    while True:
+        k += 1
+        profiles = load_profiles(con=con)
+        mr = MeetingRunner(con, profiles, llm)
+        boundary = args.consolidate_every > 0 and k % args.consolidate_every == 0
+        mr.run(kind="generation-boundary" if boundary else "regular")
+        if runner.engine_available() or runner.service_client():
+            runner.execute_queued(con)
+        else:
+            n = con.execute("SELECT COUNT(*) FROM experiments WHERE status='queued'").fetchone()[0]
+            if n:
+                print(f"  [runner] {n} experiment(s) queued; no UE engine or service -> awaiting-sim")
+                con.execute("UPDATE experiments SET status='awaiting-sim' WHERE status='queued'")
+                con.commit()
+        if boundary:
+            print("\n=== CONSOLIDATION ===")
+            memory.condense_notebooks(con)
+            evolution.evolve(con, profiles)
+            annex = datasci.annex(con, f"loop cycle {k}")
+            rp, tp = report.generate(con, annex_lines=annex)
+            print(f"lab report: {rp}\ntranscript: {tp}")
+        print(f"  [loop] cycle {k} done; next meeting in {args.interval:.0f}s")
+        time.sleep(args.interval)
+
+
 def cmd_ingest(args):
     con = db.connect(args.db)
     for d in args.runs:
@@ -124,6 +159,15 @@ def main():
                    default=os.environ.get("LAB_LLM", "ollama"))
     s.add_argument("--ingest", nargs="*", help="run directories to ingest first")
     s.set_defaults(fn=cmd_session)
+
+    s = sub.add_parser("loop", help="always-on lab: meeting -> experiments -> interval, forever")
+    s.add_argument("--interval", type=float, default=120,
+                   help="seconds between the end of one meeting and the next (default 120)")
+    s.add_argument("--consolidate-every", type=int, default=4,
+                   help="every Nth meeting is a generation boundary (0 = never)")
+    s.add_argument("--llm", choices=["ollama", "mock", "claude", "openrouter"],
+                   default=os.environ.get("LAB_LLM", "ollama"))
+    s.set_defaults(fn=cmd_loop)
 
     s = sub.add_parser("ingest", help="ingest run directories")
     s.add_argument("runs", nargs="+")
