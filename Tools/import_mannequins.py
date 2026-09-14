@@ -2,9 +2,10 @@
 """Import Epic's Manny / Quinn mannequins for the scientist avatars (visual only).
 
 The avatar layer (Source/SymbioticWorld/SWScientistAvatar.*) renders the Symbiotic Lab's field
-team as Epic's mannequins at human scale. That content is not in this repository (Content/Characters
-is git-ignored: ~130 MB of Epic template content that every UE 5.7 install already carries), so run
-this once per machine:
+team as Epic's mannequins at human scale. That content is not in this repository
+(Content/Characters/Mannequins is git-ignored: ~130 MB of Epic template content that every UE 5.7
+install already carries; the sibling Content/Characters/Symbiotic is the project's own authored
+creatures, untracked on purpose, see docs/CREATURE_RENDERING.md), so run this once per machine:
 
     python Tools/import_mannequins.py            # copy from the engine's template resources
     python Tools/import_mannequins.py --check    # report what is present / missing, copy nothing

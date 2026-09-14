@@ -126,6 +126,37 @@ void ASWCameraPawn::SetFollowScientist(ASWScientistAvatar* Avatar)
 
 void ASWCameraPawn::UpdateRequestedFollow()
 {
+	// -SWFollowScientist: the team joins a few seconds after the bridge connects, so keep looking until then;
+	// re-acquire if the avatar retires or hides (stale bridge). Evaluated first: the Leviathan block below
+	// returns early while no predator exists and must not swallow this request.
+	if (!RequestedScientist.IsEmpty() && !(FollowScientist.IsValid() && !FollowScientist->IsHidden()))
+	{
+		FollowScientist = nullptr;
+		if (const ASWWorldManager* M = ASWWorldManager::Get(GetWorld()))
+		{
+			const bool bAny = RequestedScientist.Equals(TEXT("any"), ESearchCase::IgnoreCase);
+			for (ASWScientistAvatar* A : M->GetScientistAvatars())
+			{
+				if (!IsValid(A) || A->IsHidden()) continue;
+				if (bAny || A->GetScientistName().Equals(RequestedScientist, ESearchCase::IgnoreCase))
+				{
+					FollowScientist = A;
+					UE_LOG(LogSymbioticWorld, Log, TEXT("-SWFollowScientist: following %s"), *A->GetScientistName());
+					break;
+				}
+			}
+			// Both prerequisites are named, once, after a 5 sim-s grace (the policy file is polled every 3 s).
+			if (!FollowScientist.IsValid() && !bWarnedNoScientist && M->GetSimTime() > 5.f
+				&& (!M->GetLook().bScientistAvatars || !M->HasPolicyServers()))
+			{
+				bWarnedNoScientist = true;
+				UE_LOG(LogSymbioticWorld, Warning, TEXT("-SWFollowScientist=%s: %s; nothing to follow"), *RequestedScientist,
+					!M->GetLook().bScientistAvatars ? TEXT("Look.bScientistAvatars is off (add -SWSet=\"Look.bScientistAvatars=1\")")
+					                                : TEXT("no policy bridge (add --policy host:port=Both with Lab.lab observe --embody running)"));
+			}
+		}
+	}
+
 	if (bRequestedLeviathan && !FollowActor.IsValid())
 	{
 		for (TActorIterator<ASWLeviathan> It(GetWorld()); It; ++It) { FollowActor = *It; break; }
@@ -144,32 +175,6 @@ void ASWCameraPawn::UpdateRequestedFollow()
 		}
 		return;
 	}
-	// -SWFollowScientist: the team joins a few seconds after the bridge connects, so keep looking until then;
-	// re-acquire if the avatar retires or hides (stale bridge).
-	if (!RequestedScientist.IsEmpty() && !(FollowScientist.IsValid() && !FollowScientist->IsHidden()))
-	{
-		FollowScientist = nullptr;
-		if (const ASWWorldManager* M = ASWWorldManager::Get(GetWorld()))
-		{
-			const bool bAny = RequestedScientist.Equals(TEXT("any"), ESearchCase::IgnoreCase);
-			for (ASWScientistAvatar* A : M->GetScientistAvatars())
-			{
-				if (!IsValid(A) || A->IsHidden()) continue;
-				if (bAny || A->GetScientistName().Equals(RequestedScientist, ESearchCase::IgnoreCase))
-				{
-					FollowScientist = A;
-					UE_LOG(LogSymbioticWorld, Log, TEXT("-SWFollowScientist: following %s"), *A->GetScientistName());
-					break;
-				}
-			}
-			if (!FollowScientist.IsValid() && !bWarnedNoScientist && !M->GetLook().bScientistAvatars)
-			{
-				bWarnedNoScientist = true;
-				UE_LOG(LogSymbioticWorld, Warning, TEXT("-SWFollowScientist=%s: Look.bScientistAvatars is off (add -SWSet=\"Look.bScientistAvatars=1\" and a --policy bridge running Lab.lab observe --embody); nothing to follow"), *RequestedScientist);
-			}
-		}
-	}
-
 	if (!RequestedFollowSpecies.IsSet()) return;
 	ASWWorldManager* M = ASWWorldManager::Get(GetWorld());
 	if (!M) return;

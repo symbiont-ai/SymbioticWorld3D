@@ -50,9 +50,10 @@ namespace
 
 	constexpr float BodyHeightUu = 180.f;         // Manny at scale 1: a 1.8 m person (1 uu = 1 cm, like the valley)
 	constexpr float TagClearanceUu = 30.f;        // HUD tag anchor above the head
-	constexpr float WalkSpeedUu = 400.f;          // visual catch-up speed at 1x (the Lab walks 260 uu/logical s)
-	constexpr float StandingSpeedUu = 20.f;       // smoothed on-screen speed below which the avatar idles
-	constexpr float GaitSmoothing = 4.f;          // FInterpTo speed of the gait's speed estimate (reports land every 0.5 sim-s)
+	constexpr float CatchUpSpeedUu = 400.f;       // catch-up speed at 1x when more than a report's travel behind (the Lab walks 260 uu/logical s)
+	constexpr float PaceGain = 1.05f;             // walk a little faster than the reported pace so the lag never grows
+	constexpr float StandingSpeedUu = 20.f;       // smoothed pace below which the avatar idles
+	constexpr float GaitSmoothing = 2.f;          // FInterpTo speed of the pace estimate (tau 0.5 s = one report period)
 	constexpr float GaitHysteresis = 0.15f;       // walk <-> jog switches 15 % either side of the stride midpoint
 	// Ground speed of the walk / jog clips at play rate 1 (uu/s, approximate): the clips are root-locked,
 	// so their extracted root motion is ~0 and cannot be measured at load.
@@ -142,6 +143,15 @@ FVector ASWScientistAvatar::GetTagAnchor() const
 	return GetActorLocation() + FVector(0.f, 0.f, BodyHeightUu + TagClearanceUu);
 }
 
+void ASWScientistAvatar::EndPlay(const EEndPlayReason::Type Reason)
+{
+	if (bHasMannequin)
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("Field team: %s retired at sim %.0f s after %d gait changes"), *ScientistName, LastReportSim, GaitChanges);
+	}
+	Super::EndPlay(Reason);
+}
+
 void ASWScientistAvatar::SetGait(UAnimSequence* Anim, float PlayRate)
 {
 	if (!Anim) return;
@@ -149,13 +159,23 @@ void ASWScientistAvatar::SetGait(UAnimSequence* Anim, float PlayRate)
 	{
 		Body->PlayAnimation(Anim, true);
 		CurrentAnim = Anim;
+		++GaitChanges;
 	}
 	Body->SetPlayRate(PlayRate);
 }
 
 void ASWScientistAvatar::SetTargetXY(float X, float Y)
 {
-	TargetXY = FVector2D(X, Y);
+	const FVector2D New(X, Y);
+	if (bHasTarget && Manager)
+	{
+		// The pace the Lab implies, from the last two reports (0.5 sim-s apart). The gait and the walking
+		// speed follow this, not the on-screen catch-up, which would otherwise be a burst and a stop per report.
+		const float Dt = FMath::Max(Manager->GetSimTime() - LastReportSim, 0.1f);
+		ReportedPace = FMath::Min(FVector2D::Distance(New, TargetXY) / Dt, 1000.f);
+	}
+	TargetXY = New;
+	if (Manager) LastReportSim = Manager->GetSimTime();
 	if (!bHasTarget && Manager)
 	{
 		// First ping: appear there, no cross-map slide.
@@ -169,10 +189,15 @@ void ASWScientistAvatar::UpdateVisual(float DeltaSeconds)
 	if (!Manager || !bHasTarget) return;
 
 	const FVector Loc = GetActorLocation();
-	// Catch-up speed follows the time scale so 10x / 50x fast-forward does not
-	// leave the avatars crawling behind their reported positions.
-	const float Speed = WalkSpeedUu * FMath::Max(1.f, Manager->GetTimeScale());
 	const FVector2D Now2D(Loc.X, Loc.Y);
+	// Walk at the reported pace (on screen: pace x time scale, so 10x / 50x fast-forward keeps up), which
+	// makes the motion continuous between reports; more than a report's travel behind (a late report,
+	// the team reappearing after a stale spell) the catch-up speed closes the gap.
+	const float TS = FMath::Max(1.f, Manager->GetTimeScale());
+	const float Pace = ReportedPace * TS;
+	const float Behind = FVector2D::Distance(Now2D, TargetXY);
+	float Speed = FMath::Max(Pace * PaceGain, StandingSpeedUu * TS);
+	if (Behind > FMath::Max(0.75f * Pace, 150.f * TS)) Speed = FMath::Max(Speed, CatchUpSpeedUu * TS);
 	const FVector2D Next2D = FMath::Vector2DInterpConstantTo(Now2D, TargetXY, DeltaSeconds, Speed);
 	const FVector Next(Next2D.X, Next2D.Y, Manager->GetGroundZ(Next2D.X, Next2D.Y));
 
@@ -185,23 +210,22 @@ void ASWScientistAvatar::UpdateVisual(float DeltaSeconds)
 	}
 	SetActorLocation(Next);
 
-	// Gait from the avatar's own on-screen speed, smoothed so the stop-and-go catch-up between
-	// reports does not restart a clip every frame; the play rate matches the clip's stride.
+	// Gait from the reported pace, smoothed over a report period: the pace only changes when a report
+	// lands, so the clip is not restarted by the frame-to-frame motion; the play rate matches the stride.
 	if (bHasMannequin)
 	{
-		const float MovedPerSec = DeltaSeconds > KINDA_SMALL_NUMBER ? Delta.Size() / DeltaSeconds : 0.f;
-		SmoothedSpeed = FMath::FInterpTo(SmoothedSpeed, MovedPerSec, DeltaSeconds, GaitSmoothing);
+		SmoothedPace = FMath::FInterpTo(SmoothedPace, Pace, DeltaSeconds, GaitSmoothing);
 		const float Midpoint = 0.5f * (WalkStrideUu + JogStrideUu);
-		const bool bJog = SmoothedSpeed > Midpoint * (CurrentAnim == JogAnim ? 1.f - GaitHysteresis : 1.f + GaitHysteresis);
+		const bool bJog = SmoothedPace > Midpoint * (CurrentAnim == JogAnim ? 1.f - GaitHysteresis : 1.f + GaitHysteresis);
 		UAnimSequence* Locomotion = bJog ? (JogAnim ? JogAnim : WalkAnim) : (WalkAnim ? WalkAnim : JogAnim);
-		if (SmoothedSpeed < StandingSpeedUu || !Locomotion)
+		if (SmoothedPace < StandingSpeedUu || !Locomotion)
 		{
 			SetGait(IdleAnim, 1.f);
 		}
 		else
 		{
 			const float Stride = Locomotion == JogAnim ? JogStrideUu : WalkStrideUu;
-			SetGait(Locomotion, FMath::Clamp(SmoothedSpeed / Stride, 0.5f, 2.5f));
+			SetGait(Locomotion, FMath::Clamp(SmoothedPace / Stride, 0.5f, 2.5f));
 		}
 	}
 }
