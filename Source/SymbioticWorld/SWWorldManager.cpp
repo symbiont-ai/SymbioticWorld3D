@@ -56,14 +56,14 @@ ASWWorldManager::ASWWorldManager()
 	TectonParams.BasalBurn = 0.5f;
 	TectonParams.MoveBurn = 0.6f;
 	TectonParams.SignalBurn = 0.5f;
-	TectonParams.ForageRate = 5.0f;
-	TectonParams.ForageRadius = 300.f;
+	TectonParams.ForageRate = 3.5f;        // 2026-09-11: 5 -> 3.5, the Tecton boom was intake-driven (DESIGN.md §6)
+	TectonParams.ForageRadius = 600.f;     // 2026-09-11: an 11 m animal grazes from 6 m out, so a herd stands around a patch, not on it
 	TectonParams.SenseRange = 2200.f;
 	TectonParams.NeighbourRange = 1200.f;
-	TectonParams.CrowdRadius = 400.f;
-	TectonParams.MaxAge = 300.f;
-	TectonParams.MinReproAge = 50.f;
-	TectonParams.ReproThreshold = 130.f;
+	TectonParams.CrowdRadius = 900.f;      // 2026-09-11: avoid is feasible before the plated bodies overlap
+	TectonParams.MaxAge = 260.f;           // 2026-09-11: 300 -> 260 with 10 B patches caps the herd near 60 (DESIGN.md §6)
+	TectonParams.MinReproAge = 100.f;      // 2026-09-11: 50 -> 100 and 130 -> 145 slow the Tecton boom without a founder gap (DESIGN.md §6b)
+	TectonParams.ReproThreshold = 145.f;
 	TectonParams.ReproCost = 60.f;
 	TectonParams.MeshScale = 0.75f;
 	TectonParams.GroundOffset = 0.f;
@@ -366,6 +366,7 @@ void ASWWorldManager::StartRun()
 	SimTime = 0.f;
 	Accumulator = 0.f;
 	Births = Deaths = DeathsStarvation = DeathsPredation = 0;
+	DeathsPredationBySpecies[0] = DeathsPredationBySpecies[1] = 0;
 	NextAgentId = 1;
 	bDrought = false;
 	NeutralBirthTimer = AgentLogTimer = PopLogTimer = StatsTimer = 0.f;
@@ -382,8 +383,8 @@ void ASWWorldManager::StartRun()
 		Logger.Open(RunId, Settings.Seed, Settings.Mode);
 	}
 
-	TraceX.Init(Settings.TraceCells, Settings.WorldHalfSize, Settings.TraceXHalfLife, Settings.TraceMax);
-	TraceY.Init(Settings.TraceCells, Settings.WorldHalfSize, Settings.TraceYHalfLife, Settings.TraceMax);
+	TraceX.Init(Settings.TraceCells, Settings.WorldHalfSize, SWArenaHalfY(Settings), Settings.TraceXHalfLife, Settings.TraceMax);
+	TraceY.Init(Settings.TraceCells, Settings.WorldHalfSize, SWArenaHalfY(Settings), Settings.TraceYHalfLife, Settings.TraceMax);
 
 	if (PolicyClient.HasServers())
 	{
@@ -490,6 +491,7 @@ void ASWWorldManager::LeviathanStep(float Dt)
 		if (Idx == INDEX_NONE) continue;
 		Deaths++;
 		DeathsPredation++;
+		DeathsPredationBySpecies[static_cast<int32>(V->GetSpecies())]++;
 		// deaths.csv already carries a 'cause' column, so this needs no schema change.
 		Logger.LogDeath(SimTime, *V, TEXT("predation"));
 		const bool bWasSelected = (SelectedAgent == V);
@@ -514,8 +516,9 @@ void ASWWorldManager::LeviathanStep(float Dt)
 
 FVector ASWWorldManager::RandomArenaPoint(float Margin)
 {
-	const float H = FMath::Max(Settings.WorldHalfSize - Margin, 100.f);
-	FVector P(Rng.FRandRange(-H, H), Rng.FRandRange(-H, H), 0.f);
+	const float HX = FMath::Max(Settings.WorldHalfSize - Margin, 100.f);
+	const float HY = FMath::Max(SWArenaHalfY(Settings) - Margin, 100.f);
+	FVector P(Rng.FRandRange(-HX, HX), Rng.FRandRange(-HY, HY), 0.f);
 	P.Z = SWProc::GroundZ(Look, P.X, P.Y);
 	return P;
 }
@@ -532,11 +535,26 @@ void ASWWorldManager::SpawnPatches()
 	{
 		for (int32 i = 0; i < Count; ++i)
 		{
-			FVector Loc = RandomArenaPoint(300.f);
-			// Keep patches out of the river channel so they are not under water.
-			for (int32 Try = 0; Try < 8 && FMath::Abs(Loc.Y - SWProc::RiverCenterY(Look, Loc.X)) < Look.RiverWidth * 1.6f; ++Try)
+			// Best of a few seeded draws: out of every channel (main and tributaries), and at least
+			// PatchMinSpacing from the patches already placed, so the herds spread over the whole valley
+			// floor instead of stacking on one bank. Falls back to the most isolated draw.
+			// Fallback = the driest, farthest-from-water draw seen, so a patch never lands in a channel
+			// even when every draw fails the spacing test.
+			FVector Loc = FVector::ZeroVector;
+			float BestScore = -1.f, FallbackRank = -1.f;
+			for (int32 Try = 0; Try < 24 && BestScore < Settings.PatchMinSpacing; ++Try)
 			{
-				Loc = RandomArenaPoint(300.f);
+				const FVector Candidate = RandomArenaPoint(300.f);
+				float ChannelWidth = 1.f, ChannelDepth = 0.f;
+				const float Ratio = SWProc::RiverDistance(Look, Candidate.X, Candidate.Y, ChannelWidth, ChannelDepth) / FMath::Max(ChannelWidth, 1.f);
+				const bool bDry = SWProc::TerrainHeight(Look, Candidate.X, Candidate.Y) >= Look.WaterLevel + Look.WetlandBand;   // the floor noise puts puddles past the channel test
+				const float Rank = Ratio + (bDry ? 100.f : 0.f);
+				if (Rank > FallbackRank) { FallbackRank = Rank; if (BestScore < 0.f) Loc = Candidate; }
+				if (Ratio < 1.9f || !bDry) continue;
+				float Nearest = TNumericLimits<float>::Max();
+				for (const ASWResourcePatch* Other : Patches) if (IsValid(Other)) Nearest = FMath::Min(Nearest, FVector::Dist2D(Other->GetActorLocation(), Candidate));
+				const float Score = FMath::Min(Nearest, Settings.PatchMinSpacing);
+				if (Score > BestScore) { BestScore = Score; Loc = Candidate; }
 			}
 			Loc.Z = SWProc::TerrainHeight(Look, Loc.X, Loc.Y);
 			ASWResourcePatch* P = World->SpawnActor<ASWResourcePatch>(ASWResourcePatch::StaticClass(), Loc, FRotator::ZeroRotator, SP);
@@ -666,33 +684,57 @@ void ASWWorldManager::Tick(float DeltaSeconds)
 	// (the labels should face the camera even when time is stopped).
 	UpdateScientistAvatars(DeltaSeconds);
 
-	if (bPaused || TimeScale <= 0.f) return;
-
-	const double T0 = FPlatformTime::Seconds();
-
-	Accumulator += DeltaSeconds * TimeScale;
-	const float Dt = FMath::Max(Settings.LogicalSubstep, 0.01f);
+	const bool bRunning = !bPaused && TimeScale > 0.f;
 	int32 Steps = 0;
-	while (Accumulator >= Dt && Steps < Settings.MaxSubstepsPerFrame)
+	if (bRunning)
 	{
-		if (QuitAtSimTime > 0.f && SimTime >= QuitAtSimTime) break;   // exact, frame-rate independent end
-		StepWorld(Dt);
-		Accumulator -= Dt;
-		Steps++;
+		const double T0 = FPlatformTime::Seconds();
+
+		Accumulator += DeltaSeconds * TimeScale;
+		const float Dt = FMath::Max(Settings.LogicalSubstep, 0.01f);
+		while (Accumulator >= Dt && Steps < Settings.MaxSubstepsPerFrame)
+		{
+			if (QuitAtSimTime > 0.f && SimTime >= QuitAtSimTime) break;   // exact, frame-rate independent end
+			StepWorld(Dt);
+			Accumulator -= Dt;
+			Steps++;
+		}
+		// If we hit the substep cap, drop the backlog rather than spiralling.
+		if (Steps >= Settings.MaxSubstepsPerFrame) Accumulator = 0.f;
+
+		LastStepMs = static_cast<float>((FPlatformTime::Seconds() - T0) * 1000.0);
 	}
-	// If we hit the substep cap, drop the backlog rather than spiralling.
-	if (Steps >= Settings.MaxSubstepsPerFrame) Accumulator = 0.f;
 
-	LastStepMs = static_cast<float>((FPlatformTime::Seconds() - T0) * 1000.0);
-
-	// Visual-only per-frame work (never per substep): trail ribbons.
+	// Visual-only per-frame work, never inside a substep, and also while paused (the interpolation
+	// alpha is simply frozen): a paused close-up keeps choosing its LOD, and founders spawned by a
+	// reset issued while paused still get a pose. Timed on its own for -SWCreatureAudit.
+	const double PoseStart = FPlatformTime::Seconds();
+	for (ASWAgent* A : Agents) if (IsValid(A)) A->UpdateAuthoredVisual(Accumulator);
+	const double CreaturePoseMs = (FPlatformTime::Seconds() - PoseStart) * 1000.0;
 	if (Steps > 0 && Look.bLumenTrails)
 	{
 		for (ASWAgent* A : Agents) if (IsValid(A)) A->UpdateTrailVisual();
 	}
 
+	if (!bRunning) return;
+
 	while (NextScreenshotIdx < ScreenshotTimes.Num() && SimTime >= ScreenshotTimes[NextScreenshotIdx])
 	{
+		if (FParse::Param(FCommandLine::Get(), TEXT("SWCreatureAudit")))
+		{
+			float WorstGroundError = 0.f;
+			int32 GroundedCount = 0;
+			int32 LodCount[4] = { 0, 0, 0, 0 };   // rendered LOD histogram (index 3 = LOD 3+)
+			for (const ASWAgent* A : Agents) if (IsValid(A))
+			{
+				WorstGroundError = FMath::Max(WorstGroundError, A->GetCreatureGroundError());
+				if (A->GetCreatureGroundError() < 1.f) ++GroundedCount;
+				const int32 Lod = A->GetCreatureLOD();
+				if (Lod >= 0) ++LodCount[FMath::Min(Lod, 3)];
+			}
+			UE_LOG(LogSymbioticWorld, Log, TEXT("Creature visual audit: agents=%d update_ms=%.3f within_1cm=%d max_reach_error_cm=%.2f lod0=%d lod1=%d lod2=%d lod3+=%d"),
+				Agents.Num(), CreaturePoseMs, GroundedCount, WorstGroundError, LodCount[0], LodCount[1], LodCount[2], LodCount[3]);
+		}
 		const FString Name = FString::Printf(TEXT("SW_%s_t%04d.png"), *RunId, FMath::RoundToInt(ScreenshotTimes[NextScreenshotIdx]));
 		FScreenshotRequest::RequestScreenshot(Name, /*bShowUI*/ true, /*bAddFilenameSuffix*/ false);
 		UE_LOG(LogSymbioticWorld, Log, TEXT("Screenshot requested: %s (sim %.1f)"), *Name, SimTime);
@@ -739,8 +781,7 @@ void ASWWorldManager::StepWorld(float Dt)
 		float LocalMul = RegenMul;
 		if (Settings.bTraceFields)
 		{
-			const FVector PL = P->GetActorLocation();
-			LocalMul *= 1.f + Settings.TraceYRegenGain * FMath::Clamp(TraceY.Sample(PL.X, PL.Y), 0.f, 1.f);
+			LocalMul *= 1.f + Settings.TraceYRegenGain * FMath::Clamp(SoilAroundPatch(P->GetActorLocation()), 0.f, 1.f);
 		}
 		P->Step(Dt, LocalMul, CapMul);
 		if (P->GetResourceType() == 0) { ResourceTotalA += P->GetStock(); ResourceCapA += P->GetCapacity(); }
@@ -932,17 +973,35 @@ void ASWWorldManager::BuildPercept(const ASWAgent* Agent, FSWPercept& Out) const
 		Out.TraceX = TraceX.Sample(Loc.X, Loc.Y);
 		Out.TraceY = TraceY.Sample(Loc.X, Loc.Y);
 		Out.bTraceXGradient = TraceX.Gradient(Loc.X, Loc.Y, Out.TraceXGradientDir);
-		const float Cell = TraceY.CellSize();
+		// Soil percept: a patch this organism can graze (within its ForageRadius, or the trace cell if that
+		// is larger) is below half stock. Radius-based since 2026-09-11: Tecton graze from 600 uu, wider
+		// than a 267 x 183 uu cell, so a cell test would almost never fire.
+		const float SoilReach = FMath::Max(Agent->GetParams().ForageRadius, FMath::Max(TraceY.CellSize(), TraceY.CellSizeY()));
 		for (ASWResourcePatch* Patch : Patches)
 		{
 			const FVector PL = Patch->GetActorLocation();
-			if (FMath::Abs(PL.X - Loc.X) <= Cell && FMath::Abs(PL.Y - Loc.Y) <= Cell && Patch->GetStock() < 0.5f * Patch->GetCapacity())
+			if (FVector::Dist2D(PL, Loc) <= SoilReach && Patch->GetStock() < 0.5f * Patch->GetCapacity())
 			{
 				Out.bPatchInCellNeedsSoil = true;
 				break;
 			}
 		}
 	}
+}
+
+float ASWWorldManager::SoilAroundPatch(const FVector& PatchLoc) const
+{
+	const float CellX = TraceY.CellSize(), CellY = TraceY.CellSizeY();
+	const float R = FMath::Max(TectonParams.ForageRadius, FMath::Max(CellX, CellY));
+	float Best = TraceY.Sample(PatchLoc.X, PatchLoc.Y);   // the patch's own cell always counts
+	for (float DY = -R; DY <= R + KINDA_SMALL_NUMBER; DY += CellY)
+	{
+		for (float DX = -R; DX <= R + KINDA_SMALL_NUMBER; DX += CellX)
+		{
+			if (DX * DX + DY * DY <= R * R) Best = FMath::Max(Best, TraceY.Sample(PatchLoc.X + DX, PatchLoc.Y + DY));
+		}
+	}
+	return Best;
 }
 
 float ASWWorldManager::DepositTraceX(const ASWAgent* Agent, float Amount)
@@ -988,12 +1047,12 @@ void ASWWorldManager::RegroundAll()
 
 bool ASWWorldManager::ClampToArena(FVector& Loc) const
 {
-	const float H = Settings.WorldHalfSize;
+	const float HX = Settings.WorldHalfSize, HY = SWArenaHalfY(Settings);
 	bool bClamped = false;
-	if (Loc.X < -H) { Loc.X = -H; bClamped = true; }
-	if (Loc.X >  H) { Loc.X =  H; bClamped = true; }
-	if (Loc.Y < -H) { Loc.Y = -H; bClamped = true; }
-	if (Loc.Y >  H) { Loc.Y =  H; bClamped = true; }
+	if (Loc.X < -HX) { Loc.X = -HX; bClamped = true; }
+	if (Loc.X >  HX) { Loc.X =  HX; bClamped = true; }
+	if (Loc.Y < -HY) { Loc.Y = -HY; bClamped = true; }
+	if (Loc.Y >  HY) { Loc.Y =  HY; bClamped = true; }
 	return bClamped;
 }
 
@@ -1629,10 +1688,10 @@ FString ASWWorldManager::BuildHelloLine() const
 	}
 	return FString::Printf(TEXT("{\"type\":\"hello\",\"protocol\":1,\"actions\":[%s],\"bins\":[\"LOW\",\"MID\",\"HIGH\"],\"species\":[\"Lumen\",\"Tecton\"],")
 		TEXT("\"controls\":[%s],\"seed\":%d,\"mode\":\"%c\",\"mode_name\":%s,\"run_id\":%s,\"decision_interval\":%.3f,\"substep\":%.3f,")
-		TEXT("\"timeout_ms\":%d,\"share\":%.3f,\"world_half_size\":%.1f,\"max_energy\":{\"Lumen\":%.1f,\"Tecton\":%.1f},")
+		TEXT("\"timeout_ms\":%d,\"share\":%.3f,\"world_half_size\":%.1f,\"world_half_size_y\":%.1f,\"max_energy\":{\"Lumen\":%.1f,\"Tecton\":%.1f},")
 		TEXT("\"max_age\":{\"Lumen\":%.1f,\"Tecton\":%.1f},\"learning\":\"tabular contextual bandit, gamma 0; the sim keeps updating each organism's own table with every reward\"}"),
 		*Actions, *Controls, Settings.Seed, ModeName.Len() > 0 ? ModeName[0] : TEXT('?'), *JsonStr(ModeName), *JsonStr(RunId),
-		Settings.DecisionInterval, Settings.LogicalSubstep, PolicyClient.GetTimeoutMs(), Settings.PolicyShare, Settings.WorldHalfSize,
+		Settings.DecisionInterval, Settings.LogicalSubstep, PolicyClient.GetTimeoutMs(), Settings.PolicyShare, Settings.WorldHalfSize, SWArenaHalfY(Settings),
 		LumenParams.MaxEnergy, TectonParams.MaxEnergy, LumenParams.MaxAge, TectonParams.MaxAge);
 }
 

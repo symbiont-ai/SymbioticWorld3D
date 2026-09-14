@@ -19,8 +19,8 @@ HELLO = {
     "actions": ["forage", "explore", "follow", "avoid", "signal", "rest", "modify"],
     "bins": ["LOW", "MID", "HIGH"], "species": ["Lumen", "Tecton"], "controls": ["Lumen"],
     "seed": 7, "mode": "C", "mode_name": "C_learning_evolution", "run_id": "policy_client_check",
-    "decision_interval": 1.0, "substep": 0.1, "timeout_ms": 200, "share": 1.0, "world_half_size": 4500.0,
-    "max_energy": {"Lumen": 100.0, "Tecton": 160.0}, "max_age": {"Lumen": 150.0, "Tecton": 300.0},
+    "decision_interval": 1.0, "substep": 0.1, "timeout_ms": 200, "share": 1.0, "world_half_size": 8000.0, "world_half_size_y": 5500.0,
+    "max_energy": {"Lumen": 100.0, "Tecton": 160.0}, "max_age": {"Lumen": 150.0, "Tecton": 260.0},
     "learning": "tabular contextual bandit, gamma 0; the sim keeps updating each organism's own table with every reward",
 }
 

@@ -1,10 +1,14 @@
 #include "SWCameraPawn.h"
 #include "SWAgent.h"
+#include "SWWorldManager.h"
+#include "SWLeviathan.h"
+#include "SymbioticWorld.h"
 #include "Camera/CameraComponent.h"
 #include "Components/InputComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "EngineUtils.h"
 
 ASWCameraPawn::ASWCameraPawn()
 {
@@ -26,26 +30,57 @@ ASWCameraPawn::ASWCameraPawn()
 void ASWCameraPawn::BeginPlay()
 {
 	Super::BeginPlay();
-	// Start behind the arena (-X), above the floor, looking down the valley axis toward the far sun gap.
-	FVector StartLoc(-8600.f, 1200.f, 3000.f);
-	FRotator StartRot(-15.f, -8.f, 0.f);
-	// -SWCam=x:y:z:pitch:yaw  (':' because FParse::Value stops at ',') for scripted screenshots.
+	// -SWFollowSpecies=Lumen|Tecton: creature inspection camera (docs/CREATURE_RENDERING.md).
+	FString FollowSpec;
+	if (FParse::Value(FCommandLine::Get(), TEXT("SWFollowSpecies="), FollowSpec) && !FollowSpec.IsEmpty())
+	{
+		for (const ESWSpecies S : { ESWSpecies::Lumen, ESWSpecies::Tecton })
+		{
+			if (FollowSpec.Equals(SWSpeciesName(S), ESearchCase::IgnoreCase)) RequestedFollowSpecies = S;
+		}
+		bRequestedLeviathan = FollowSpec.Equals(TEXT("Leviathan"), ESearchCase::IgnoreCase);
+		if (!RequestedFollowSpecies.IsSet() && !bRequestedLeviathan)
+		{
+			UE_LOG(LogSymbioticWorld, Warning, TEXT("-SWFollowSpecies=%s ignored: use Lumen, Tecton or Leviathan"), *FollowSpec);
+		}
+	}
+	// -SWCam=x:y:z:pitch:yaw  (':' because FParse::Value stops at ',') for scripted screenshots: placed now.
+	// Otherwise the arena-relative start framing waits for the first Tick, when the manager has parsed
+	// -SWSet (its BeginPlay may run after this one).
 	FString CamSpec;
 	if (FParse::Value(FCommandLine::Get(), TEXT("SWCam="), CamSpec))
 	{
 		TArray<FString> P; CamSpec.ParseIntoArray(P, TEXT(":"), true);
 		if (P.Num() >= 5)
 		{
-			StartLoc = FVector(FCString::Atof(*P[0]), FCString::Atof(*P[1]), FCString::Atof(*P[2]));
-			StartRot = FRotator(FCString::Atof(*P[3]), FCString::Atof(*P[4]), 0.f);
+			PlaceCamera(FVector(FCString::Atof(*P[0]), FCString::Atof(*P[1]), FCString::Atof(*P[2])),
+			            FRotator(FCString::Atof(*P[3]), FCString::Atof(*P[4]), 0.f));
 		}
 	}
-	SetActorLocation(StartLoc);
-	SetActorRotation(StartRot);
+}
+
+void ASWCameraPawn::PlaceCamera(const FVector& Loc, const FRotator& Rot)
+{
+	bStartPlaced = true;
+	SetActorLocation(Loc);
+	SetActorRotation(Rot);
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
 		PC->SetControlRotation(GetActorRotation());
 	}
+}
+
+void ASWCameraPawn::PlaceStartCamera()
+{
+	// Start behind the arena (-X), above the floor, looking down the valley axis toward the far sun gap.
+	// Framed relative to the arena (the arches are placed relative to it too), so a bigger world keeps
+	// the composition: 4500 is the hack-build arena the numbers were tuned on.
+	const ASWWorldManager* M = ASWWorldManager::Get(GetWorld());
+	const FSWRunSettings Defaults;
+	const float ArenaX = M ? M->GetSettings().WorldHalfSize : Defaults.WorldHalfSize;
+	const float ArenaY = M ? SWArenaHalfY(M->GetSettings()) : SWArenaHalfY(Defaults);
+	const float Grow = FMath::Max(ArenaX / 4500.f, 0.5f);
+	PlaceCamera(FVector(-(ArenaX + 4100.f), 1200.f * ArenaY / 4500.f, 3000.f * (0.5f + 0.5f * Grow)), FRotator(-15.f, -8.f, 0.f));
 }
 
 void ASWCameraPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -64,11 +99,61 @@ void ASWCameraPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 void ASWCameraPawn::SetFollowTarget(ASWAgent* Agent)
 {
 	FollowTarget = Agent;
+	// Any viewer-initiated follow change (F key, a click, a mode change) ends the scripted request:
+	// releasing clears everything, following an organism replaces a predator follow.
+	FollowActor = nullptr;
+	bRequestedLeviathan = false;
+	if (!Agent) RequestedFollowSpecies.Reset();
+}
+
+void ASWCameraPawn::UpdateRequestedFollow()
+{
+	if (bRequestedLeviathan && !FollowActor.IsValid())
+	{
+		for (TActorIterator<ASWLeviathan> It(GetWorld()); It; ++It) { FollowActor = *It; break; }
+		if (!FollowActor.IsValid() && !bWarnedNoLeviathan)
+		{
+			// A predator that has not spawned yet is a timing gap; one that can never spawn deserves a line.
+			if (const ASWWorldManager* M = ASWWorldManager::Get(GetWorld()))
+			{
+				if (!M->GetSettings().bLeviathan || M->GetSettings().LeviathanCount <= 0)
+				{
+					bWarnedNoLeviathan = true;
+					UE_LOG(LogSymbioticWorld, Warning, TEXT("-SWFollowSpecies=Leviathan: no predator in this run (Settings.bLeviathan=%d, LeviathanCount=%d); nothing to follow"),
+						M->GetSettings().bLeviathan ? 1 : 0, M->GetSettings().LeviathanCount);
+				}
+			}
+		}
+		return;
+	}
+	if (!RequestedFollowSpecies.IsSet()) return;
+	ASWWorldManager* M = ASWWorldManager::Get(GetWorld());
+	if (!M) return;
+	const ESWSpecies Wanted = RequestedFollowSpecies.GetValue();
+	// The inspector, the HUD marker and the chase camera should describe the same organism, so the
+	// selected one wins when it is of the requested species (-SWAutoSelect keeps re-selecting).
+	ASWAgent* Selected = M->GetSelectedAgent();
+	if (IsValid(Selected) && Selected->IsAlive() && Selected->GetSpecies() == Wanted)
+	{
+		if (FollowTarget != Selected) FollowTarget = Selected;
+		return;
+	}
+	if (IsValid(FollowTarget) && FollowTarget->IsAlive() && FollowTarget->GetSpecies() == Wanted) return;
+	for (TActorIterator<ASWAgent> It(GetWorld()); It; ++It)
+	{
+		if (It->IsAlive() && It->GetSpecies() == Wanted)
+		{
+			M->SelectAgent(*It);   // HUD / material state only: no seeded draw, no sim effect
+			FollowTarget = *It;
+			return;
+		}
+	}
 }
 
 void ASWCameraPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (!bStartPlaced) PlaceStartCamera();
 
 	FRotator Rot = GetActorRotation();
 	if (bLooking)
@@ -79,17 +164,38 @@ void ASWCameraPawn::Tick(float DeltaSeconds)
 		SetActorRotation(Rot);
 	}
 
-	// Any manual movement breaks follow mode.
+	// Any manual movement breaks follow mode (and a scripted -SWFollowSpecies).
 	if (!MoveInput.IsNearlyZero() || FMath::Abs(ZoomInput) > KINDA_SMALL_NUMBER)
 	{
-		FollowTarget = nullptr;
+		SetFollowTarget(nullptr);
 	}
 
-	if (IsValid(FollowTarget) && FollowTarget->IsAlive())
+	UpdateRequestedFollow();
+
+	if (FollowActor.IsValid())
 	{
-		// Chase-cam: sit behind/above the agent, smoothly.
-		const FVector Target = FollowTarget->GetActorLocation();
-		const FVector Desired = Target + FVector(-900.f, 0.f, 650.f);
+		// Predator chase-cam: the animal is ~18 m long at the water line, so sit well back and high.
+		const FVector Target = FollowActor->GetActorLocation() + FVector(0.f, 0.f, 150.f);
+		FVector Desired = Target + FVector(-3000.f, 1500.f, 1300.f);
+		if (const ASWWorldManager* M = ASWWorldManager::Get(GetWorld()))
+		{
+			Desired.Z = FMath::Max(Desired.Z, M->GetGroundZ(Desired.X, Desired.Y) + 150.f);
+		}
+		SetActorLocation(FMath::VInterpTo(GetActorLocation(), Desired, DeltaSeconds, 3.f));
+		SetActorRotation(FMath::RInterpTo(GetActorRotation(), (Target - GetActorLocation()).Rotation(), DeltaSeconds, 3.f));
+	}
+	else if (IsValid(FollowTarget) && FollowTarget->IsAlive())
+	{
+		// Chase-cam: sit behind/above the agent, smoothly, framed for the species' body size
+		// (authored Tecton ~11.6 m long, Lumen ~5 m; docs/CREATURE_RENDERING.md).
+		const bool bTecton = FollowTarget->GetSpecies() == ESWSpecies::Tecton;
+		const FVector Target = FollowTarget->GetActorLocation() + FVector(0.f, 0.f, bTecton ? 280.f : 130.f);
+		FVector Desired = Target + (bTecton ? FVector(-1800.f, 900.f, 650.f) : FVector(-900.f, 400.f, 340.f));
+		// Never below the ground: the offsets are world-space and the valley sides rise toward the rim.
+		if (const ASWWorldManager* M = ASWWorldManager::Get(GetWorld()))
+		{
+			Desired.Z = FMath::Max(Desired.Z, M->GetGroundZ(Desired.X, Desired.Y) + 150.f);
+		}
 		SetActorLocation(FMath::VInterpTo(GetActorLocation(), Desired, DeltaSeconds, 3.f));
 		const FRotator LookAt = (Target - GetActorLocation()).Rotation();
 		SetActorRotation(FMath::RInterpTo(GetActorRotation(), LookAt, DeltaSeconds, 3.f));

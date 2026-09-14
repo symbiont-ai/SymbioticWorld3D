@@ -5,6 +5,14 @@
 #include "SymbioticWorld.h"
 #include "ProceduralMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/BoxComponent.h"
+#include "Engine/SkeletalMesh.h"
+#include "Animation/AnimSequence.h"
+#include "SWCreatureMeshComponent.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Kismet/GameplayStatics.h"
+#include "Misc/App.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -31,6 +39,30 @@ ASWAgent::ASWAgent()
 	Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Body->SetCastShadow(true);
 	Body->bUseAsyncCooking = true;
+
+	AuthoredBody = CreateDefaultSubobject<USWCreatureMeshComponent>(TEXT("AuthoredBody"));
+	AuthoredBody->SetupAttachment(Mesh);
+	AuthoredBody->SetAbsolute(true, true, true);
+	AuthoredBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	AuthoredBody->SetVisibility(false);
+	// Poses are sampled by hand from the manager's rendered frame (UpdateAuthoredVisual): the
+	// component never ticks (bStartWithTickEnabled would re-enable it at registration) and
+	// SetSkeletalMesh must not evaluate a pose inside a birth substep.
+	AuthoredBody->PrimaryComponentTick.bStartWithTickEnabled = false;
+	AuthoredBody->SetComponentTickEnabled(false);
+	AuthoredBody->bUseRefPoseOnInitAnim = true;
+	AuthoredBody->bEnableUpdateRateOptimizations = false;
+	AuthoredBody->SetBoundsScale(1.25f);
+
+	// Click target for the authored body: a box around its bounds, riding on the visual mesh
+	// (the root pick sphere is sized for the procedural bodies and sits at the feet).
+	PickBox = CreateDefaultSubobject<UBoxComponent>(TEXT("PickBox"));
+	PickBox->SetupAttachment(AuthoredBody);
+	PickBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);   // QueryOnly once an authored body exists
+	PickBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+	PickBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	PickBox->SetGenerateOverlapEvents(false);
+	PickBox->SetHiddenInGame(true);
 
 	Trail = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Trail"));
 	Trail->SetupAttachment(Mesh);
@@ -75,6 +107,8 @@ void ASWAgent::Init(ASWWorldManager* InManager, ESWSpecies InSpecies, const FSWS
 	BuildBody();
 	SnapToGround();
 	SetActorRotation(ExploreDir.Rotation());
+	AuthoredPreviousLocation = GetActorLocation();
+	AuthoredPreviousRotation = GetActorQuat();
 	UpdateVisual();
 
 	// First decision happens immediately so the agent does not idle for a full interval.
@@ -83,6 +117,9 @@ void ASWAgent::Init(ASWWorldManager* InManager, ESWSpecies InSpecies, const FSWS
 
 void ASWAgent::BuildBody()
 {
+	Mesh->SetRelativeScale3D(FVector(Params.PickRadius / 50.f));
+	AuthoredBody->SetComponentTickEnabled(false);   // after registration and BeginPlay's Activate(), for both paths
+	if (BuildAuthoredBody()) return;
 	const FSWLookSettings& L = Manager->GetLook();
 	// Visual variation uses its own stream so it never perturbs the simulation RNG.
 	FRandomStream VisRng(Id * 7919 + L.LookSeed * 131 + (Species == ESWSpecies::Lumen ? 0 : 17));
@@ -115,6 +152,149 @@ void ASWAgent::BuildBody()
 		MID->SetScalarParameterValue(TEXT("Roughness"), Species == ESWSpecies::Lumen ? 0.35f : 0.8f);
 		Body->SetMaterial(0, MID);
 	}
+}
+
+bool ASWAgent::BuildAuthoredBody()
+{
+	const FSWLookSettings& L = Manager->GetLook();
+	if (!L.bAuthoredCreatures) return false;
+	// Headless runs (-nullrhi) render nothing: keep the (equally unrendered) procedural body and skip
+	// loading ~46 MB of creature content. CSVs are identical either way (DESIGN.md §4).
+	if (!FApp::CanEverRender())
+	{
+		static bool bHeadlessNoted = false;
+		if (!bHeadlessNoted)
+		{
+			bHeadlessNoted = true;
+			UE_LOG(LogSymbioticWorld, Log, TEXT("Authored creatures: not loaded (no rendering in this process)"));
+		}
+		return false;
+	}
+	// Content/Characters/Symbiotic is imported per machine (Tools/import_symbiotic_creatures.py); a
+	// clone without it keeps the procedural bodies. Probe each species once per process and say so
+	// once, instead of a quiet soft-load on every birth.
+	static bool bMissing[2] = { false, false };
+	const int32 SpeciesIdx = Species == ESWSpecies::Lumen ? 0 : 1;
+	if (bMissing[SpeciesIdx]) return false;
+	const FString Name = SWSpeciesName(Species);
+	const FString Folder = FString::Printf(TEXT("/Game/Characters/Symbiotic/%s/"), *Name);
+	const uint32 Quiet = LOAD_NoWarn | LOAD_Quiet;
+	USkeletalMesh* Asset = LoadObject<USkeletalMesh>(nullptr, *(Folder + TEXT("SK_") + Name), nullptr, Quiet);
+	if (!Asset)
+	{
+		bMissing[SpeciesIdx] = true;
+		UE_LOG(LogSymbioticWorld, Log, TEXT("Authored creature %s: no content under %s, procedural body (docs/CREATURE_RENDERING.md)"), *Name, *Folder);
+		return false;
+	}
+	AuthoredIdle = LoadObject<UAnimSequence>(nullptr, *(Folder + TEXT("A_") + Name + TEXT("_Idle")), nullptr, Quiet);
+	AuthoredWalk = LoadObject<UAnimSequence>(nullptr, *(Folder + TEXT("A_") + Name + TEXT("_Walk")), nullptr, Quiet);
+	UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *(Folder + TEXT("M_") + Name + TEXT("_Authored")), nullptr, Quiet);
+	if (!AuthoredIdle || !AuthoredWalk || !Material || !Asset->GetSkeleton()
+		|| AuthoredIdle->GetSkeleton() != Asset->GetSkeleton() || AuthoredWalk->GetSkeleton() != Asset->GetSkeleton())
+	{
+		bMissing[SpeciesIdx] = true;
+		AuthoredIdle = nullptr;
+		AuthoredWalk = nullptr;
+		UE_LOG(LogSymbioticWorld, Warning, TEXT("Authored creature %s: SK_%s found but SK_%s_Skeleton, A_%s_Idle, A_%s_Walk or M_%s_Authored is missing or on another skeleton; procedural body"),
+			*Name, *Name, *Name, *Name, *Name, *Name);
+		return false;
+	}
+	AuthoredBody->SetSkeletalMesh(Asset);
+	AuthoredBody->SetCastShadow(L.bCreatureShadows);
+	AuthoredBody->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+	AuthoredBody->SetComponentTickEnabled(false);
+	// Visual scale is independent of the root pick sphere (AuthoredBody is absolute).
+	const float WorldScale = Params.MeshScale * (Species == ESWSpecies::Lumen ? L.AuthoredLumenScale : L.AuthoredTectonScale);
+	AuthoredBody->SetWorldScale3D(FVector(WorldScale));
+	// Click target: the mesh bounds (slightly shrunk so neighbours stay clickable), in the body's own
+	// space so it scales and moves with the interpolated visual mesh.
+	const FBoxSphereBounds MeshBounds = Asset->GetBounds();
+	PickBox->SetRelativeLocation(MeshBounds.Origin);
+	PickBox->SetBoxExtent(MeshBounds.BoxExtent * 0.85f);
+	PickBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	AuthoredTopZ = (MeshBounds.Origin.Z + MeshBounds.BoxExtent.Z) * WorldScale;
+	// The Tecton's soles sit 4.1 cm below its root in the export; Lumen is ground-rooted.
+	AuthoredSoleClearance = Species == ESWSpecies::Lumen ? 0.f : 4.1f;
+	AuthoredBody->ConfigureGrounding(Manager, AuthoredSoleClearance, Params.GroundOffset);
+	// Exports are authored nose-forward along +X; the UE FBX importer preserves this axis.
+	AuthoredBody->SetRelativeRotation(FRotator::ZeroRotator);
+	MID = UMaterialInstanceDynamic::Create(Material, this);
+	AuthoredBody->SetMaterial(0, MID);
+	Body->SetVisibility(false);
+	AuthoredBody->SetVisibility(true);
+	AuthoredClip = AuthoredIdle;
+	AuthoredTime = FMath::Frac(Id * 0.6180339f) * AuthoredIdle->GetPlayLength();
+	// The first pose is sampled by the manager's rendered-frame loop (never inside the birth substep).
+	// One log line per species per run (the first Lumen and the first Tecton after every StartRun).
+	static FString ReportedRun[2];
+	if (ReportedRun[SpeciesIdx] != Manager->GetRunId())
+	{
+		ReportedRun[SpeciesIdx] = Manager->GetRunId();
+		FString LodSizes;
+		for (int32 I = 0; I < Asset->GetLODNum(); ++I)
+		{
+			const FSkeletalMeshLODInfo* Info = Asset->GetLODInfo(I);
+			LodSizes += FString::Printf(TEXT("%s%.3f"), I ? TEXT("/") : TEXT(""), Info ? Info->ScreenSize.Default : -1.f);
+		}
+		const FVector PickSize = MeshBounds.BoxExtent * 2.f * 0.85f * WorldScale;
+		UE_LOG(LogSymbioticWorld, Log, TEXT("Authored creature %s: mesh=%s bones=%d LODs=%d (screen sizes %s) scale=%.3f pick box=%.0fx%.0fx%.0fuu idle=%.2fs walk=%.2fs"),
+			*Name, *Asset->GetName(), Asset->GetRefSkeleton().GetNum(), Asset->GetLODNum(), *LodSizes, WorldScale,
+			PickSize.X, PickSize.Y, PickSize.Z, AuthoredIdle->GetPlayLength(), AuthoredWalk->GetPlayLength());
+	}
+	return true;
+}
+
+void ASWAgent::UpdateAuthoredVisual(float InterpolationDt)
+{
+	if (!AuthoredClip || !FApp::CanEverRender()) return;
+	const float Dt = FMath::Max(Manager->GetSettings().LogicalSubstep, 0.01f);
+	const float Alpha = FMath::Clamp(InterpolationDt / Dt, 0.f, 1.f);
+	FVector Position = Age > 0.f ? FMath::Lerp(AuthoredPreviousLocation, GetActorLocation(), Alpha) : GetActorLocation();
+	// Same ground rule as PlaceAt / SnapToGround, plus the mesh's own sole clearance.
+	Position.Z = Manager->GetGroundZ(Position.X, Position.Y) + Params.GroundOffset + AuthoredSoleClearance * AuthoredBody->GetComponentScale().X;
+	const FQuat Facing = Age > 0.f ? FQuat::Slerp(AuthoredPreviousRotation, GetActorQuat(), Alpha) : GetActorQuat();
+	AuthoredBody->SetWorldLocationAndRotation(Position, Facing);   // every frame: bounds must move so culling can bring it back
+	AuthoredPoseElapsed += GetWorld()->GetDeltaSeconds();
+	const APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0);
+	const float DistanceSq = Camera ? FVector::DistSquared(Camera->GetCameraLocation(), Position) : 0.f;
+	const float Interval = DistanceSq > FMath::Square(8000.f) ? 1.f / 15.f : DistanceSq > FMath::Square(4000.f) ? 1.f / 30.f : 1.f / 60.f;
+	const bool bFirstPose = PresentedClip == nullptr;
+	if (PresentedClip == AuthoredClip && AuthoredPoseElapsed < Interval) return;
+	// A body no view (shadow passes included) has drawn for half a second keeps its last pose.
+	if (PresentedClip == AuthoredClip && !AuthoredBody->WasRecentlyRendered(0.5f)) return;
+	// Keep the cohort de-phased: a per-organism offset on the first sample, then carry the remainder
+	// instead of snapping to 0 so organisms born on the same frame do not refresh on the same frames.
+	AuthoredPoseElapsed = bFirstPose ? FMath::Frac(Id * 0.6180339f) * Interval : FMath::Max(AuthoredPoseElapsed - Interval, 0.f);
+	// LOD selection normally runs in the component tick, which is off here: pull the renderer's
+	// screen-size verdict with each pose sample so distant organisms drop to LOD 1 / 2.
+	AuthoredBody->UpdateLODStatus();
+	if (PresentedClip != AuthoredClip)
+	{
+		AuthoredBody->SetAnimation(AuthoredClip);
+		PresentedClip = AuthoredClip;
+	}
+	const float Length = FMath::Max(AuthoredClip->GetPlayLength(), KINDA_SMALL_NUMBER);
+	const float RenderTime = AuthoredTime - (Age > 0.f ? Dt - InterpolationDt : 0.f) * AuthoredRate;
+	AuthoredBody->SetTransitionAlpha((AuthoredTransitionAge - (Dt - InterpolationDt)) / 0.2f);
+	AuthoredBody->SetPosition(FMath::Fmod(FMath::Fmod(RenderTime, Length) + Length, Length), false);
+	AuthoredBody->TickAnimation(0.f, false);
+	AuthoredBody->RefreshBoneTransforms();
+	AuthoredBody->MarkRenderDynamicDataDirty();
+}
+
+float ASWAgent::GetCreatureGroundError() const
+{
+	return AuthoredClip ? AuthoredBody->GetGroundError() : 0.f;
+}
+
+int32 ASWAgent::GetCreatureLOD() const
+{
+	return AuthoredClip ? AuthoredBody->GetPredictedLODLevel() : -1;
+}
+
+float ASWAgent::GetVisualHeight() const
+{
+	return AuthoredClip ? AuthoredTopZ : 120.f * Params.MeshScale;   // 120 x MeshScale clears the procedural bodies
 }
 
 void ASWAgent::UpdateTrailVisual()
@@ -204,16 +384,19 @@ void ASWAgent::ReceiveSignal(const FVector& Loc, float SimTime)
 
 int32 ASWAgent::CellIndex(const FVector& Loc) const
 {
-	const float Half = Manager ? Manager->GetSettings().WorldHalfSize : 5000.f;
+	const float HalfX = Manager ? Manager->GetSettings().WorldHalfSize : 5000.f;
+	const float HalfY = Manager ? SWArenaHalfY(Manager->GetSettings()) : 5000.f;
 	const int32 Cells = 24;
-	const int32 X = FMath::Clamp(static_cast<int32>((Loc.X + Half) / (2.f * Half) * Cells), 0, Cells - 1);
-	const int32 Y = FMath::Clamp(static_cast<int32>((Loc.Y + Half) / (2.f * Half) * Cells), 0, Cells - 1);
+	const int32 X = FMath::Clamp(static_cast<int32>((Loc.X + HalfX) / (2.f * HalfX) * Cells), 0, Cells - 1);
+	const int32 Y = FMath::Clamp(static_cast<int32>((Loc.Y + HalfY) / (2.f * HalfY) * Cells), 0, Cells - 1);
 	return Y * Cells + X;
 }
 
 bool ASWAgent::Step(float Dt)
 {
 	if (!bAlive || !Manager) return false;
+	AuthoredPreviousLocation = GetActorLocation();
+	AuthoredPreviousRotation = GetActorQuat();
 
 	Age += Dt;
 	DecisionAccumulator += Dt;
@@ -549,6 +732,26 @@ void ASWAgent::MoveAlong(const FVector& Dir, float Dt)
 
 void ASWAgent::UpdateGait(float Dt)
 {
+	if (AuthoredClip)
+	{
+		UAnimSequence* Next = bMovedThisStep ? AuthoredWalk : AuthoredIdle;
+		if (Next != AuthoredClip)
+		{
+			AuthoredBody->BeginPoseTransition();
+			AuthoredClip = Next;
+			// Id-derived phase (no seeded draw): founders that start walking on the same substep
+			// would otherwise march in lock-step.
+			AuthoredTime = FMath::Frac(Id * 0.6180339f) * FMath::Max(Next->GetPlayLength(), KINDA_SMALL_NUMBER);
+			AuthoredTransitionAge = 0.f;
+		}
+		const float Length = FMath::Max(AuthoredClip->GetPlayLength(), KINDA_SMALL_NUMBER);
+		const float Distance = FVector::Dist2D(AuthoredPreviousLocation, GetActorLocation());
+		const float Stride = (Species == ESWSpecies::Lumen ? 125.f : 100.f) * AuthoredBody->GetComponentScale().X;
+		AuthoredRate = bMovedThisStep ? Distance * Length / FMath::Max(Dt * Stride, 0.001f) : 1.f;
+		AuthoredTime = FMath::Fmod(AuthoredTime + Dt * AuthoredRate, Length);
+		AuthoredTransitionAge += Dt;
+		return;
+	}
 	// Body bob + slight pitch while moving; settles when still. Purely visual.
 	if (bMovedThisStep)
 	{
@@ -577,7 +780,7 @@ void ASWAgent::UpdateVisual()
 	const FSWLookSettings& L = Manager->GetLook();
 	// Glow tracks energy; signalling organisms flare; the selected one is brighter.
 	const float E = FMath::Clamp(Energy / FMath::Max(Params.MaxEnergy, 1.f), 0.f, 1.f);
-	float Strength = L.CreatureGlow * (0.3f + 0.7f * E) * (Species == ESWSpecies::Tecton ? 1.8f : 1.f);
+	float Strength = L.CreatureGlow * (0.3f + 0.7f * E) * (!AuthoredClip && Species == ESWSpecies::Tecton ? 1.8f : 1.f);
 	if (IsSignalling()) Strength *= L.SignalGlowBoost;
 	if (bSelected) Strength *= 1.6f;
 	MID->SetScalarParameterValue(TEXT("EmissiveStrength"), Strength);

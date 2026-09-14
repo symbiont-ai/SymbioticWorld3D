@@ -60,12 +60,15 @@ Source/SymbioticWorld/
   SWPolicyClient.*      FSWPolicyClient: TCP client for external policy servers; also parses the "scientists" side message
   SWLeviathan.*         river predator, Settings.bLeviathan (DESIGN.md §4)
   SWScientistAvatar.*   visual-only field-team avatar, driven from the manager's Tick (never in a substep)
+  SWCreatureMeshComponent.*  authored creature body (skeletal mesh); two-bone leg grounding after animation, visual
+                        pose only; sampled from ASWAgent::UpdateAuthoredVisual on the rendered frame (docs/CREATURE_RENDERING.md)
   SWHUD.*               canvas HUD: title, stat cards, species panels, inspector, minimap, drought banner
   SWPlayerController.*  key bindings (names in Config/DefaultInput.ini)
   SWCameraPawn.*        observer camera, -SWCam
   SWGameMode.*          spawns manager + environment at runtime into the empty map
   SWEnvironment.*       the rendered valley; ApplyDrought; reads the trace fields for the ground overlay
-  SWProcMesh.*          procedural terrain, arches, rocks, BuildLumen / BuildTecton bodies, glow clusters
+  SWProcMesh.*          procedural terrain, arches, rocks, BuildLumen / BuildTecton bodies (the fallback when the
+                        authored creature content is absent or Look.bAuthoredCreatures is false), glow clusters
 Tools/
   build.bat             the only allowed build entry point (refuses while any UnrealEditor process runs)
   run_sim.py            launcher: headless / windowed / offscreen, --set, --shot, --policy, --policy-file, --stream
@@ -87,6 +90,8 @@ Tools/
                         jobs persist in Saved/experiments/ (docs/SCIENTIST_API.md)
   scientist_client.py   stdlib client + CLI for the experiment service (submit_runs, wait, get_run, live, control, note)
   add_lab_button.py     patches the served Pixel Streaming pages with a link to the Lab dashboard (:8765); host only
+  import_symbiotic_creatures.py   imports the authored Lumen/Tecton package (SW_CREATURE_SOURCE) inside the full
+                        editor: meshes, LODs, clips, textures, materials -> Content/Characters/Symbiotic (docs/CREATURE_RENDERING.md)
   make_materials.py, make_valley_map.py, migrate_ed.py, import_assets.py, fetch_polyhaven.py,
   fix_foliage_materials.py, registry_dump.py   content generation / asset import (host only)
   start_stream_server.bat   Pixel Streaming signalling server

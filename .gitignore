@@ -51,3 +51,6 @@ Content/Collections/
 # Symbiotic Lab
 Lab/lab.sqlite
 Saved/
+
+# Epic mannequins for the scientist avatars (engine template content, imported per machine)
+Content/Characters/Mannequins/

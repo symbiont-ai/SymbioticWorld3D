@@ -26,7 +26,11 @@ class ASWAgent;
 //
 // Like ASWAgent it does not tick on its own: the world manager advances it on the
 // fixed logical substep, so the simulation stays reproducible and independent of
-// frame rate and time scale.
+// frame rate and time scale. Since 2026-09-11 it hunts: an organism in the water
+// within Settings.LeviathanSenseRadius is chased at LeviathanChaseSpeed; otherwise
+// it patrols with seeded random reversals, speed changes and loitering
+// (LeviathanTurnInterval / TurnChance / LoiterChance), drawing from the manager's
+// stream in substep order so the run stays byte-identical for its seed.
 UCLASS()
 class SYMBIOTICWORLD_API ASWLeviathan : public AActor
 {
@@ -45,6 +49,7 @@ public:
 
 	// ---- Read-only accessors (HUD / minimap) ----
 	bool IsSurfacing() const { return BreachPhase > 0.f; }
+	bool IsHunting() const { return Prey.IsValid(); }
 	int32 GetKills() const { return Kills; }
 	float GetTravelX() const { return TravelX; }
 
@@ -61,6 +66,10 @@ protected:
 	float BreachPhase = 0.f;    // > 0 while surfacing, counts down
 	float CruiseTimer = 0.f;    // drives the idle surfacing rhythm
 	float WeavePhase = 0.f;     // lateral weave across the channel
+	float Lateral = 0.f;        // current offset from the channel centreline (uu), eased toward the weave or the prey
+	float DecisionTimer = 0.f;  // logical s until the next seeded patrol decision
+	float SpeedScale = 1.f;     // patrol speed multiplier chosen at the last decision (0.25 = loiter)
+	TWeakObjectPtr<ASWAgent> Prey;   // organism being hunted (in the water, within LeviathanSenseRadius)
 	bool bWasSurfacing = false; // so the emissive is only pushed to the material on a change
 
 	void BuildBody();

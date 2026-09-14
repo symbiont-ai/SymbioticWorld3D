@@ -78,6 +78,79 @@ float RiverCenterY(const FSWLookSettings& L, float X)
 	return L.RiverAmp * FMath::Sin(X * K) + 0.35f * L.RiverAmp * FMath::Sin(X * K * 2.3f + 1.7f);
 }
 
+static float DistanceToPolyline(const TArray<FVector2D>& P, const FVector2D& Q)
+{
+	float Best = TNumericLimits<float>::Max();
+	for (int32 i = 0; i + 1 < P.Num(); ++i)
+	{
+		const FVector2D A = P[i], AB = P[i + 1] - A;
+		const float L2 = AB.SizeSquared();
+		const float T = L2 > 1e-6f ? FMath::Clamp(FVector2D::DotProduct(Q - A, AB) / L2, 0.f, 1.f) : 0.f;
+		Best = FMath::Min(Best, FVector2D::DistSquared(Q, A + AB * T));
+	}
+	return FMath::Sqrt(Best);
+}
+
+const TArray<FRiverBranch>& RiverBranches(const FSWLookSettings& L)
+{
+	// TerrainHeight runs per organism per substep, so the polylines are built once per set of terrain
+	// values and reused (every caller is on the game thread). No random draws: pure functions of Look.
+	// The cache holds geometry only (points, width); depth is read from Look at every use, so a
+	// control-file "set Look.RiverDepth" + "reset" can never leave the tributaries stale.
+	static TArray<FRiverBranch> Cache;
+	static float Key[7] = { -1.f, -1.f, -1.f, -1.f, -1.f, -1.f, -1.f };
+	const float Now[7] = { float(L.RiverBranches), L.RiverBranchWidth, L.TerrainHalfSize,
+	                       L.ValleyHalfWidth, L.RiverAmp, L.RiverWavelength, L.RiverWidth };
+	bool bSame = true;
+	for (int32 i = 0; i < 7; ++i) bSame &= Key[i] == Now[i];
+	if (bSame) return Cache;
+	for (int32 i = 0; i < 7; ++i) Key[i] = Now[i];
+	Cache.Reset();
+	const int32 Count = FMath::Clamp(L.RiverBranches, 0, 4);
+	const float Half = FMath::Max(L.TerrainHalfSize, 1000.f);
+	for (int32 k = 0; k < Count; ++k)
+	{
+		FRiverBranch B;
+		B.Width = FMath::Max(L.RiverWidth * L.RiverBranchWidth, 50.f);
+		const float Side = (k % 2 == 0) ? 1.f : -1.f;                          // alternate valley sides
+		const float JoinX = Half * (-0.28f + 0.5f * (k + 0.5f) / Count);          // confluences spread along the floor
+		const FVector2D Join(JoinX, RiverCenterY(L, JoinX));
+		const FVector2D Origin(JoinX - 0.25f * Half, Side * 0.80f * L.ValleyHalfWidth);   // enters from the side, from upstream (-X)
+		// Main-channel direction at the confluence, so the tributary arrives tangentially.
+		const FVector2D Flow = FVector2D(200.f, RiverCenterY(L, JoinX + 100.f) - RiverCenterY(L, JoinX - 100.f)).GetSafeNormal();
+		const FVector2D P1 = Origin + FVector2D(0.45f * (JoinX - Origin.X), -Side * 0.12f * L.ValleyHalfWidth);
+		const FVector2D P2 = Join - Flow * (0.60f * (JoinX - Origin.X));   // long arrival handle: the tributary joins along the flow, not across it
+		const int32 Samples = 20;
+		for (int32 i = 0; i <= Samples; ++i)
+		{
+			const float T = float(i) / Samples, U = 1.f - T;
+			FVector2D P = Origin * (U * U * U) + P1 * (3.f * U * U * T) + P2 * (3.f * U * T * T) + Join * (T * T * T);
+			// A little meander that fades out at both ends.
+			const FVector2D Tangent = ((P1 - Origin) * (3.f * U * U) + (P2 - P1) * (6.f * U * T) + (Join - P2) * (3.f * T * T)).GetSafeNormal();
+			P += FVector2D(-Tangent.Y, Tangent.X) * (0.10f * L.RiverAmp * FMath::Sin(T * 2.f * PI * 1.5f + k) * FMath::Sin(T * PI));
+			B.Points.Add(P);
+		}
+		B.Points.Add(Join + Flow * (1.2f * B.Width));   // run a little way into the main channel so the union closes
+		Cache.Add(MoveTemp(B));
+	}
+	return Cache;
+}
+
+float RiverDistance(const FSWLookSettings& L, float X, float Y, float& OutWidth, float& OutDepth)
+{
+	OutWidth = FMath::Max(L.RiverWidth, 50.f);
+	OutDepth = L.RiverDepth;
+	float Best = FMath::Abs(Y - RiverCenterY(L, X));
+	float BestRel = Best / OutWidth;
+	const float BranchDepth = L.RiverDepth * L.RiverBranchDepth;
+	for (const FRiverBranch& B : RiverBranches(L))
+	{
+		const float D = DistanceToPolyline(B.Points, FVector2D(X, Y));
+		if (D / B.Width < BestRel) { BestRel = D / B.Width; Best = D; OutWidth = B.Width; OutDepth = BranchDepth; }
+	}
+	return Best;
+}
+
 float TerrainHeight(const FSWLookSettings& L, float X, float Y)
 {
 	const float Half = FMath::Max(L.TerrainHalfSize, 1000.f);
@@ -98,9 +171,18 @@ float TerrainHeight(const FSWLookSettings& L, float X, float Y)
 
 	const float Dy = Y - RiverCenterY(L, X);
 	const float W = FMath::Max(L.RiverWidth, 50.f);
-	const float Carve = -L.RiverDepth * FMath::Exp(-(Dy * Dy) / (W * W));
-	// Soft banks: a wider, shallower depression around the channel.
-	const float Bank = -0.35f * L.RiverDepth * FMath::Exp(-(Dy * Dy) / (9.f * W * W));
+	float Carve = -L.RiverDepth * FMath::Exp(-(Dy * Dy) / (W * W));
+	// Tributaries (Look.RiverBranches): where channels meet, the deeper one wins.
+	const float BranchDepth = L.RiverDepth * L.RiverBranchDepth;
+	for (const FRiverBranch& B : RiverBranches(L))
+	{
+		const float D = DistanceToPolyline(B.Points, FVector2D(X, Y));
+		Carve = FMath::Min(Carve, -BranchDepth * FMath::Exp(-(D * D) / (B.Width * B.Width)));
+	}
+	// Soft banks: a wider, shallow depression around the main channel, capped at 40 uu. Its tail plus
+	// the carve's puts the waterline (-42) about 1.8 W from the centreline: ~36 m of water at W = 1000,
+	// plus the +-70 uu floor-noise fringe.
+	const float Bank = -FMath::Min(0.35f * L.RiverDepth, 40.f) * FMath::Exp(-(Dy * Dy) / (9.f * W * W));
 
 	return Hills + Floor + Carve + Bank;
 }

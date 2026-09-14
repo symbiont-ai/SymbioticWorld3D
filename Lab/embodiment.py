@@ -62,12 +62,13 @@ class _Rng:
 
 
 class EmbodiedScientist:
-    def __init__(self, name, run_id, half):
+    def __init__(self, name, run_id, half, half_y=None):
         self.name = name
-        self.half = half
+        self.half = half              # arena half-length along the valley (X)
+        self.half_y = half_y or half  # half-width across it (Y); the sim's hello carries both
         self.rng = _Rng(_seed_of(run_id, name))
         self.x = self.rng.uniform(-half * 0.5, half * 0.5)
-        self.y = self.rng.uniform(-half * 0.5, half * 0.5)
+        self.y = self.rng.uniform(-self.half_y * 0.5, self.half_y * 0.5)
         self.style, self.style_arg = STYLES[name]
         self.wp = None                       # current waypoint for waypoint styles
         self.grid_row = 0
@@ -91,9 +92,8 @@ class EmbodiedScientist:
         step = min(SPEED * dt, d)
         self.x += dx / d * step
         self.y += dy / d * step
-        h = self.half
-        self.x = max(-h, min(h, self.x))
-        self.y = max(-h, min(h, self.y))
+        self.x = max(-self.half, min(self.half, self.x))
+        self.y = max(-self.half_y, min(self.half_y, self.y))
 
     def _centroid(self, agents, species):
         pts = [a["position"] for a in agents
@@ -128,19 +128,20 @@ class EmbodiedScientist:
             return
         elif self.style == "spiral":
             self.spiral_a += dt * SPEED / max(400.0, math.hypot(self.x, self.y) + 400.0)
-            r = min(self.half * 0.9, math.hypot(self.x, self.y) + 30.0 * dt)
+            r = min(min(self.half, self.half_y) * 0.9, math.hypot(self.x, self.y) + 30.0 * dt)
             self._toward(r * math.cos(self.spiral_a), r * math.sin(self.spiral_a), dt)
             return
         # default + random_waypoints + fallbacks: seeded waypoint wandering
         if self.wp is None or math.hypot(self.wp[0] - self.x, self.wp[1] - self.y) < ARRIVE:
             self.wp = (self.rng.uniform(-self.half, self.half),
-                       self.rng.uniform(-self.half, self.half))
+                       self.rng.uniform(-self.half_y, self.half_y))
         self._toward(self.wp[0], self.wp[1], dt)
 
     def _grid(self, dt):
         h = self.half * 0.9
+        hy = self.half_y * 0.9
         rows = 8
-        ty = -h + (2 * h) * (self.grid_row % rows) / (rows - 1)
+        ty = -hy + (2 * hy) * (self.grid_row % rows) / (rows - 1)
         tx = h if self.grid_row % 2 == 0 else -h
         if math.hypot(tx - self.x, ty - self.y) < ARRIVE:
             self.grid_row += 1
@@ -170,9 +171,10 @@ class EmbodiedScientist:
 class EmbodiedField:
     """All eight bodies (Vega mints no evidence) plus per-window evidence minting."""
 
-    def __init__(self, run_id, world_half_size):
+    def __init__(self, run_id, world_half_size, world_half_size_y=None):
         self.run_id = run_id
-        self.team = [EmbodiedScientist(n, run_id, float(world_half_size or 4500.0))
+        self.team = [EmbodiedScientist(n, run_id, float(world_half_size or 4500.0),
+                                       float(world_half_size_y) if world_half_size_y else None)
                      for n in STYLES]
         self.last_t = None
 

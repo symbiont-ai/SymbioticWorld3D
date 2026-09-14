@@ -41,7 +41,7 @@ What an agent entry in "decide" contains (every field, see docs/POLICY_API.md fo
   last_external true if last_action was your choice (false = built-in bandit chose, e.g. after a timeout)
   decisions     how many decisions this organism has made
   q             [3][7] floats: the organism's OWN tabular bandit values (a hint; it keeps learning)
-  position      [x, y] in world units (uu; arena is +-world_half_size)
+  position      [x, y] in world units (uu; arena is +-world_half_size in x, +-world_half_size_y in y)
   heading       yaw in degrees
   percept       see PERCEPT_FIELDS below
   genome        {"alpha","epsilon","social","e"}: inherited learning parameters (fixed for life)
@@ -78,7 +78,7 @@ PERCEPT_FIELDS = {
     "trace_x_gradient": "there is an uphill direction in Trace X",
     "trace_x_gradient_dir": "[dx, dy] unit vector uphill, or null",
     "on_land": "above the water level (Tecton modify needs it)",
-    "patch_in_cell_needs_soil": "Tecton: a patch in this trace cell is below half stock",
+    "patch_in_cell_needs_soil": "Tecton: a patch within its grazing reach (ForageRadius, 600 uu) is below half stock",
 }
 
 

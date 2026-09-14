@@ -109,7 +109,8 @@ void ASWHUD::DrawHUD()
 	DrawSpeciesPanel(*M, ESWSpecies::Lumen, 20.f, 96.f, LeftW);
 	DrawEvolutionStrip(*M, 20.f, 96.f + 232.f + 10.f, LeftW);   // 124 px tall
 	const float MapSize = 280.f;
-	DrawMinimap(*M, 20.f, SY - MapSize - 20.f, MapSize);
+	const float MapH = MapSize * SWArenaHalfY(M->GetSettings()) / FMath::Max(M->GetSettings().WorldHalfSize, 1.f);   // the map keeps the arena's aspect
+	DrawMinimap(*M, 20.f, SY - (MapH + 62.f) - 20.f, MapSize);   // the panel is the map plus a 62 px header and legend
 
 	// Right column.
 	const float RightW = 360.f;
@@ -195,10 +196,14 @@ void ASWHUD::DrawStatCards(const ASWWorldManager& M)
 	// byte-for-byte what it was. Red, matching the drought banner: both are perturbations.
 	if (M.GetSettings().bLeviathan)
 	{
+		// The card names the animal and splits its kills by prey species; deaths.csv carries the same
+		// events with cause "predation".
 		const int32 NPred = M.GetDeathsPredation();
 		const bool bPaused = M.IsDrought() && M.GetSettings().bLeviathanPauseInDrought;
-		Cards.Add({ TEXT("PREDATION"), Thousands(NPred),
-		            bPaused ? TEXT("paused: drought") : TEXT("taken by the leviathan"), ColRed });
+		const FString Split = FString::Printf(TEXT("%d lumen  %d tecton"),
+			M.GetDeathsPredation(ESWSpecies::Lumen), M.GetDeathsPredation(ESWSpecies::Tecton));
+		Cards.Add({ TEXT("LEVIATHAN"), FString::Printf(TEXT("%s taken"), *Thousands(NPred)),
+		            bPaused ? TEXT("paused: drought") : Split, ColRed });
 	}
 
 	const float CardW = 150.f, CardH = 60.f, Gap = 8.f;
@@ -278,32 +283,49 @@ void ASWHUD::DrawMinimap(const ASWWorldManager& M, float X, float Y, float Size)
 {
 	const FSWRunSettings& S = M.GetSettings();
 	const FSWLookSettings& L = M.GetLook();
-	const float Half = S.WorldHalfSize;
-	DrawPanel(X, Y, Size + 20.f, Size + 62.f, ColPanel, &ColGreen, 26.f);
+	const float HalfX = S.WorldHalfSize, HalfY = SWArenaHalfY(S);
+	const float SizeY = Size * HalfY / FMath::Max(HalfX, 1.f);   // the map keeps the arena's aspect (X along the valley)
+	DrawPanel(X, Y, Size + 20.f, SizeY + 62.f, ColPanel, &ColGreen, 26.f);
 	float y = DrawLine(X + 10.f, Y + 8.f, TEXT("ECOSYSTEM FLOW"), ColText, 1.05f);
 	const float MX = X + 10.f, MY = y + 4.f;
 	// World -> map: x right, y down.
-	auto ToMap = [&](float WX, float WY) { return FVector2D(MX + (WX + Half) / (2.f * Half) * Size, MY + (WY + Half) / (2.f * Half) * Size); };
+	auto ToMap = [&](float WX, float WY) { return FVector2D(MX + (WX + HalfX) / (2.f * HalfX) * Size, MY + (WY + HalfY) / (2.f * HalfY) * SizeY); };
 
 	const FSWTraceField& FX = M.GetTraceX();
 	const FSWTraceField& FY = M.GetTraceY();
 	const int32 N = FMath::Max(FX.Cells(), 1);
-	const float Cell = Size / N;
+	const float CellW = Size / N, CellH = SizeY / N;
+	// The water mask is fixed for a run (terrain and arena are built once): sample it on the first
+	// frame of each run instead of N*N terrain evaluations per frame.
+	if (MinimapWaterCells != N || MinimapWaterRun != M.GetRunId() || MinimapWaterLevel != L.WaterLevel || MinimapWater.Num() != N * N)
+	{
+		MinimapWater.SetNumUninitialized(N * N);
+		for (int32 j = 0; j < N; ++j)
+		{
+			for (int32 i = 0; i < N; ++i)
+			{
+				const float WX = -HalfX + (i + 0.5f) * (2.f * HalfX / N);
+				const float WY = -HalfY + (j + 0.5f) * (2.f * HalfY / N);
+				MinimapWater[j * N + i] = SWProc::TerrainHeight(L, WX, WY) < L.WaterLevel ? 1 : 0;
+			}
+		}
+		MinimapWaterCells = N;
+		MinimapWaterRun = M.GetRunId();
+		MinimapWaterLevel = L.WaterLevel;
+	}
 	// Ground / water base, then the two fields, cell by cell.
 	for (int32 j = 0; j < N; ++j)
 	{
 		for (int32 i = 0; i < N; ++i)
 		{
-			const float WX = -Half + (i + 0.5f) * (2.f * Half / N);
-			const float WY = -Half + (j + 0.5f) * (2.f * Half / N);
-			const bool bWater = SWProc::TerrainHeight(L, WX, WY) < L.WaterLevel;
+			const bool bWater = MinimapWater[j * N + i] != 0;
 			const FLinearColor Base = bWater ? FLinearColor(0.10f, 0.28f, 0.40f, 0.9f) : FLinearColor(0.07f, 0.09f, 0.07f, 0.9f);
-			const float PX = MX + i * Cell, PY = MY + j * Cell;
-			DrawRect(PX, PY, Cell + 0.5f, Cell + 0.5f, Base);
+			const float PX = MX + i * CellW, PY = MY + j * CellH;
+			DrawRect(PX, PY, CellW + 0.5f, CellH + 0.5f, Base);
 			const float TX = FMath::Clamp(FX.At(i, j) / FMath::Max(S.TraceMax, 0.01f), 0.f, 1.f);
 			const float TY = FMath::Clamp(FY.At(i, j) / FMath::Max(S.TraceMax, 0.01f), 0.f, 1.f);
-			if (TY > 0.02f) DrawRect(PX, PY, Cell + 0.5f, Cell + 0.5f, ColTecton * FLinearColor(1, 1, 1, 0.75f * TY));
-			if (TX > 0.02f) DrawRect(PX, PY, Cell + 0.5f, Cell + 0.5f, ColLumen * FLinearColor(1, 1, 1, 0.75f * TX));
+			if (TY > 0.02f) DrawRect(PX, PY, CellW + 0.5f, CellH + 0.5f, ColTecton * FLinearColor(1, 1, 1, 0.75f * TY));
+			if (TX > 0.02f) DrawRect(PX, PY, CellW + 0.5f, CellH + 0.5f, ColLumen * FLinearColor(1, 1, 1, 0.75f * TX));
 		}
 	}
 	// Resource nodes and organisms.
@@ -331,7 +353,7 @@ void ASWHUD::DrawMinimap(const ASWWorldManager& M, float X, float Y, float Size)
 		}
 	}
 	// Legend.
-	float ly = MY + Size + 6.f;
+	float ly = MY + SizeY + 6.f;
 	const float lx = MX;
 	auto Key = [&](float x0, const FLinearColor& C, const TCHAR* Label)
 	{
@@ -348,7 +370,7 @@ void ASWHUD::DrawMinimap(const ASWWorldManager& M, float X, float Y, float Size)
 void ASWHUD::DrawSelectionMarker(const ASWAgent& A)
 {
 	if (!Canvas) return;
-	const FVector Loc = A.GetActorLocation() + FVector(0.f, 0.f, 120.f * A.GetParams().MeshScale);
+	const FVector Loc = A.GetActorLocation() + FVector(0.f, 0.f, A.GetVisualHeight() + 20.f);   // clears the authored bodies too
 	const FVector Screen = Canvas->Project(Loc);
 	if (Screen.Z <= 0.f) return;   // behind camera
 	const FLinearColor C = A.GetSpecies() == ESWSpecies::Lumen ? ColLumen : ColTecton;

@@ -48,8 +48,8 @@ see "Adding servers while the sim runs" below. `-SWPolicy` is the launch-time al
  "species":["Lumen","Tecton"],
  "controls":["Lumen"],
  "seed":7,"mode":"C","mode_name":"C_learning_evolution","run_id":"20260906-140102_seed7_C_learning_evolution",
- "decision_interval":1.000,"substep":0.100,"timeout_ms":200,"share":1.000,"world_half_size":4500.0,
- "max_energy":{"Lumen":100.0,"Tecton":160.0},"max_age":{"Lumen":150.0,"Tecton":300.0},
+ "decision_interval":1.000,"substep":0.100,"timeout_ms":200,"share":1.000,"world_half_size":8000.0,"world_half_size_y":5500.0,
+ "max_energy":{"Lumen":100.0,"Tecton":160.0},"max_age":{"Lumen":150.0,"Tecton":260.0},
  "learning":"tabular contextual bandit, gamma 0; the sim keeps updating each organism's own table with every reward"}
 ```
 
@@ -99,7 +99,7 @@ Field list (per organism):
 | `last_external` | `true` if `last_action` came from you; `false` if the built-in bandit chose (timeout, disconnect, infeasible reply) |
 | `decisions` | decisions made so far |
 | `q` | `[3][7]` the organism's own bandit table (DESIGN.md §1). A hint: it keeps learning from every reward whoever chose the action |
-| `position`, `heading` | world units (arena is `[-world_half_size, +world_half_size]`), yaw in degrees |
+| `position`, `heading` | world units (arena is `[-world_half_size, +world_half_size]` in x and `[-world_half_size_y, +world_half_size_y]` in y; `world_half_size_y` was added 2026-09-11 and equals `world_half_size` for a square arena), yaw in degrees |
 | `percept.*` | every `FSWPercept` field: `energy`, `max_energy`, `resource_known`, `resource_loc`, `resource_dist`, `resource_dir` (unit vector toward it), `resource_stock`, `same_species_in_range`, `other_species_in_range`, `neighbour_known`, `neighbour_centroid`, `nearest_any_agent_dist`, `signal_known` (a Lumen signal received in the last 12 s), `signal_loc`, `trace_x`, `trace_y`, `trace_x_gradient`, `trace_x_gradient_dir`, `on_land`, `patch_in_cell_needs_soil`. Locations/distances are `null` when there is nothing |
 | `genome` | inherited `alpha`, `epsilon`, `social`, `e` (fixed for life; mutated at birth) |
 
