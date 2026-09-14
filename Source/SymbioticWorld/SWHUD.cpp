@@ -137,7 +137,7 @@ void ASWHUD::DrawHUD()
 	DrawSpeciesPanel(*M, ESWSpecies::Tecton, RX, RY, RightW);
 
 	const ASWPlayerController* PC = Cast<ASWPlayerController>(GetOwningPlayerController());
-	if (!PC || PC->IsHelpVisible()) DrawHelp(SX - 470.f, SY - 165.f);
+	if (!PC || PC->IsHelpVisible()) DrawHelp(SX - 470.f, SY - 150.f);   // 130 px tall: with an organism selected the Tecton panel ends 9 px above
 
 	if (M->IsPaused())
 	{
@@ -472,15 +472,14 @@ void ASWHUD::DrawInspector(const ASWWorldManager& M, const ASWAgent& A, float X,
 
 void ASWHUD::DrawHelp(float X, float Y)
 {
-	DrawPanel(X, Y, 450.f, 145.f, ColPanel, &ColDim, 24.f);
+	DrawPanel(X, Y, 450.f, 130.f, ColPanel, &ColDim, 24.f);
 	float y = Y + 8.f;
 	const float x = X + 10.f;
 	y = DrawLine(x, y, TEXT("KEYS  (H hides this)"), ColDim);
 	y = DrawLine(x, y, TEXT("LMB select organism   Tab youngest Lumen   F follow selected"), ColText);
 	y = DrawLine(x, y, TEXT("1 / 2 / 3  speed 1x / 10x / 50x     Space pause     R reset run"), ColText);
-	y = DrawLine(x, y, TEXT("P drought on/off     M cycle mode A > B > C > N (resets run)"), ColText);
-	y = DrawLine(x, y, TEXT("V scientists on/off     G follow next scientist  (F or a camera move releases)"), ColText);
-	y = DrawLine(x, y, TEXT("WASD/QE move   hold RMB to look   wheel zoom"), ColText);
+	y = DrawLine(x, y, TEXT("P drought on/off     M cycle mode A > B > C > N (resets run)     V scientists"), ColText);
+	y = DrawLine(x, y, TEXT("WASD/QE move   RMB look   wheel zoom     G follow next scientist  (F releases)"), ColText);
 	y += 4.f;
 	y = DrawLine(x, y, TEXT("A learning off | B learning, genome fixed | C learning + evolution | N neutral drift"), ColDim);
 	y = DrawLine(x, y, TEXT("Logs: Saved/SymbioticWorld/<run_id>/{agents,births,deaths,population}.csv"), ColDim);

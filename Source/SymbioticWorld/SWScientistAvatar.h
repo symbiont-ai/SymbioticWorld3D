@@ -39,12 +39,15 @@ public:
 	// Latest reported position (arena uu, same space as organism positions).
 	void SetTargetXY(float X, float Y);
 
-	// Wall-clock smoothing toward the target; Z from the terrain; gait from speed.
+	// Wall-clock movement toward the target at the Lab's reported pace; Z from the terrain; gait from that pace.
 	void UpdateVisual(float DeltaSeconds);
 
 	const FString& GetScientistName() const { return ScientistName; }
 	bool HasMannequin() const { return bHasMannequin; }
 	const FLinearColor& GetTagColor() const { return TagColor; }
+	int32 GetGaitChanges() const { return GaitChanges; }
+
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 
 	// World point just above the head where the HUD anchors the name tag.
 	FVector GetTagAnchor() const;
@@ -64,7 +67,10 @@ protected:
 	FVector2D TargetXY = FVector2D::ZeroVector;
 	bool bHasTarget = false;
 	bool bHasMannequin = false;
-	float SmoothedSpeed = 0.f;   // on-screen uu/s; drives the gait
+	float ReportedPace = 0.f;    // sim uu per sim s between the last two reports (the Lab walks 260)
+	float LastReportSim = -1.f;  // SimTime of the last report
+	float SmoothedPace = 0.f;    // on-screen uu/s the reports imply, smoothed; drives the gait and play rate
+	int32 GaitChanges = 0;       // clip switches since spawn, logged at EndPlay (a flapping gait shows here)
 
 	// Switch the single-node clip only when the gait changes; the play rate follows the speed.
 	void SetGait(UAnimSequence* Anim, float PlayRate);
