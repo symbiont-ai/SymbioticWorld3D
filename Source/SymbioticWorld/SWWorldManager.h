@@ -118,6 +118,7 @@ public:
 	int32 GetLivingCount() const { return Agents.Num(); }
 	const TArray<ASWAgent*>& GetAgents() const { return Agents; }
 	const TArray<ASWResourcePatch*>& GetPatches() const { return Patches; }
+	const TArray<ASWScientistAvatar*>& GetScientistAvatars() const { return ScientistAvatars; }   // field team (HUD name tags)
 	// Population steadiness over the last ~30 logical s: 1 - (max - min) / max. Descriptive only.
 	float GetStability() const;
 	FString GetRunId() const { return RunId; }

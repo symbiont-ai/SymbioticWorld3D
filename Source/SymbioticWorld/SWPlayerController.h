@@ -15,6 +15,7 @@ class ASWAgent;
 //   P      toggle drought                 M    cycle mode A>B>C>N (resets run)
 //   R      reset run (same seed)          F    follow selected agent
 //   H      toggle help overlay            V    scientist avatars on/off
+//   G      follow the next field-team scientist (cycles; F or a camera move releases)
 UCLASS()
 class SYMBIOTICWORLD_API ASWPlayerController : public APlayerController
 {
@@ -44,4 +45,5 @@ protected:
 	void OnToggleHelp();
 	void OnFollowSelected();
 	void OnToggleScientists();
+	void OnFollowScientist();
 };

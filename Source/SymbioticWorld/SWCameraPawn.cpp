@@ -1,4 +1,5 @@
 #include "SWCameraPawn.h"
+#include "SWScientistAvatar.h"
 #include "SWAgent.h"
 #include "SWWorldManager.h"
 #include "SWLeviathan.h"
@@ -45,6 +46,10 @@ void ASWCameraPawn::BeginPlay()
 		}
 	}
 	// -SWCam=x:y:z:pitch:yaw  (':' because FParse::Value stops at ',') for scripted screenshots: placed now.
+	// -SWFollowScientist=<Name>|any: chase-cam on a field-team avatar once it joins (docs/POLICY_API.md §5).
+	FParse::Value(FCommandLine::Get(), TEXT("SWFollowScientist="), RequestedScientist);
+	RequestedScientist.TrimStartAndEndInline();
+
 	// Otherwise the arena-relative start framing waits for the first Tick, when the manager has parsed
 	// -SWSet (its BeginPlay may run after this one).
 	FString CamSpec;
@@ -102,8 +107,21 @@ void ASWCameraPawn::SetFollowTarget(ASWAgent* Agent)
 	// Any viewer-initiated follow change (F key, a click, a mode change) ends the scripted request:
 	// releasing clears everything, following an organism replaces a predator follow.
 	FollowActor = nullptr;
+	FollowScientist = nullptr;
 	bRequestedLeviathan = false;
+	RequestedScientist.Empty();
 	if (!Agent) RequestedFollowSpecies.Reset();
+}
+
+void ASWCameraPawn::SetFollowScientist(ASWScientistAvatar* Avatar)
+{
+	// A viewer-chosen scientist replaces any organism / predator follow and ends every scripted request.
+	FollowTarget = nullptr;
+	FollowActor = nullptr;
+	bRequestedLeviathan = false;
+	RequestedFollowSpecies.Reset();
+	RequestedScientist.Empty();
+	FollowScientist = Avatar;
 }
 
 void ASWCameraPawn::UpdateRequestedFollow()
@@ -126,6 +144,32 @@ void ASWCameraPawn::UpdateRequestedFollow()
 		}
 		return;
 	}
+	// -SWFollowScientist: the team joins a few seconds after the bridge connects, so keep looking until then;
+	// re-acquire if the avatar retires or hides (stale bridge).
+	if (!RequestedScientist.IsEmpty() && !(FollowScientist.IsValid() && !FollowScientist->IsHidden()))
+	{
+		FollowScientist = nullptr;
+		if (const ASWWorldManager* M = ASWWorldManager::Get(GetWorld()))
+		{
+			const bool bAny = RequestedScientist.Equals(TEXT("any"), ESearchCase::IgnoreCase);
+			for (ASWScientistAvatar* A : M->GetScientistAvatars())
+			{
+				if (!IsValid(A) || A->IsHidden()) continue;
+				if (bAny || A->GetScientistName().Equals(RequestedScientist, ESearchCase::IgnoreCase))
+				{
+					FollowScientist = A;
+					UE_LOG(LogSymbioticWorld, Log, TEXT("-SWFollowScientist: following %s"), *A->GetScientistName());
+					break;
+				}
+			}
+			if (!FollowScientist.IsValid() && !bWarnedNoScientist && !M->GetLook().bScientistAvatars)
+			{
+				bWarnedNoScientist = true;
+				UE_LOG(LogSymbioticWorld, Warning, TEXT("-SWFollowScientist=%s: Look.bScientistAvatars is off (add -SWSet=\"Look.bScientistAvatars=1\" and a --policy bridge running Lab.lab observe --embody); nothing to follow"), *RequestedScientist);
+			}
+		}
+	}
+
 	if (!RequestedFollowSpecies.IsSet()) return;
 	ASWWorldManager* M = ASWWorldManager::Get(GetWorld());
 	if (!M) return;
@@ -172,7 +216,19 @@ void ASWCameraPawn::Tick(float DeltaSeconds)
 
 	UpdateRequestedFollow();
 
-	if (FollowActor.IsValid())
+	if (FollowScientist.IsValid() && !FollowScientist->IsHidden())
+	{
+		// Field-team chase-cam: a 1.8 m body, so sit close (about 5 m back) at head height.
+		const FVector Target = FollowScientist->GetActorLocation() + FVector(0.f, 0.f, 120.f);
+		FVector Desired = Target + FVector(-420.f, 220.f, 170.f);
+		if (const ASWWorldManager* M = ASWWorldManager::Get(GetWorld()))
+		{
+			Desired.Z = FMath::Max(Desired.Z, M->GetGroundZ(Desired.X, Desired.Y) + 120.f);
+		}
+		SetActorLocation(FMath::VInterpTo(GetActorLocation(), Desired, DeltaSeconds, 3.f));
+		SetActorRotation(FMath::RInterpTo(GetActorRotation(), (Target - GetActorLocation()).Rotation(), DeltaSeconds, 3.f));
+	}
+	else if (FollowActor.IsValid())
 	{
 		// Predator chase-cam: the animal is ~18 m long at the water line, so sit well back and high.
 		const FVector Target = FollowActor->GetActorLocation() + FVector(0.f, 0.f, 150.f);
@@ -203,6 +259,7 @@ void ASWCameraPawn::Tick(float DeltaSeconds)
 	else
 	{
 		if (FollowTarget && (!IsValid(FollowTarget) || !FollowTarget->IsAlive())) FollowTarget = nullptr;
+		if (FollowScientist.IsValid() && FollowScientist->IsHidden()) FollowScientist = nullptr;   // stale bridge hid the team
 
 		const FVector Fwd = Rot.Vector();
 		const FVector Right = FRotationMatrix(Rot).GetScaledAxis(EAxis::Y);

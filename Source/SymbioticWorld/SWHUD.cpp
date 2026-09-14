@@ -1,6 +1,7 @@
 #include "SWHUD.h"
 #include "SWWorldManager.h"
 #include "SWAgent.h"
+#include "SWScientistAvatar.h"
 #include "SWResourcePatch.h"
 #include "SWPlayerController.h"
 #include "SWLearner.h"
@@ -101,6 +102,7 @@ void ASWHUD::DrawHUD()
 	}
 	const float SX = Canvas->SizeX, SY = Canvas->SizeY;
 
+	DrawScientistTags(*M);   // first, so the panels draw over a tag that lands behind them
 	DrawTitle(*M);
 	DrawStatCards(*M);
 
@@ -135,7 +137,7 @@ void ASWHUD::DrawHUD()
 	DrawSpeciesPanel(*M, ESWSpecies::Tecton, RX, RY, RightW);
 
 	const ASWPlayerController* PC = Cast<ASWPlayerController>(GetOwningPlayerController());
-	if (!PC || PC->IsHelpVisible()) DrawHelp(SX - 470.f, SY - 150.f);
+	if (!PC || PC->IsHelpVisible()) DrawHelp(SX - 470.f, SY - 165.f);
 
 	if (M->IsPaused())
 	{
@@ -382,6 +384,29 @@ void ASWHUD::DrawSelectionMarker(const ASWAgent& A)
 	DrawLine(Screen.X + 10.f, Screen.Y - 8.f, A.GetLabel(), C);
 }
 
+void ASWHUD::DrawScientistTags(const ASWWorldManager& M)
+{
+	// A 1.8 m body is ~14 px tall from the start camera and a world-space label only a few px, so the
+	// field team is named in screen space: the scientist's colour, a chevron pointing down at the head.
+	if (!Canvas) return;
+	const float Margin = 40.f;
+	for (const ASWScientistAvatar* A : M.GetScientistAvatars())
+	{
+		if (!IsValid(A) || A->IsHidden()) continue;   // hidden = stale bridge
+		const FVector Screen = Canvas->Project(A->GetTagAnchor());
+		if (Screen.Z <= 0.f) continue;   // behind camera
+		if (Screen.X < -Margin || Screen.X > Canvas->SizeX + Margin || Screen.Y < -Margin || Screen.Y > Canvas->SizeY + Margin) continue;
+		const FLinearColor& C = A->GetTagColor();
+		const float S = 5.f;
+		FCanvasLineItem L1(FVector2D(Screen.X - S, Screen.Y - S), FVector2D(Screen.X, Screen.Y));
+		L1.LineThickness = 2.f; L1.SetColor(C); Canvas->DrawItem(L1);
+		FCanvasLineItem L2(FVector2D(Screen.X, Screen.Y), FVector2D(Screen.X + S, Screen.Y - S));
+		L2.LineThickness = 2.f; L2.SetColor(C); Canvas->DrawItem(L2);
+		const FString& Name = A->GetScientistName();
+		DrawLine(Screen.X - 0.5f * TextWidth(Name), Screen.Y - S - LineHeight - 2.f, Name, C);
+	}
+}
+
 void ASWHUD::DrawInspector(const ASWWorldManager& M, const ASWAgent& A, float X, float Y, float W)
 {
 	const FLinearColor C = A.GetSpecies() == ESWSpecies::Lumen ? ColLumen : ColTecton;
@@ -447,13 +472,14 @@ void ASWHUD::DrawInspector(const ASWWorldManager& M, const ASWAgent& A, float X,
 
 void ASWHUD::DrawHelp(float X, float Y)
 {
-	DrawPanel(X, Y, 450.f, 130.f, ColPanel, &ColDim, 24.f);
+	DrawPanel(X, Y, 450.f, 145.f, ColPanel, &ColDim, 24.f);
 	float y = Y + 8.f;
 	const float x = X + 10.f;
 	y = DrawLine(x, y, TEXT("KEYS  (H hides this)"), ColDim);
 	y = DrawLine(x, y, TEXT("LMB select organism   Tab youngest Lumen   F follow selected"), ColText);
 	y = DrawLine(x, y, TEXT("1 / 2 / 3  speed 1x / 10x / 50x     Space pause     R reset run"), ColText);
-	y = DrawLine(x, y, TEXT("P drought on/off     M cycle mode A > B > C > N (resets run)     V scientists"), ColText);
+	y = DrawLine(x, y, TEXT("P drought on/off     M cycle mode A > B > C > N (resets run)"), ColText);
+	y = DrawLine(x, y, TEXT("V scientists on/off     G follow next scientist  (F or a camera move releases)"), ColText);
 	y = DrawLine(x, y, TEXT("WASD/QE move   hold RMB to look   wheel zoom"), ColText);
 	y += 4.f;
 	y = DrawLine(x, y, TEXT("A learning off | B learning, genome fixed | C learning + evolution | N neutral drift"), ColDim);
