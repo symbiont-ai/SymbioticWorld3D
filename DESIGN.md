@@ -12,8 +12,10 @@ here is what the code does, not what the concept art suggests.
 Every `DecisionInterval` (1 logical s):
 
 1. The reward for the *previous* action is credited:
-   `r = wE · ΔEnergy / RewardScale + wN · novelty` (defaults: pure energy
-   change; novelty weight 0 and documented as a bias if ever used).
+   `r = wE · ΔEnergy / RewardScale + wN · novelty` (defaults: `wE` 1, `wN`
+   0.2 since 2026-09-11, a documented bias: novelty = first visit of a cell of
+   the 24 x 24 novelty grid per decision interval. The hack build used 0;
+   §6b records why 0.2 was chosen and that 0.3 destabilised Lumen).
 2. `Q[c][a] += α · (r − Q[c][a])` with `α` from the agent's genome
    (forced to 0 in mode A).
 3. A percept is built; a **feasibility mask** removes impossible actions
@@ -67,8 +69,28 @@ performs that comparison across seeds.
 
 ## 4. Environment
 
-- Square arena, `WorldHalfSize` half-width. Movement is kinematic and
-  clamped to the arena.
+- Rectangular arena centred at the origin, `WorldHalfSize` half-length along
+  the valley (X) and `WorldHalfSizeY` half-width across it (0 = square):
+  8000 x 5500 uu since 2026-09-11 (160 x 110 m; the hack build was a 4500
+  square, less than half the area, and its organisms read as a crowd on one bank).
+  Movement is kinematic and clamped to the arena. Trace grids are
+  `TraceCells` x `TraceCells` over the rectangle (rectangular cells).
+- River: the main channel is a sinusoid in X (`Look.RiverAmp/Wavelength`),
+  carved as a Gaussian of half-width `RiverWidth` (1000 uu) and depth
+  `RiverDepth` (400 uu, so the water is about 36 m wide and 4 m deep), plus
+  `RiverBranches` (2) tributaries: Bezier polylines from the valley sides to
+  confluences on the main channel, carved at `RiverBranchWidth/Depth` x the
+  main values (`SWProc::RiverBranches`, no random draws). Organisms never sink
+  with the bed (`SWProc::GroundZ` floors them 8 uu under the surface): the
+  depth only matters to the predator and to the eye. `bOnLand` is
+  `TerrainHeight > WaterLevel`, so an organism in a tributary senses "not on
+  land" as well; only the main channel is hunted (the predator patrols
+  `RiverCenterY`), so the tributaries are wet but safe.
+- Patches are placed by seeded draws that reject any channel (1.9x its width)
+  and prefer at least `PatchMinSpacing` (1100 uu) from every patch already
+  placed (best of 12 draws), so herds spread over the floor instead of
+  stacking; counts `ResourcePatchesA/B` 34 / 10 for the larger arena (B is the
+  Tecton ceiling, §6).
 - Resource patches: `Stock` with logistic regrowth
   `dS/dt = Regen · (1 − S/K)`; type A feeds Lumen, type B feeds Tecton.
 - Drought: multiplies regen by `DroughtRegenMultiplier` and effective
@@ -78,7 +100,7 @@ performs that comparison across seeds.
   perturbation of the environment, not a species: no genome, no learner, no
   `ESWSpecies` entry, no new action, so the external policy protocol is
   unchanged. `Settings.bLeviathan` spawns `LeviathanCount` animals that patrol
-  the river channel at `LeviathanSpeed` uu/s on the fixed substep and kill any
+  the river channel on the fixed substep and kill any
   organism within `LeviathanStrikeRadius` (horizontal) whose position is in the
   water (`FSWPercept::bOnLand` false, widened by `LeviathanWaterMargin`), at
   most one kill per `LeviathanStrikeCooldown` s per animal. The cooldown is
@@ -92,10 +114,20 @@ performs that comparison across seeds.
   (default true) stops strikes while the drought is active so the two
   perturbations never overlap; the animal keeps patrolling. Kills are logged
   in `deaths.csv` with cause `predation` and shown in a sixth, red HUD stat
-  card (`PREDATION`, "paused: drought" during a paused drought; the drought
+  card (`LEVIATHAN`, "N taken" with the split per prey species underneath,
+  "paused: drought" during a paused drought; the drought
   banner then reads "(predation paused)"). Movement and surfacing
   (`LeviathanSubmersion`, `LeviathanBreachRise`, `LeviathanSurfaceInterval`,
-  `LeviathanSurfaceDuration`) are visual and use their own `LookSeed` stream;
+  `LeviathanSurfaceDuration`) are visual and use their own `LookSeed` stream.
+  Movement (2026-09-11): the animal hunts, chasing the nearest organism that
+  is in the water within `LeviathanSenseRadius` (2400 uu) at `LeviathanChaseSpeed`
+  (1500 uu/s) and steering across the channel toward it (a target that climbs
+  out is dropped at once); with no prey in range it patrols at `LeviathanSpeed`
+  with seeded random decisions every `LeviathanTurnInterval` s (x 0.5-1.5):
+  reverse with `LeviathanTurnChance`, loiter with `LeviathanLoiterChance`, else
+  cruise at 0.8-1.2x. Those draws come from the manager's stream in substep
+  order, so a predator run is reproducible for its seed (and, as before,
+  differs from the predator-off run of the same seed);
   `Look.LeviathanBody/Glow/Scale/GlowScale` style it, red by default to match
   the drought banner (red = perturbation on the HUD). Enum settings such as
   `Settings.LeviathanTarget` are settable by name through `-SWSet` and the
@@ -117,11 +149,28 @@ performs that comparison across seeds.
   policy server the layer never spawns, so a run with the flag on is byte-identical
   to one with it off; with a bridge attached the run already depends on that
   server's replies (§ fallback rules), and the avatars add nothing to that.
+- **Authored creature bodies** (2026-09-11, on by default when the content is
+  present). Not a mechanism: the organism's visible body is the imported
+  skeletal mesh from `Content/Characters/Symbiotic` (SK_Lumen / SK_Tecton,
+  idle + walk clips, authored material) instead of the procedural `SWProc`
+  mesh. The clip, its play rate (distance moved per logical step over the
+  authored stride) and the rendered position (interpolated between the last
+  two substeps) are derived from simulation state on the rendered frame; the
+  legs are grounded on the terrain after animation evaluation
+  (`USWCreatureMeshComponent`, visual pose only). No sim state, percept,
+  collision or seeded draw depends on which body is shown, so a run with
+  `Look.bAuthoredCreatures` off (or without the content, which falls back to
+  the procedural bodies) is byte-identical to one with it on (verified seed 7,
+  120 s). `Look.AuthoredLumenScale` / `AuthoredTectonScale` multiply the
+  species' `MeshScale`; a hidden box on the visual mesh is the click target.
+  docs/CREATURE_RENDERING.md has the import and inspection steps.
 - Signals: a signalling Lumen broadcasts its nearest known resource location
   to same-species neighbours within `NeighbourRange · (0.5 + social)`;
   receivers accept with probability `social`.
 - **Trace X / Trace Y** (implemented 2026-09-05 evening, spec §7). Two scalar
-  grids over the arena (`TraceCells` = 30 per side, cells of 300 uu), each
+  grids over the arena (`TraceCells` = 60 per side over the 8000 x 5500
+  rectangle, cells of about 267 x 183 uu; the hack build used 30 per side on
+  the 4500 square, 300 uu cells), each
   decaying on the logical clock as `v *= 0.5^(dt / half-life)`; Trace X
   half-life 20 s, Trace Y 120 s; values clamped to `[0, TraceMax]`.
   - *Lumen `modify`* deposits `TraceXDeposit · e/0.5` at its cell (3×3 falloff; base 0.4 so the centre cell never clamps at TraceMax before e = 1).
@@ -131,14 +180,17 @@ performs that comparison across seeds.
     value is above `TraceXFollowMin`. Information becomes navigable.
   - *Tecton `modify`* deposits `TraceYDeposit · e/0.5` at its cell, costs
     `ModifyBurn` energy per second, feasible on land with > 25 % energy.
-    Patch regrowth in a cell is multiplied by `1 + TraceYRegenGain · TraceY`,
+    Patch regrowth is multiplied by `1 + TraceYRegenGain · TraceY_reach`, where
+    `TraceY_reach` is the strongest Trace Y within `Tecton.ForageRadius` of the
+    patch (radius rule since 2026-09-11: Tecton graze from 600 uu, wider than a
+    267 x 183 uu cell),
     on top of the drought multiplier, so engineered ground keeps producing
     when the valley dries. No species is told to cooperate; whether Tecton
     soil work helps Lumen is an outcome.
   - *Documented bias:* the spec's `wI · UsefulInteraction` reward term is
     `WeightInteraction` (default 0.10, 0 disables). A deposit that lands
     where it is useful (Lumen: stocked resource in range; Tecton: a patch in
-    the cell below half stock) adds `wI · (1 − field_before / TraceMax)` to
+    reach below half stock) adds `wI · (1 − field_before / TraceMax)` to
     that decision's reward, so repeating a deposit on an already-marked cell
     earns nothing (diminishing usefulness). Without
     it a γ = 0 bandit can never credit `modify`, whose benefit arrives later.
@@ -201,6 +253,50 @@ this baseline cause a visible but survivable dip. Levers, all via `-SWSet`:
 Founders now start with staggered ages (`FounderAgeSpread = 0.6` × MaxAge),
 which removed synchronised age-death cohorts and fixed mode N (it previously
 produced zero births because the whole founding cohort died in one step).
+
+### 6b. Balance after the bigger world (2026-09-11)
+
+The arena grew to 8000 x 5500 uu (§4), the river to 30 m x 4 m with two
+tributaries, and the authored bodies made the Tecton 11.6 m long, so the old
+herd (12 -> 95 Tecton by 600 s on seed 1, all stacked on ten patches) read as a
+rock mountain. Sweeps with the dependency-free runner (mode C, seeds 1-3; each
+cell is min -> final population, means over the seeds; explore share = fraction
+of logged `current_action` samples):
+
+| change (on the new world) | Lumen 600 s | Tecton 600 s | Tecton 1800 s | explore L / T |
+|---|---|---|---|---|
+| new world, old species params | 40 -> 84 | 12 -> 77 | (not run) | 7.0 % / 7.7 % |
+| `ResourcePatchesB` 16 -> 12 | 40 -> 62 | 12 -> 83 | 106 | 7.3 / 7.0 |
+| `Tecton.ForageRate` 5 -> 3.5 | 40 -> 68 | 12 -> 59 | | 6.9 / 6.8 |
+| ForageRate 3.5 + `MinReproAge` 110 | 40 -> 73 | 12 -> 43 | 111 (B = 16) | 6.9 / 6.5 |
+| + `ResourcePatchesB` 10 + `Tecton.MaxAge` 260 (first cut) | 40 -> ~53 | 12 -> ~45 | 60 (39 / 81 / 61) | 7.3 / 6.2 |
+| **new default**: the row above + `InitialTecton` 16, `MinReproAge` 100, trace-gradient fix, radius soil rule | 36 -> 107 (93 / 119 / 110) | 12 -> 23 (30 / 19 / 19), min 9 | 62 (104 / 36 / 47), min 9 | 6.7 / 7.7 |
+| `Lumen.SenseRange` 900 + `Tecton.SenseRange` 1400 | 40 -> 74 | 12 -> 82 | | 8.0 / 8.0 |
+| `Settings.WeightNovelty` 0.3 | 28 -> 46 (seed 1 crashed to 14) | 12 -> 103 | | 10.1 / 9.7 |
+| predator on, 1800 s, `Lumen/Tecton.SenseRange` 4000 | 35 -> 110 | 12 -> 40 | kills L 0/0/0, T 4/3/3 | 6.6 / 6.3 |
+| predator on, 1800 s, **`Settings.WeightNovelty` 0.2 (new default)** | 38 -> 100 | 12 -> 40 | kills L 3/5/3, T 5/2/3 | 7.5 / 7.9 |
+| predator on, 1800 s, no lever | 35 -> 101 | 12 -> 45 | kills L 2/6/2, T 4/1/3 | 6.4 / 5.9 |
+
+Reading: the Tecton boom was intake-driven, not patch-driven (fewer B patches
+alone changed nothing at 600 s because B was still at 60 % of capacity); the
+intake rate and the age of first reproduction set the growth rate, and B patch
+count plus lifespan set the ceiling. New Tecton defaults: `ForageRate` 3.5,
+`ForageRadius` 600, `CrowdRadius` 900, `MinReproAge` 100, `ReproThreshold` 145,
+`MaxAge` 260; `ResourcePatchesB` 10, `InitialTecton` 16 (twelve founders
+reached 4 on one seed before their first offspring). Lumen parameters are
+unchanged, but two review fixes lifted Lumen: the trace gradient is now
+world-space on the rectangular cells (trail-following works again) and the
+soil rule is radius-based (§4). Exploration
+did not move with the bigger arena (patches are still inside `SenseRange`).
+On the user's request (2026-09-11, "make them more adventurous, cross the
+river") `Settings.WeightNovelty` became 0.2: explore share 6.4 -> 7.5 %, more
+predator kills (the river-crossing proxy), Lumen never below 38 on seeds 1-3
+(0.3 had crashed one seed). A wider `SenseRange` (4000) was rejected: with a
+patch always in range the forced random walk never fires and Lumen stopped
+entering the water at all. Predation does not select for caution: victims'
+epsilon sits at or below the population's, and mean epsilon rises with or
+without the predator (`docs/RESEARCH_BACKLOG.md`).
+The 2026-09-05 table above is kept as the record of the hack-build balance.
 
 ## 7. Scientific guardrails (spec §13)
 

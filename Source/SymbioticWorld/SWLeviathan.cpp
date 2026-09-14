@@ -44,6 +44,10 @@ void ASWLeviathan::Init(ASWWorldManager* InManager, int32 InIndex)
 	// Stagger the surfacing rhythm so the breaches do not synchronise.
 	CruiseTimer = S.LeviathanSurfaceInterval * (Index + 1) / (N + 1);
 	WeavePhase = Index * 3.7f;
+	Lateral = 0.f;
+	DecisionTimer = S.LeviathanTurnInterval * (Index + 1) / (N + 1);   // staggered, no draw at Init
+	SpeedScale = 1.f;
+	Prey = nullptr;
 
 	BuildBody();
 	PlaceAlongChannel();
@@ -103,10 +107,9 @@ void ASWLeviathan::PlaceAlongChannel()
 	const FSWRunSettings& S = Manager->GetSettings();
 	const FSWLookSettings& L = Manager->GetLook();
 
-	// Weave gently across the channel so successive passes are not identical.
-	const float Wobble = FMath::Sin(WeavePhase * 0.35f + Index * 2.1f);
+	// Lateral: the gentle weave while patrolling, steering toward the prey while hunting (Step eases it).
 	const float X = TravelX;
-	const float Y = SWProc::RiverCenterY(L, X) + 0.22f * L.RiverWidth * Wobble;
+	const float Y = SWProc::RiverCenterY(L, X) + Lateral;
 
 	// Depth: cruising low in the channel, arcing up during a breach.
 	float Rise = 0.f;
@@ -116,15 +119,15 @@ void ASWLeviathan::PlaceAlongChannel()
 		// U runs 1 -> 0 across the breach; sin(pi U) is a smooth up-and-back-down arc.
 		const float U = FMath::Clamp(BreachPhase / S.LeviathanSurfaceDuration, 0.f, 1.f);
 		Rise = FMath::Sin(U * PI) * S.LeviathanBreachRise;
-		Pitch = -13.f * FMath::Cos(U * PI);   // nose up on the way out, down on the way back
+		Pitch = -13.f * FMath::Sin(2.f * PI * U);   // level at both ends and at the apex, so the jaw and flukes never pitch into the bed while the body sits on the clamp
 	}
 
-	// The channel is shallow: RiverDepth is 150 uu and the bed sits around -200 while
-	// the surface is at -42, so an animal this size CANNOT hide under it. It runs
-	// bed-hugging with its back and dorsal ridge cutting the surface, and the clamp
-	// below lifts it over shallow stretches instead of burying it in the terrain.
-	// (Deepening the river is not an option: TerrainHeight feeds GroundZ, bOnLand and
-	// every organism's percept, so it would change the simulation for everyone.)
+	// Since 2026-09-11 the main channel bed sits ~440 uu under the surface (Look.RiverDepth 400 plus
+	// the bank term, +-70 floor noise). The belly clamp below (178 x LeviathanScale above the bed)
+	// floors the spine near -244, above the LeviathanSubmersion target, so the 2x animal cruises awash
+	// with its back and dorsal fin proud and comes fully clear on a breach; the clamp also lifts it
+	// over the shallower bends instead of burying it. Organisms never sink with the bed:
+	// SWProc::GroundZ floors them 8 uu under the surface, so they wade across.
 	const float BellyClearance = SWLeviathanBellyRadius * L.LeviathanScale;
 	float Z = SurfaceZ() - S.LeviathanSubmersion + Rise;
 	Z = FMath::Max(Z, SWProc::TerrainHeight(L, X, Y) + BellyClearance);
@@ -146,11 +149,55 @@ void ASWLeviathan::Step(float Dt, TArray<ASWAgent*>& OutVictims)
 	const FSWRunSettings& S = Manager->GetSettings();
 	const FSWLookSettings& L = Manager->GetLook();
 
-	// ---- 1) Patrol: travel the channel, reversing at the arena bounds ----
+	// ---- 0) Hunt: the nearest organism in the water within LeviathanSenseRadius, provided it is
+	//         near the main channel the animal swims in (a tributary is out of reach). Same species
+	//         filter as the strike. The prey is re-evaluated every substep, so a target that climbs
+	//         out is dropped at once.
 	const float Limit = FMath::Max(S.WorldHalfSize - 250.f, 400.f);
-	TravelX += Direction * S.LeviathanSpeed * Dt;
+	const FVector Here = GetActorLocation();
+	{
+		float BestD2 = S.LeviathanSenseRadius * S.LeviathanSenseRadius;
+		ASWAgent* Best = nullptr;
+		for (ASWAgent* A : Manager->GetAgents())
+		{
+			if (!IsValid(A) || !A->IsAlive() || OutVictims.Contains(A)) continue;
+			if (S.LeviathanTarget == ESWLeviathanTarget::Lumen  && A->GetSpecies() != ESWSpecies::Lumen)  continue;
+			if (S.LeviathanTarget == ESWLeviathanTarget::Tecton && A->GetSpecies() != ESWSpecies::Tecton) continue;
+			const FVector AL = A->GetActorLocation();
+			if (!IsInWater(AL)) continue;
+			if (FMath::Abs(AL.Y - SWProc::RiverCenterY(L, AL.X)) > 2.5f * L.RiverWidth) continue;   // not in this channel
+			const float D2 = FVector::DistSquared2D(Here, AL);
+			if (D2 < BestD2) { BestD2 = D2; Best = A; }
+		}
+		Prey = Best;
+	}
+
+	// ---- 1) Move along the channel: chase the prey, or patrol with seeded random decisions ----
+	float LateralTarget;
+	if (Prey.IsValid())
+	{
+		const FVector PL = Prey->GetActorLocation();
+		if (FMath::Abs(PL.X - TravelX) > 60.f) Direction = PL.X > TravelX ? 1.f : -1.f;
+		TravelX += Direction * S.LeviathanChaseSpeed * Dt;
+		LateralTarget = FMath::Clamp(PL.Y - SWProc::RiverCenterY(L, PL.X), -0.6f * L.RiverWidth, 0.6f * L.RiverWidth);
+	}
+	else
+	{
+		DecisionTimer -= Dt;
+		if (DecisionTimer <= 0.f)
+		{
+			// Seeded draws in substep order (the manager's stream), so the patrol is reproducible.
+			FRandomStream& Rng = Manager->GetRng();
+			DecisionTimer = FMath::Max(S.LeviathanTurnInterval, 1.f) * Rng.FRandRange(0.5f, 1.5f);
+			if (Rng.FRand() < S.LeviathanTurnChance) Direction = -Direction;
+			SpeedScale = (Rng.FRand() < S.LeviathanLoiterChance) ? 0.25f : Rng.FRandRange(0.8f, 1.2f);
+		}
+		TravelX += Direction * S.LeviathanSpeed * SpeedScale * Dt;
+		LateralTarget = 0.22f * L.RiverWidth * FMath::Sin(WeavePhase * 0.35f + Index * 2.1f);
+	}
 	if (TravelX > Limit)  { TravelX = Limit;  Direction = -1.f; }
 	if (TravelX < -Limit) { TravelX = -Limit; Direction =  1.f; }
+	Lateral = FMath::FInterpTo(Lateral, LateralTarget, Dt, Prey.IsValid() ? 2.5f : 1.f);
 	WeavePhase += Dt;
 
 	// ---- 2) Surfacing rhythm ----
@@ -180,7 +227,7 @@ void ASWLeviathan::Step(float Dt, TArray<ASWAgent*>& OutVictims)
 	const bool bPausedByDrought = S.bLeviathanPauseInDrought && Manager->IsDrought();
 	if (StrikeTimer <= 0.f && !bPausedByDrought)
 	{
-		const FVector Here = GetActorLocation();
+		const FVector Jaw = GetActorLocation();   // after PlaceAlongChannel: where the animal is now
 		float BestD2 = S.LeviathanStrikeRadius * S.LeviathanStrikeRadius;
 		ASWAgent* Best = nullptr;
 		for (ASWAgent* A : Manager->GetAgents())
@@ -192,12 +239,13 @@ void ASWLeviathan::Step(float Dt, TArray<ASWAgent*>& OutVictims)
 			if (S.LeviathanTarget == ESWLeviathanTarget::Tecton && A->GetSpecies() != ESWSpecies::Tecton) continue;
 			const FVector AL = A->GetActorLocation();
 			if (!IsInWater(AL)) continue;                  // dry ground is safe, and the organism can sense that
-			const float D2 = FVector::DistSquared2D(Here, AL);
+			const float D2 = FVector::DistSquared2D(Jaw, AL);
 			if (D2 < BestD2) { BestD2 = D2; Best = A; }
 		}
 		if (Best)
 		{
 			OutVictims.Add(Best);
+			Prey = nullptr;
 			Kills++;
 			StrikeTimer = S.LeviathanStrikeCooldown;
 			// Lunge: a kill always surfaces the animal, so a predation event is visible.

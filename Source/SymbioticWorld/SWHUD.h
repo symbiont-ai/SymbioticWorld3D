@@ -49,6 +49,11 @@ protected:
 	void DrawSpeciesPanel(const ASWWorldManager& M, ESWSpecies S, float X, float Y, float W);
 	void DrawInspector(const ASWWorldManager& M, const ASWAgent& A, float X, float Y, float W);
 	void DrawMinimap(const ASWWorldManager& M, float X, float Y, float Size);
+	// Water mask of the minimap cells (TerrainHeight is constant per run and costs a polyline walk per call).
+	TArray<uint8> MinimapWater;
+	int32 MinimapWaterCells = 0;
+	FString MinimapWaterRun;
+	float MinimapWaterLevel = 0.f;
 	void DrawHelp(float X, float Y);
 	void DrawSelectionMarker(const ASWAgent& A);
 	void DrawEvolutionStrip(const ASWWorldManager& M, float X, float Y, float W);

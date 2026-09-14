@@ -8,6 +8,9 @@
 
 class UStaticMeshComponent;
 class UProceduralMeshComponent;
+class UBoxComponent;
+class USWCreatureMeshComponent;
+class UAnimSequence;
 class UMaterialInstanceDynamic;
 class ASWWorldManager;
 
@@ -18,8 +21,16 @@ class ASWWorldManager;
 // of frame rate and time scale.
 //
 // Visuals: an invisible sphere (root) carries the cursor-pick collision; the
-// visible body is a procedural mesh built per species (SWProc::BuildLumen /
-// BuildTecton) with vertex-colour emissive markings driven by M_SW_Creature.
+// visible body is the authored skeletal mesh (Content/Characters/Symbiotic:
+// SK_<Species> + idle / walk clips + M_<Species>_Authored, sampled on the
+// simulation clock by UpdateAuthoredVisual, legs grounded by
+// USWCreatureMeshComponent) when that content is present and
+// Look.bAuthoredCreatures is true, else a procedural mesh built per species
+// (SWProc::BuildLumen / BuildTecton) with vertex-colour emissive markings
+// driven by M_SW_Creature. The authored body carries its own click target
+// (PickBox) because the root sphere only covers the procedural size. Either
+// body is purely visual: no sim state and no seeded draw depends on which one
+// is shown (docs/CREATURE_RENDERING.md).
 UCLASS()
 class SYMBIOTICWORLD_API ASWAgent : public AActor
 {
@@ -38,6 +49,13 @@ public:
 	void SnapToGround();
 	// Called by the manager once per rendered frame (not per substep): rebuilds the trail ribbon if it changed.
 	void UpdateTrailVisual();
+	// Evaluate the authored skeletal animation on the simulation clock.
+	void UpdateAuthoredVisual(float InterpolationDt = 0.f);
+	float GetCreatureGroundError() const;
+	// Rendered LOD of the authored body this frame (-1 = procedural body). Audit only.
+	int32 GetCreatureLOD() const;
+	// Height of the visible body above the actor's ground point (HUD marker placement).
+	float GetVisualHeight() const;
 
 	// ---- Read-only accessors (HUD / logger) ----
 	int32 GetAgentId() const { return Id; }
@@ -103,6 +121,20 @@ public:
 protected:
 	UPROPERTY(VisibleAnywhere) UStaticMeshComponent* Mesh;        // invisible pick sphere (root)
 	UPROPERTY(VisibleAnywhere) UProceduralMeshComponent* Body;    // visible organism
+	UPROPERTY(VisibleAnywhere) USWCreatureMeshComponent* AuthoredBody;
+	UPROPERTY(VisibleAnywhere) UBoxComponent* PickBox;           // click target around the authored body (follows the visual mesh)
+	float AuthoredSoleClearance = 0.f;   // mesh cm the ankles rest above the ground (Tecton soles sit below its root)
+	float AuthoredTopZ = 0.f;            // world uu from the feet to the top of the authored bounds
+	UPROPERTY() UAnimSequence* AuthoredIdle = nullptr;
+	UPROPERTY() UAnimSequence* AuthoredWalk = nullptr;
+	UPROPERTY() UAnimSequence* AuthoredClip = nullptr;
+	UPROPERTY() UAnimSequence* PresentedClip = nullptr;
+	float AuthoredTime = 0.f;
+	float AuthoredRate = 1.f;
+	float AuthoredTransitionAge = 1.f;
+	float AuthoredPoseElapsed = 1.f;
+	FVector AuthoredPreviousLocation = FVector::ZeroVector;
+	FQuat AuthoredPreviousRotation = FQuat::Identity;
 	UPROPERTY(VisibleAnywhere) UProceduralMeshComponent* Trail;   // glowing ribbon (Lumen only), world space
 	UPROPERTY() UMaterialInstanceDynamic* TrailMID;
 	TArray<FVector> TrailPoints;      // newest last
@@ -176,6 +208,7 @@ protected:
 	void MoveAlong(const FVector& Dir, float Dt);
 	void PlaceAt(FVector Loc, const FVector& Facing);
 	void BuildBody();
+	bool BuildAuthoredBody();
 	void UpdateVisual();
 	void UpdateGait(float Dt);
 	int32 CellIndex(const FVector& Loc) const;

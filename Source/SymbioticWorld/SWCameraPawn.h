@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "SWTypes.h"
 #include "SWCameraPawn.generated.h"
 
 class UCameraComponent;
@@ -9,6 +10,10 @@ class ASWAgent;
 
 // Free-flying observer camera. WASD/QE move, mouse wheel zooms, hold right
 // mouse to look. F toggles following the selected agent.
+// -SWFollowSpecies=Lumen|Tecton|Leviathan (inspection): follows the selected
+// organism of that species, selecting one if none is; re-acquires when it dies;
+// Leviathan follows the river predator (Settings.bLeviathan). Any manual camera
+// input releases it.
 UCLASS()
 class SYMBIOTICWORLD_API ASWCameraPawn : public APawn
 {
@@ -22,12 +27,16 @@ public:
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
 	void SetFollowTarget(ASWAgent* Agent);
-	bool IsFollowing() const { return FollowTarget != nullptr; }
+	bool IsFollowing() const { return FollowTarget != nullptr || FollowActor.IsValid(); }
 
 protected:
 	UPROPERTY(VisibleAnywhere) USceneComponent* Root;
 	UPROPERTY(VisibleAnywhere) UCameraComponent* Camera;
 	UPROPERTY() ASWAgent* FollowTarget = nullptr;
+	TOptional<ESWSpecies> RequestedFollowSpecies;   // -SWFollowSpecies, until the viewer takes the camera
+	bool bRequestedLeviathan = false;               // -SWFollowSpecies=Leviathan
+	bool bWarnedNoLeviathan = false;
+	TWeakObjectPtr<AActor> FollowActor;             // the predator being followed (visual only)
 
 	float MoveSpeed = 2500.f;   // uu/s
 	float LookSpeed = 1.2f;     // deg per mouse unit
@@ -44,4 +53,11 @@ protected:
 	void OnLookUp(float V) { LookInput.Y = V; }
 	void OnLookPressed() { bLooking = true; }
 	void OnLookReleased() { bLooking = false; }
+
+	// -SWFollowSpecies: keep FollowTarget on a living, selected organism of the requested species.
+	void UpdateRequestedFollow();
+	// Start framing (arena-relative) on the first Tick, once the manager has its settings; -SWCam places at BeginPlay.
+	bool bStartPlaced = false;
+	void PlaceCamera(const FVector& Loc, const FRotator& Rot);
+	void PlaceStartCamera();
 };

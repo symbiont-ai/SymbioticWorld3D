@@ -197,16 +197,23 @@ struct FSWLookSettings
 
 	// ---- Terrain field (also used by SWProc::GroundZ) ----
 	UPROPERTY(EditAnywhere) int32 LookSeed = 7;
-	UPROPERTY(EditAnywhere) float TerrainHalfSize = 14000.f;
-	UPROPERTY(EditAnywhere) int32 TerrainGrid = 200;
-	UPROPERTY(EditAnywhere) float ValleyHalfWidth = 7000.f;
+	// 2026-09-11: the valley grew with the arena (Settings.WorldHalfSize/Y): 440 x 172 m floor-to-rim,
+	// the arches and start camera are placed relative to the arena so the composition follows.
+	UPROPERTY(EditAnywhere) float TerrainHalfSize = 22000.f;
+	UPROPERTY(EditAnywhere) int32 TerrainGrid = 400;            // 110 uu per vertex over the 440 m terrain (the 30 m river banks facet at 170)
+	UPROPERTY(EditAnywhere) float ValleyHalfWidth = 8600.f;
 	UPROPERTY(EditAnywhere) float ValleyDepth = 3200.f;
 	UPROPERTY(EditAnywhere) float RidgeNoiseAmp = 1400.f;
 	UPROPERTY(EditAnywhere) float FloorNoiseAmp = 70.f;
-	UPROPERTY(EditAnywhere) float RiverAmp = 1500.f;
-	UPROPERTY(EditAnywhere) float RiverWavelength = 12000.f;
-	UPROPERTY(EditAnywhere) float RiverWidth = 650.f;
-	UPROPERTY(EditAnywhere) float RiverDepth = 150.f;
+	UPROPERTY(EditAnywhere) float RiverAmp = 1800.f;
+	UPROPERTY(EditAnywhere) float RiverWavelength = 16000.f;
+	UPROPERTY(EditAnywhere) float RiverWidth = 1000.f;          // Gaussian half-width of the main channel; with the bank term the water spans ~3.6x this (36 m)
+	UPROPERTY(EditAnywhere) float RiverDepth = 400.f;           // bed 4 m under the surface: the leviathan cruises fully submerged
+	// Tributaries: Bezier polylines from the valley sides (0.8 ValleyHalfWidth) to confluences on the
+	// main channel, alternating sides, carved with their own width / depth (SWProc::RiverBranches).
+	UPROPERTY(EditAnywhere) int32 RiverBranches = 2;
+	UPROPERTY(EditAnywhere) float RiverBranchWidth = 0.6f;      // x RiverWidth
+	UPROPERTY(EditAnywhere) float RiverBranchDepth = 0.6f;      // x RiverDepth
 	UPROPERTY(EditAnywhere) float WaterLevel = -42.f;
 	UPROPERTY(EditAnywhere) float WetlandBand = 110.f;
 	UPROPERTY(EditAnywhere) int32 ArchCount = 3;                // massif arches: 1 = hero over the river, 2 = + twin arch on the +Y side, 3 = + far small arch
@@ -255,7 +262,7 @@ struct FSWLookSettings
 	// predator matches. Overridable live with -SWSet "Look.LeviathanGlow=r:g:b".
 	UPROPERTY(EditAnywhere) FLinearColor LeviathanBody = FLinearColor(0.075f, 0.012f, 0.010f);
 	UPROPERTY(EditAnywhere) FLinearColor LeviathanGlow = FLinearColor(1.00f, 0.13f, 0.06f);
-	UPROPERTY(EditAnywhere) float LeviathanScale = 0.55f;        // multiplier on the procedural body: ~900 uu long, 2.5x a Tecton
+	UPROPERTY(EditAnywhere) float LeviathanScale = 1.1f;         // multiplier on the procedural body: ~1800 uu long, 1.5x the authored Tecton
 	UPROPERTY(EditAnywhere) float LeviathanGlowScale = 0.8f;     // x CreatureGlow while cruising (x2.2 while surfacing)
 	UPROPERTY(EditAnywhere) FLinearColor ResourceAGlow = FLinearColor(0.25f, 1.0f, 0.35f);
 	UPROPERTY(EditAnywhere) FLinearColor ResourceBGlow = FLinearColor(0.95f, 0.80f, 0.25f);
@@ -278,10 +285,12 @@ struct FSWLookSettings
 	UPROPERTY(EditAnywhere) bool bUseImportedGroundMaterial = true;
 	UPROPERTY(EditAnywhere) bool bUseImportedWaterMaterial = false;   // off since 2026-09-05: M_SW_Water (dark, Fresnel-weighted, reflective) instead of the Electric Dreams water
 	UPROPERTY(EditAnywhere) int32 ArchRockCount = 5;            // dressing rocks per arch
+	// Dressing counts are the 50x frame-time dial on the 440 m valley: 4000 groundcover / 170 boulders /
+	// 520 stones / 320 shrubs cost 4-5 ms more than these (22.1 vs 16.7 ms at 121 organisms, 2026-09-11).
 	UPROPERTY(EditAnywhere) int32 RiverStoneCount = 320;
 	UPROPERTY(EditAnywhere) int32 ShrubCount = 200;
-	UPROPERTY(EditAnywhere) int32 TreeCount = 18;
-	UPROPERTY(EditAnywhere) int32 MistCount = 8;                // mist cards along the river
+	UPROPERTY(EditAnywhere) int32 TreeCount = 26;
+	UPROPERTY(EditAnywhere) int32 MistCount = 0;                // fog-sheet cards along the river; 0 since 2026-09-11: on the ~36 m water span (RiverWidth 1000) the flat quads read as tiles on the water (they hid on the old ~20 m span, RiverWidth 650)
 	UPROPERTY(EditAnywhere) float TerrainUVTile = 450.f;        // uu per texture repeat on the terrain
 	UPROPERTY(EditAnywhere) bool bImportedRocksUseProjectMaterial = false;   // true = tint cliffs/boulders with M_SW_Rock instead of their scan textures
 	UPROPERTY(EditAnywhere) int32 CliffCount = 10;                 // random scatter of cliff pieces at native scale (uniform 0.6..1.1) on the slopes
@@ -330,6 +339,13 @@ struct FSWLookSettings
 	//   --set "Look.ConsoleCommands=r.vsync=0|stat=unit"
 	UPROPERTY(EditAnywhere) FString ConsoleCommands;
 	UPROPERTY(EditAnywhere) bool bCreatureShadows = true;
+	// ---- Authored creatures (Content/Characters/Symbiotic; docs/CREATURE_RENDERING.md) ----
+	// Imported Lumen / Tecton skeletal meshes with idle / walk clips replace the procedural
+	// SWProc bodies when that content is present. Visual only: no sim state, no seeded draw.
+	// Read when a body is built (launch, birth, reset); false or missing content = procedural.
+	UPROPERTY(EditAnywhere) bool bAuthoredCreatures = true;
+	UPROPERTY(EditAnywhere) float AuthoredLumenScale = 1.105f;      // x Lumen.MeshScale -> SK_Lumen world scale (1.326: ~5.0 m nose to tail tip)
+	UPROPERTY(EditAnywhere) float AuthoredTectonScale = 3.733333f;  // x Tecton.MeshScale -> SK_Tecton world scale (2.8: ~11.6 m, the plate's massive Tecton)
 	UPROPERTY(EditAnywhere) bool bDroughtPreview = false;            // render the drought look without touching the sim
 	UPROPERTY(EditAnywhere) float SunTemperature = 4300.f;          // golden hour (tournament 2026-09-05 19:15: the accidental drought frame was the closest to the plate)
 	UPROPERTY(EditAnywhere) float DroughtSunTemperature = 3400.f;
@@ -338,7 +354,7 @@ struct FSWLookSettings
 	UPROPERTY(EditAnywhere) float SunBloomThreshold = 0.5f;
 	UPROPERTY(EditAnywhere) FLinearColor FogDirectionalColor = FLinearColor(0.6f, 0.4f, 0.25f);   // warm inscatter band; 1.4/0.9/0.5 @ exp 12 drowned the sun disc
 	UPROPERTY(EditAnywhere) float FogDirectionalExponent = 16.f;
-	UPROPERTY(EditAnywhere) float FogDirectionalStartDistance = 0.f; // engine default 10000 uu hides it entirely in a 280 m valley
+	UPROPERTY(EditAnywhere) float FogDirectionalStartDistance = 0.f; // engine default 10000 uu hides it entirely in a valley only 2 x TerrainHalfSize (440 m) long
 	UPROPERTY(EditAnywhere) FLinearColor FogAmbientScale = FLinearColor(0.6f, 0.75f, 0.8f);
 	UPROPERTY(EditAnywhere) FLinearColor VolumetricFogAlbedo = FLinearColor(0.95f, 0.85f, 0.70f);
 	UPROPERTY(EditAnywhere) FLinearColor DroughtVolumetricFogAlbedo = FLinearColor(1.0f, 0.82f, 0.63f);
@@ -346,7 +362,7 @@ struct FSWLookSettings
 	UPROPERTY(EditAnywhere) float RayleighScale = 0.035f;          // lower = the low sun stays golden instead of deep red
 	UPROPERTY(EditAnywhere) float MieScale = 0.008f;
 	UPROPERTY(EditAnywhere) float DroughtMieScale = 0.03f;
-	UPROPERTY(EditAnywhere) float AerialPerspectiveScale = 1.5f;      // the valley is ~280 m across; without this aerial perspective is invisible
+	UPROPERTY(EditAnywhere) float AerialPerspectiveScale = 1.5f;      // the valley is only 2 x TerrainHalfSize (440 m) long; without this aerial perspective is invisible
 	UPROPERTY(EditAnywhere) float CloudCoverage = 0.22f;
 	UPROPERTY(EditAnywhere) float CloudDensity = 0.5f;
 	UPROPERTY(EditAnywhere) float CloudSampleScale = 0.5f;
@@ -417,12 +433,17 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) ESWLearningMode Mode = ESWLearningMode::LearningEvolution;
 
 	UPROPERTY(EditAnywhere) int32 InitialLumen = 40;
-	UPROPERTY(EditAnywhere) int32 InitialTecton = 12;
+	UPROPERTY(EditAnywhere) int32 InitialTecton = 16;        // 2026-09-11: 12 -> 16 so the founder cohort outlasts the later first reproduction (DESIGN.md §6b)
 	UPROPERTY(EditAnywhere) int32 MaxPopulation = 220;       // hard cap; reproduction blocked at cap
 
-	UPROPERTY(EditAnywhere) float WorldHalfSize = 4500.f;    // uu; square arena centred at origin
-	UPROPERTY(EditAnywhere) int32 ResourcePatchesA = 22;
-	UPROPERTY(EditAnywhere) int32 ResourcePatchesB = 10;
+	// Arena: a rectangle centred at the origin that follows the valley (X along it, Y across it).
+	// 2026-09-11: 8000 x 5500 (160 x 110 m), 2.2x the area of the 4500 square of the hack build, so the herds
+	// spread down the valley instead of stacking on one bank. Reset-only (docs/CONTROL_FILE.md).
+	UPROPERTY(EditAnywhere) float WorldHalfSize = 8000.f;    // uu; half-length along the valley (X)
+	UPROPERTY(EditAnywhere) float WorldHalfSizeY = 5500.f;   // uu; half-width across it (Y); 0 = square (= WorldHalfSize)
+	UPROPERTY(EditAnywhere) int32 ResourcePatchesA = 34;
+	UPROPERTY(EditAnywhere) int32 ResourcePatchesB = 10;     // 2026-09-11: the Tecton ceiling (DESIGN.md §6); 16 let them reach 100+ by 1800 s
+	UPROPERTY(EditAnywhere) float PatchMinSpacing = 1100.f;  // uu; patches land at least this far apart (best of 12 seeded draws)
 	UPROPERTY(EditAnywhere) float PatchCapacity = 120.f;
 	UPROPERTY(EditAnywhere) float PatchRegenPerSec = 6.0f;   // logistic regrowth rate at low stock (1.6 collapses Lumen; 6 stable on seed 1, see DESIGN.md §6)
 
@@ -436,10 +457,12 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) float FounderAgeSpread = 0.6f;   // founder age ~ Uniform(0, spread * MaxAge); 0 = all born at t=0
 
 	// Reward is r = wE * dEnergy/RewardScale + wN * novelty. Defaults make it
-	// pure energy change; novelty is opt-in and documented as a bias if used.
+	// energy change plus a small novelty term. The novelty weight is a DOCUMENTED BIAS (DESIGN.md §1):
+	// 0 on the hack build; 0.2 since 2026-09-11 at the user's request so organisms explore and cross the
+	// river more (explore share 6.4 -> 7.5 %, Lumen stable on seeds 1-3; 0.3 crashed Lumen on one seed).
 	UPROPERTY(EditAnywhere) float RewardScale = 10.f;
 	UPROPERTY(EditAnywhere) float WeightEnergy = 1.0f;
-	UPROPERTY(EditAnywhere) float WeightNovelty = 0.0f;
+	UPROPERTY(EditAnywhere) float WeightNovelty = 0.2f;
 
 	// Initial action values: Uniform(0, QInitMax) per (bin, action). Small random
 	// values break ties differently per individual; in mode A they ARE the policy.
@@ -468,12 +491,24 @@ struct FSWRunSettings
 	//   --set "Settings.bLeviathan=1"
 	UPROPERTY(EditAnywhere) bool bLeviathan = false;
 	UPROPERTY(EditAnywhere) int32 LeviathanCount = 1;
-	UPROPERTY(EditAnywhere) float LeviathanSpeed = 620.f;          // uu per logical s along the channel
-	UPROPERTY(EditAnywhere) float LeviathanStrikeRadius = 420.f;   // uu, horizontal
+	UPROPERTY(EditAnywhere) float LeviathanSpeed = 800.f;          // uu per logical s along the channel (longer channel since 2026-09-11)
+	UPROPERTY(EditAnywhere) float LeviathanStrikeRadius = 600.f;   // uu, horizontal (scaled with the 2x animal)
 	// THE dial that sets the death rate. The encounter rate is far higher than this, so
 	// kills are cooldown-limited: one leviathan takes at most 60/Cooldown organisms per
 	// logical minute (5 s -> 12/min, 20 s -> 3/min). Raise it if the population crashes.
 	UPROPERTY(EditAnywhere) float LeviathanStrikeCooldown = 5.f;   // logical s between kills
+	// Hunting and patrol (2026-09-11). Hunt: an organism in the water within LeviathanSenseRadius of
+	// the animal (and within 2.5 x RiverWidth of the main channel it swims in) is chased at
+	// LeviathanChaseSpeed, the animal steering across the channel toward it; the strike rule above is
+	// unchanged. Patrol: every LeviathanTurnInterval logical s (x 0.5-1.5, seeded) the animal draws a
+	// decision from the manager's stream: reverse with LeviathanTurnChance, loiter at a quarter speed
+	// with LeviathanLoiterChance, else cruise at 0.8-1.2 x LeviathanSpeed. Every draw comes from the
+	// seeded stream in substep order, so a run stays byte-identical for its seed.
+	UPROPERTY(EditAnywhere) float LeviathanSenseRadius = 2400.f;   // uu, horizontal
+	UPROPERTY(EditAnywhere) float LeviathanChaseSpeed = 1500.f;    // uu per logical s while hunting (Lumen walk 350)
+	UPROPERTY(EditAnywhere) float LeviathanTurnInterval = 12.f;    // logical s between patrol decisions (mean)
+	UPROPERTY(EditAnywhere) float LeviathanTurnChance = 0.35f;     // probability a decision reverses the direction
+	UPROPERTY(EditAnywhere) float LeviathanLoiterChance = 0.15f;   // probability a decision loiters until the next one
 	// Restrict the predator to one species. Both is the honest default: hunting one
 	// species only turns predation into a species-specific handicap rather than a shared
 	// environmental pressure, which changes what a mode C vs N comparison means.
@@ -486,11 +521,13 @@ struct FSWRunSettings
 	// EXACTLY the set where FSWPercept::bOnLand is false; raise it to make the
 	// shallows dangerous too (at the cost of that exact correspondence).
 	UPROPERTY(EditAnywhere) float LeviathanWaterMargin = 0.f;      // uu
-	// The river is only ~160 uu deep (RiverDepth 150, surface at WaterLevel -42), so
-	// the animal cannot submerge fully; it runs bed-hugging with its back showing and
-	// is lifted clear of the terrain over shallow stretches. See ASWLeviathan.
-	UPROPERTY(EditAnywhere) float LeviathanSubmersion = 120.f;     // uu the spine cruises below the surface
-	UPROPERTY(EditAnywhere) float LeviathanBreachRise = 130.f;     // uu the spine rises at the top of a surfacing arc (back and head clear, belly stays wet)
+	// Since 2026-09-11 the main channel bed sits ~440 uu under the surface (RiverDepth 400 + bank,
+	// WaterLevel -42, +-70 floor noise). The belly clamp (178 x LeviathanScale above the bed) floors
+	// the spine near -244, so the 2x animal cruises awash: belly wet, back and dorsal fin proud, the
+	// whole body clear on a breach. LeviathanSubmersion is the depth it aims for where the bed allows
+	// it (deeper stretches, or a larger RiverDepth). See ASWLeviathan::PlaceAlongChannel.
+	UPROPERTY(EditAnywhere) float LeviathanSubmersion = 200.f;     // uu the spine aims below the surface; bed-limited (see above)
+	UPROPERTY(EditAnywhere) float LeviathanBreachRise = 380.f;     // uu the spine rises at the top of a surfacing arc (back and head clear, belly stays wet)
 	UPROPERTY(EditAnywhere) float LeviathanSurfaceInterval = 14.f; // logical s between surfacing arcs
 	UPROPERTY(EditAnywhere) float LeviathanSurfaceDuration = 3.5f; // logical s per arc (a kill also triggers one)
 
@@ -499,7 +536,7 @@ struct FSWRunSettings
 
 	// ---- Trace fields (spec §7): shared, self-modifying environment ----
 	UPROPERTY(EditAnywhere) bool bTraceFields = true;
-	UPROPERTY(EditAnywhere) int32 TraceCells = 30;              // grid cells per side over the arena
+	UPROPERTY(EditAnywhere) int32 TraceCells = 60;              // grid cells per side over the arena (rectangular cells: 267 x 183 uu at the default arena, close to the hack build's 300)
 	UPROPERTY(EditAnywhere) float TraceXHalfLife = 20.f;        // logical s (spec 15-30)
 	UPROPERTY(EditAnywhere) float TraceYHalfLife = 120.f;       // logical s (spec 60-180)
 	UPROPERTY(EditAnywhere) float TraceXDeposit = 0.4f;         // per Lumen modify decision (x e/0.5; stays below TraceMax up to e = 1 so the e cost/effect trade-off never saturates)
@@ -509,7 +546,7 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) float TraceXFollowMin = 0.08f;      // Lumen follow climbs the Trace X gradient above this
 	UPROPERTY(EditAnywhere) float ModifyBurn = 1.5f;            // extra energy / logical s while modifying
 	// Reward term wI (spec §5.4 "UsefulInteraction"): a small immediate reward when a deposit lands where it
-	// is useful (Lumen: a stocked resource in range; Tecton: a patch below half stock in the cell). This is a
+	// is useful (Lumen: a stocked resource in range; Tecton: a patch below half stock within its ForageRadius). This is a
 	// documented bias that lets a gamma = 0 learner credit an action whose benefit arrives later. 0 disables it.
 	UPROPERTY(EditAnywhere) float WeightInteraction = 0.10f;
 
@@ -538,6 +575,12 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) float ControlFilePollSec = 2.0f;   // wall-clock seconds between stats of the file
 };
 
+// Half-width of the arena across the valley (Y): WorldHalfSizeY, or the square fallback.
+inline float SWArenaHalfY(const FSWRunSettings& S)
+{
+	return S.WorldHalfSizeY > 0.f ? S.WorldHalfSizeY : S.WorldHalfSize;
+}
+
 // Snapshot of what one agent can perceive when it decides. Filled by the
 // world manager; consumed by the agent's feasibility gate and movement.
 struct FSWPercept
@@ -561,7 +604,7 @@ struct FSWPercept
 	bool  bTraceXGradient = false;
 	FVector TraceXGradientDir = FVector::ZeroVector;
 	bool  bOnLand = true;                               // above water level
-	bool  bPatchInCellNeedsSoil = false;                // Tecton: a patch in this cell below half stock
+	bool  bPatchInCellNeedsSoil = false;                // Tecton: a patch within ForageRadius (or the trace cell, if larger) below half stock; the name predates the radius rule
 
 	int32 EnergyBin() const
 	{

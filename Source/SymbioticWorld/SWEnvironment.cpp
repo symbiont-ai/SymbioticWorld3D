@@ -171,6 +171,7 @@ void ASWEnvironment::BuildFeatures(const FSWLookSettings& L)
 
 	const float Half = L.TerrainHalfSize;
 	const float Arena = Manager ? Manager->GetSettings().WorldHalfSize : 4500.f;
+	const float ArenaY = Manager ? SWArenaHalfY(Manager->GetSettings()) : 4500.f;
 
 	// Massif arches (plate 1): flat-topped natural sandstone bridges with thick tapering legs, lofted by
 	// SWProc::BuildMassifArch. Three placements, all ahead of the start camera (+X):
@@ -218,7 +219,7 @@ void ASWEnvironment::BuildFeatures(const FSWLookSettings& L)
 		for (const FVector& P : Crown) Info.CrownPoints.Add(Xf.TransformPosition(P));
 		ArchInfos.Add(MoveTemp(Info));
 	};
-	const FMassifSpec Hero { 2600.f, 1800.f, 2700.f, 900.f, 1500.f, 900.f, 240.f };
+	const FMassifSpec Hero { 3250.f, 2250.f, 3375.f, 1125.f, 1875.f, 1125.f, 300.f };   // x1.25 of the hack build: the camera stands 1.45x farther since the arena grew
 	const FMassifSpec Twin { 1700.f, 1300.f, 2100.f, 800.f, 1200.f, 750.f, 190.f };
 	const FMassifSpec Far  { 1400.f, 1000.f, 1600.f, 650.f, 1000.f, 600.f, 160.f };
 	if (L.ArchCount >= 1)
@@ -233,13 +234,13 @@ void ASWEnvironment::BuildFeatures(const FSWLookSettings& L)
 		const float Yaw = 118.f;   // seen from the start camera the pair sits clear of the hero span, to its right and nearer
 		const FVector Along = FVector(1.f, 0.f, 0.f).RotateAngleAxis(Yaw, FVector::UpVector);
 		const float C = 0.5f * Twin.OpenW + 0.7f * Twin.LegW;
-		const FVector Ctr(Arena + 600.f, 4500.f, 0.f);
+		const FVector Ctr(Arena + 600.f, ArenaY, 0.f);
 		PlaceMassif(Twin, Ctr.X - Along.X * C, Ctr.Y - Along.Y * C, Yaw);
 		PlaceMassif(Twin, Ctr.X + Along.X * C, Ctr.Y + Along.Y * C, Yaw);
 	}
 	if (L.ArchCount >= 3)
 	{
-		PlaceMassif(Far, Arena + 5200.f, -3000.f, 70.f);
+		PlaceMassif(Far, Arena + 5200.f, -0.65f * ArenaY, 70.f);
 	}
 
 	// Boulders: large on the slopes, small along the arena rim and river banks.
@@ -262,8 +263,8 @@ void ASWEnvironment::BuildFeatures(const FSWLookSettings& L)
 			if (Rng.FRand() < 0.6f)
 			{
 				const float Ang = Rng.FRandRange(0.f, 2.f * PI);
-				const float D = Arena + Rng.FRandRange(150.f, 1400.f);
-				X = FMath::Cos(Ang) * D; Y = FMath::Sin(Ang) * D;
+				const float D = Rng.FRandRange(150.f, 1400.f);
+				X = FMath::Cos(Ang) * (Arena + D); Y = FMath::Sin(Ang) * (ArenaY + D);
 			}
 			else
 			{
@@ -409,6 +410,7 @@ bool ASWEnvironment::BuildImported(const FSWLookSettings& L)
 	FRandomStream Rng(L.LookSeed * 7 + 3);
 	const float Half = L.TerrainHalfSize;
 	const float Arena = Manager ? Manager->GetSettings().WorldHalfSize : 4500.f;
+	const float ArenaY = Manager ? SWArenaHalfY(Manager->GetSettings()) : 4500.f;
 
 	auto Place = [&](UHierarchicalInstancedStaticMeshComponent* C, float X, float Y, float Size, float Sink, float PitchJitter)
 	{
@@ -440,7 +442,7 @@ bool ASWEnvironment::BuildImported(const FSWLookSettings& L)
 				Y = (Rng.FRand() < 0.5f ? -1.f : 1.f) * Rng.FRandRange(0.58f, 0.98f) * L.ValleyHalfWidth;
 			}
 			// Keep the start-camera corridor (behind the arena, -X side) clear.
-			if (X < -(Arena + 800.f) && FMath::Abs(Y) < 4000.f) continue;
+			if (X < -(Arena + 800.f) && FMath::Abs(Y) < 0.9f * ArenaY) continue;
 			UHierarchicalInstancedStaticMeshComponent* C = Comps[i % Comps.Num()];
 			const FBox Box = C->GetStaticMesh()->GetBoundingBox();
 			const float S = Rng.FRandRange(0.6f, 1.1f);
@@ -464,8 +466,8 @@ bool ASWEnvironment::BuildImported(const FSWLookSettings& L)
 			if (U < 0.5f)
 			{
 				const float Ang = Rng.FRandRange(0.f, 2.f * PI);
-				const float D = Arena + Rng.FRandRange(100.f, 1600.f);
-				X = FMath::Cos(Ang) * D; Y = FMath::Sin(Ang) * D;
+				const float D = Rng.FRandRange(100.f, 1600.f);
+				X = FMath::Cos(Ang) * (Arena + D); Y = FMath::Sin(Ang) * (ArenaY + D);
 			}
 			else if (U < 0.8f)
 			{
@@ -474,7 +476,7 @@ bool ASWEnvironment::BuildImported(const FSWLookSettings& L)
 			}
 			else
 			{
-				X = Rng.FRandRange(-Arena, Arena); Y = Rng.FRandRange(-Arena, Arena);
+				X = Rng.FRandRange(-Arena, Arena); Y = Rng.FRandRange(-ArenaY, ArenaY);
 			}
 			Place(Comps[i % Comps.Num()], X, Y, Rng.FRandRange(L.BoulderSizeMin, L.BoulderSizeMax), 0.22f, 15.f);
 			ImportedBoulders++;
@@ -492,11 +494,11 @@ bool ASWEnvironment::BuildImported(const FSWLookSettings& L)
 			Comps.Add(C);
 		}
 		GroundcoverComps = Comps;   // reused for the arch crowns in BuildImportedFeatures
-		const float R = Arena + 1800.f;
+		const float RX = Arena + 1800.f, RY = ArenaY + 1800.f;
 		int32 Tries = 0;
 		while (ImportedGroundcover < L.GroundcoverCount && Tries++ < L.GroundcoverCount * 6)
 		{
-			const float X = Rng.FRandRange(-R, R), Y = Rng.FRandRange(-R, R);
+			const float X = Rng.FRandRange(-RX, RX), Y = Rng.FRandRange(-RY, RY);
 			const float H = SWProc::TerrainHeight(L, X, Y);
 			if (H < L.WaterLevel + 6.f) continue;                                // under water
 			const float AboveWater = H - L.WaterLevel;
@@ -522,6 +524,7 @@ void ASWEnvironment::BuildCliffWalls(const FSWLookSettings& L)
 	const float Half = L.TerrainHalfSize;
 	const float VHW = L.ValleyHalfWidth;
 	const float Arena = Manager ? Manager->GetSettings().WorldHalfSize : 4500.f;
+	const float ArenaY = Manager ? SWArenaHalfY(Manager->GetSettings()) : 4500.f;
 
 	// Which mesh plays which part, by name; bounds decide when a name is absent.
 	auto ByStem = [&](const TCHAR* Stem) -> UStaticMesh*
@@ -596,7 +599,7 @@ void ASWEnvironment::BuildCliffWalls(const FSWLookSettings& L)
 					const float S = Rng.FRandRange(L.CliffWallScaleMin, L.CliffWallScaleMax) * RowScale;
 					const float Y = s * YFrac * VHW + Rng.FRandRange(-0.04f, 0.04f) * VHW;
 					// Keep the start-camera corridor (behind the arena, -X side) clear.
-					if (!(X < -(Arena + 800.f) && FMath::Abs(Y) < 4000.f))
+					if (!(X < -(Arena + 800.f) && FMath::Abs(Y) < 0.9f * ArenaY))
 					{
 						// Long axis along X; local +Y faces the valley centre (yaw 180 on the +Y side).
 						PlaceWall(M, X, Y, s > 0.f ? 180.f : 0.f, S);
@@ -1026,6 +1029,7 @@ void ASWEnvironment::BuildImportedFeatures(const FSWLookSettings& L)
 {
 	FRandomStream Rng(L.LookSeed * 11 + 5);
 	const float Arena = Manager ? Manager->GetSettings().WorldHalfSize : 4500.f;
+	const float ArenaY = Manager ? SWArenaHalfY(Manager->GetSettings()) : 4500.f;
 
 	auto Place = [&](UHierarchicalInstancedStaticMeshComponent* C, float X, float Y, float Size, float Sink, float PitchJitter)
 	{
@@ -1137,7 +1141,7 @@ void ASWEnvironment::BuildImportedFeatures(const FSWLookSettings& L)
 		for (int32 i = 0; i < L.RiverStoneCount; ++i)
 		{
 			const float X = Rng.FRandRange(-Arena - 1500.f, Arena + 1500.f);
-			const float Off = (Rng.FRand() < 0.5f ? -1.f : 1.f) * Rng.FRandRange(L.RiverWidth * 0.6f, L.RiverWidth * 1.9f);
+			const float Off = (Rng.FRand() < 0.5f ? -1.f : 1.f) * Rng.FRandRange(L.RiverWidth * 1.5f, L.RiverWidth * 2.3f);   // the shelf just above the waterline (the water spans ~1.8 W)
 			const float Y = SWProc::RiverCenterY(L, X) + Off;
 			Place(Comps[i % Comps.Num()], X, Y, Rng.FRandRange(25.f, 110.f), 0.3f, 25.f);
 			ImportedRiverStones++;
@@ -1154,7 +1158,7 @@ void ASWEnvironment::BuildImportedFeatures(const FSWLookSettings& L)
 		while (ImportedShrubs < L.ShrubCount && Tries++ < L.ShrubCount * 8)
 		{
 			const float X = Rng.FRandRange(-Arena - 1800.f, Arena + 1800.f);
-			const float Y = Rng.FRandRange(-Arena - 1800.f, Arena + 1800.f);
+			const float Y = Rng.FRandRange(-ArenaY - 1800.f, ArenaY + 1800.f);
 			const float H = SWProc::TerrainHeight(L, X, Y);
 			const float Above = H - L.WaterLevel;
 			if (Above < 10.f || Above > L.WetlandBand * 4.f) continue;
@@ -1201,7 +1205,9 @@ void ASWEnvironment::BuildImportedFeatures(const FSWLookSettings& L)
 		{
 			const float Side = (Rng.FRand() < 0.5f ? -1.f : 1.f);
 			const float X = Rng.FRandRange(-0.6f * L.TerrainHalfSize, 0.6f * L.TerrainHalfSize);
-			const float Y = Side * Rng.FRandRange(Arena + 900.f, 0.72f * L.ValleyHalfWidth);
+			const float YMin = ArenaY + 900.f;
+			const float YMax = FMath::Max(YMin + 600.f, 0.92f * L.ValleyHalfWidth);   // lower slope, below the rim, whatever the arena size
+			const float Y = Side * Rng.FRandRange(YMin, YMax);
 			Place(Comps[i % Comps.Num()], X, Y, Rng.FRandRange(900.f, 1900.f), 0.02f, 3.f);
 			ImportedTrees++;
 		}
@@ -1502,14 +1508,14 @@ void ASWEnvironment::BuildTraceOverlay(const FSWLookSettings& L)
 	const FSWTraceField& F = Manager->GetTraceX();
 	const int32 N = F.Cells();
 	if (N < 2) return;
-	const float Half = F.HalfSize();
-	const float Cell = F.CellSize();
+	const float HalfX = F.HalfSize(), HalfY = F.HalfSizeY();
+	const float CellX = F.CellSize(), CellY = F.CellSizeY();
 	TraceVerts.Reset(); TraceTris.Reset(); TraceNormals.Reset(); TraceUV.Reset(); TraceColors.Reset();
 	for (int32 j = 0; j <= N; ++j)
 	{
 		for (int32 i = 0; i <= N; ++i)
 		{
-			const float X = -Half + i * Cell, Y = -Half + j * Cell;
+			const float X = -HalfX + i * CellX, Y = -HalfY + j * CellY;
 			const float Z = FMath::Max(SWProc::TerrainHeight(L, X, Y), L.WaterLevel) + 6.f;
 			TraceVerts.Add(FVector(X, Y, Z));
 			TraceNormals.Add(FVector::UpVector);

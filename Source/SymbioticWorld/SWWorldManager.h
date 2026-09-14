@@ -94,6 +94,9 @@ public:
 	const FSWTraceField& GetTraceY() const { return TraceY; }
 	bool TryReproduce(ASWAgent* Parent);
 	bool ClampToArena(FVector& Loc) const;   // returns true if clamped
+	// Strongest Trace Y within the Tecton grazing reach of a patch (soil work lands where the animal
+	// stands, up to Tecton.ForageRadius from the patch it feeds on; 2026-09-11, DESIGN.md §4).
+	float SoilAroundPatch(const FVector& PatchLoc) const;
 	void RegroundAll();                       // snap every organism/patch to the terrain (after the environment exists)
 
 	// ---- Selection (HUD) ----
@@ -108,6 +111,7 @@ public:
 	int32 GetDeaths() const { return Deaths; }
 	int32 GetDeathsStarvation() const { return DeathsStarvation; }
 	int32 GetDeathsPredation() const { return DeathsPredation; }
+	int32 GetDeathsPredation(ESWSpecies S) const { return DeathsPredationBySpecies[static_cast<int32>(S)]; }   // per prey species (HUD)
 	const TArray<ASWLeviathan*>& GetLeviathans() const { return Leviathans; }
 	float GetResourceTotal(int32 Type) const { return Type == 0 ? ResourceTotalA : ResourceTotalB; }
 	float GetResourceCapacity(int32 Type) const { return Type == 0 ? ResourceCapA : ResourceCapB; }
@@ -147,6 +151,7 @@ protected:
 	int32 Deaths = 0;
 	int32 DeathsStarvation = 0;
 	int32 DeathsPredation = 0;
+	int32 DeathsPredationBySpecies[2] = { 0, 0 };   // [Lumen, Tecton]
 	float ResourceTotalA = 0.f, ResourceTotalB = 0.f;
 	float ResourceCapA = 0.f, ResourceCapB = 0.f;
 	float NeutralBirthTimer = 0.f;

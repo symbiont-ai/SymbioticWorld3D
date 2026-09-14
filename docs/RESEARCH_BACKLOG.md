@@ -1,6 +1,13 @@
 # Research backlog (open questions for the scientist team)
 
-## Exploration is structurally low (noted 2026-09-06 17:40, to discuss)
+## Exploration is structurally low (noted 2026-09-06 17:40; decided 2026-09-11)
+
+**Decision 2026-09-11:** `Settings.WeightNovelty` is 0.2 by default (DESIGN.md §1 / §6b, the documented
+bias); `SenseRange` was tried at 4000 and rejected (it removed river crossings). Measured with the predator
+on, seeds 1-3, 1800 s: explore share 6.4 -> 7.5 %; predation victims are not more exploratory than the
+population (epsilon difference -0.045 to +0.008) and mean epsilon rises 0.19 -> 0.25-0.32 with or without
+the predator, so "the adventurous ones get eaten" is not what the logs show. The rest of this note is the
+original analysis.
 
 Observed on the live world: Lumen explore 11-15 % of decisions, forage 40-48 %; Tecton explore ~20 %.
 

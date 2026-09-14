@@ -69,16 +69,21 @@ birth), `RewardScale`, `WeightEnergy`, `WeightNovelty`, `WeightInteraction`, `Dr
 `DroughtCapacityMultiplier`, `NeutralBirthInterval`, `AgentLogInterval`, `bTraceFields`,
 `TraceXDeposit`, `TraceYDeposit`, `TraceYRegenGain`, `TraceXFollowMin`, `ModifyBurn`, `QInitMax`
 (organisms born after the command), `PolicyShare` (births after the command), `PolicyFilePollSec`,
-`ControlFilePollSec`. `TraceMax`: the reward scaling and the minimap use the new value at once, the
-fields' clamp keeps the old one until the next reset.
+`ControlFilePollSec`, and the predator's behaviour while it runs: `LeviathanSpeed`, `LeviathanChaseSpeed`,
+`LeviathanSenseRadius`, `LeviathanStrikeRadius`, `LeviathanStrikeCooldown`, `LeviathanTarget`,
+`LeviathanTurnInterval`, `LeviathanTurnChance`, `LeviathanLoiterChance`, `bLeviathanPauseInDrought`
+(`bLeviathan` and `LeviathanCount` spawn the animals at `StartRun`: `set` then `reset`). `TraceMax`: the
+reward scaling and the minimap use the new value at once, the fields' clamp keeps the old one until the next reset.
 
 **`Settings.*` read only at `StartRun`, so effective at the next `reset` / `mode=`:**
 `InitialLumen`, `InitialTecton` (founders, and the neutral-control targets), `ResourcePatchesA`,
 `ResourcePatchesB`, `PatchCapacity`, **`PatchRegenPerSec`** (each patch stores its regen at spawn, so a live
 edit changes nothing until the patches are respawned), `TraceCells`, `TraceXHalfLife`, `TraceYHalfLife`
 (the trace grids are built in `StartRun`), `Seed`, `Mode`, `FounderGenome` (the `Genome.` scope),
-`FounderSpread`, `FounderAgeSpread`, `bWriteLogs`. `WorldHalfSize` is mixed (clamping and spawn positions
-use the new value, the trace grids and the rendered arena keep the old one): treat it as reset-only.
+`FounderSpread`, `FounderAgeSpread`, `bWriteLogs`, `PatchMinSpacing` (used when patches respawn).
+`WorldHalfSize` / `WorldHalfSizeY` are mixed (clamping and spawn positions use the new value, the trace
+grids and the rendered arena keep the old one): treat them as reset-only. `Look.RiverBranches`,
+`RiverBranchWidth/Depth`, `RiverWidth/Depth/Amp/Wavelength` are terrain fields: never live (see below).
 
 **Process lifetime (not even a reset picks them up):** `PolicyServers`, `PolicyTimeoutMs`,
 `PolicyServerFile`, `ControlFile` (all resolved in `BeginPlay`).
@@ -86,12 +91,14 @@ use the new value, the trace grids and the rendered arena keep the old one): tre
 **`Lumen.*` / `Tecton.*`:** an organism copies its species struct at birth (`ASWAgent::Init`), so every
 field (`ReproThreshold`, `MaxAge`, `MoveSpeed`, `ForageRate`, `BasalBurn`, `StartEnergy`, ...) applies to
 organisms born **after** the command; living ones keep their copy. A population turns over within
-`MaxAge` logical seconds (150 for Lumen, 300 for Tecton), or `reset` applies it to everyone at once.
+`MaxAge` logical seconds (150 for Lumen, 260 for Tecton), or `reset` applies it to everyone at once.
 
 **`Genome.*`:** the founder genome, used at the next `reset` / `mode=` (in mode B every child copies
 its parent, so this is the whole population's genome after the reset).
 
-**`Look.*`:** live: `bLumenTrails`, `TrailSampleInterval`, `TrailSamples`, `CreatureGlow`,
+**`Look.*`:** read when an organism's body is built (birth, or `reset` for everyone):
+`bAuthoredCreatures`, `AuthoredLumenScale`, `AuthoredTectonScale`, `bCreatureShadows`
+(docs/CREATURE_RENDERING.md). Live: `bLumenTrails`, `TrailSampleInterval`, `TrailSamples`, `CreatureGlow`,
 `SignalGlowBoost`, `LumenGlow`, `TectonGlow`, `DroughtBlendSeconds`, `bDroughtPreview`,
 `DroughtWaterDrop`, `bScientistAvatars` (0 removes the field-team avatars on the next frame; 1 shows them
 only while a policy server is sending `scientists` reports, docs/POLICY_API.md §5). Applied at the next

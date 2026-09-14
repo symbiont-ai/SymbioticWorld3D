@@ -38,6 +38,12 @@ namespace SWProc
 	// so agents can query it without touching the environment actor.
 	float TerrainHeight(const FSWLookSettings& L, float X, float Y);
 	float RiverCenterY(const FSWLookSettings& L, float X);
+	// Tributaries (Look.RiverBranches): polylines from the valley sides to confluences on the main channel.
+	struct FRiverBranch { TArray<FVector2D> Points; float Width = 300.f; };   // depth = RiverDepth x RiverBranchDepth, read live
+	const TArray<FRiverBranch>& RiverBranches(const FSWLookSettings& L);
+	// Distance from (X, Y) to the nearest channel centreline (main or tributary, whichever is nearer
+	// relative to its width) with that channel's Gaussian half-width and depth.
+	float RiverDistance(const FSWLookSettings& L, float X, float Y, float& OutWidth, float& OutDepth);
 	// Height an organism stands at: ground, or water level when wading.
 	float GroundZ(const FSWLookSettings& L, float X, float Y, float WaterDrop = 0.f);
 

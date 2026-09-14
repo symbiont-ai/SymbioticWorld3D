@@ -1,9 +1,10 @@
 #include "SWTraceField.h"
 
-void FSWTraceField::Init(int32 InCells, float InHalfSize, float InHalfLifeSeconds, float InMaxValue)
+void FSWTraceField::Init(int32 InCells, float InHalfSizeX, float InHalfSizeY, float InHalfLifeSeconds, float InMaxValue)
 {
 	N = FMath::Clamp(InCells, 4, 256);
-	Half = FMath::Max(InHalfSize, 100.f);
+	HalfX = FMath::Max(InHalfSizeX, 100.f);
+	HalfY = FMath::Max(InHalfSizeY, 100.f);
 	HalfLife = FMath::Max(InHalfLifeSeconds, 0.1f);
 	MaxValue = FMath::Max(InMaxValue, 0.01f);
 	V.SetNumZeroed(N * N);
@@ -12,9 +13,8 @@ void FSWTraceField::Init(int32 InCells, float InHalfSize, float InHalfLifeSecond
 bool FSWTraceField::ToCell(float X, float Y, int32& I, int32& J) const
 {
 	if (N <= 0) return false;
-	const float Cell = CellSize();
-	I = static_cast<int32>(FMath::Floor((X + Half) / Cell));
-	J = static_cast<int32>(FMath::Floor((Y + Half) / Cell));
+	I = static_cast<int32>(FMath::Floor((X + HalfX) / CellSize()));
+	J = static_cast<int32>(FMath::Floor((Y + HalfY) / CellSizeY()));
 	return I >= 0 && J >= 0 && I < N && J < N;
 }
 
@@ -59,7 +59,9 @@ bool FSWTraceField::Gradient(float X, float Y, FVector& OutDir) const
 	const float Gx = At(I + 1, J) - At(I - 1, J);
 	const float Gy = At(I, J + 1) - At(I, J - 1);
 	if (FMath::Abs(Gx) < 1e-3f && FMath::Abs(Gy) < 1e-3f) return false;
-	OutDir = FVector(Gx, Gy, 0.f).GetSafeNormal();
+	// Central differences span 2 * CellSize() in X and 2 * CellSizeY() in Y: put both on the Y span (a
+	// dimensionless rescale, so the 1e-3 flat test and GetSafeNormal keep working) for a world-space direction.
+	OutDir = FVector(Gx * (CellSizeY() / CellSize()), Gy, 0.f).GetSafeNormal();
 	return true;
 }
 
