@@ -2,6 +2,7 @@
 #include "SWWorldManager.h"
 #include "SWAgent.h"
 #include "SWCameraPawn.h"
+#include "SWScientistAvatar.h"
 #include "SymbioticWorld.h"
 #include "Components/InputComponent.h"
 #include "Engine/World.h"
@@ -46,6 +47,7 @@ void ASWPlayerController::SetupInputComponent()
 	InputComponent->BindAction("ToggleHelp",     IE_Pressed, this, &ASWPlayerController::OnToggleHelp);
 	InputComponent->BindAction("FollowSelected", IE_Pressed, this, &ASWPlayerController::OnFollowSelected);
 	InputComponent->BindAction("ToggleScientists", IE_Pressed, this, &ASWPlayerController::OnToggleScientists);
+	InputComponent->BindAction("FollowScientist", IE_Pressed, this, &ASWPlayerController::OnFollowScientist);
 }
 
 void ASWPlayerController::OnSelectAgent()
@@ -99,6 +101,26 @@ void ASWPlayerController::OnToggleScientists()
 		UE_LOG(LogSymbioticWorld, Log, TEXT("Scientist avatars %s (V)"),
 			M->Look.bScientistAvatars ? TEXT("ON") : TEXT("OFF"));
 	}
+}
+
+void ASWPlayerController::OnFollowScientist()
+{
+	// Chase-cam on the field team, one scientist per press in join order (like Tab for
+	// organisms). Camera only: the avatars are visual and following one changes nothing.
+	ASWWorldManager* M = GetManager();
+	ASWCameraPawn* Cam = Cast<ASWCameraPawn>(GetPawn());
+	if (!M || !Cam) return;
+	TArray<ASWScientistAvatar*> Team;
+	for (ASWScientistAvatar* A : M->GetScientistAvatars()) if (IsValid(A) && !A->IsHidden()) Team.Add(A);
+	if (Team.Num() == 0)
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("G: no field team to follow (needs Look.bScientistAvatars on, key V, and a Lab.lab observe --embody bridge)"));
+		return;
+	}
+	const int32 Cur = Team.IndexOfByKey(Cam->GetFollowedScientist());   // INDEX_NONE when not following one: start at the first
+	ASWScientistAvatar* Next = Team[(Cur + 1) % Team.Num()];
+	Cam->SetFollowScientist(Next);
+	UE_LOG(LogSymbioticWorld, Log, TEXT("Following scientist %s (G, %d of %d)"), *Next->GetScientistName(), (Cur + 1) % Team.Num() + 1, Team.Num());
 }
 
 void ASWPlayerController::OnCycleMode()

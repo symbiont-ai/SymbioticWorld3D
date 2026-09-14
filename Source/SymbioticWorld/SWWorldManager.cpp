@@ -163,8 +163,8 @@ void ASWWorldManager::UpdateScientistAvatars(float DeltaSeconds)
 				if (!Avatar) continue;
 				Avatar->Init(this, Pings[i].Name, ScientistAvatars.Num());
 				ScientistAvatars.Add(Avatar);
-				UE_LOG(LogSymbioticWorld, Log, TEXT("Field team: %s joined (%d avatars)"),
-					*Pings[i].Name, ScientistAvatars.Num());
+				UE_LOG(LogSymbioticWorld, Log, TEXT("Field team: %s joined as %s (%d avatars)"),
+					*Pings[i].Name, Avatar->HasMannequin() ? TEXT("mannequin") : TEXT("cylinder"), ScientistAvatars.Num());
 			}
 			Avatar->SetTargetXY(Pings[i].X, Pings[i].Y);
 		}

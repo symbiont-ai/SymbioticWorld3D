@@ -51,6 +51,7 @@ If `Content/Maps/Valley.umap` is missing, recreate it:
 | R | reset run (same seed) |
 | H | hide/show help |
 | V | scientist avatars on/off (field team of a `Lab.lab observe --embody` bridge; visual only, off by default) |
+| G | follow the next scientist (cycles the field team in join order; F or any camera move releases) |
 | WASD / QE, RMB drag, wheel | camera |
 
 Modes: **A** learning off (α = 0) · **B** learning on, genome fixed ·
@@ -95,6 +96,7 @@ Command-line flags understood by the sim (all optional):
 -SWCam=x:y:z:pitch:yaw  # start camera for scripted shots (run_sim: --cam=x,y,z,pitch,yaw)
 -SWSet="Look.bAuthoredCreatures=0"             # procedural creature bodies instead of the authored Lumen/Tecton skeletal meshes (docs/CREATURE_RENDERING.md)
 -SWFollowSpecies=Lumen|Tecton|Leviathan         # chase camera on the selected organism of that species (selecting one if needed), or on the river predator; any camera key releases it
+-SWFollowScientist=Vesper|any                   # chase camera on a field-team scientist once the avatar joins (needs Look.bScientistAvatars=1 and an --embody bridge); key G cycles the team live
 -SWCreatureAudit                                # log creature pose-update ms + foot reach error at each -SWShot time
 -RenderOffScreen        # run_sim: --offscreen; renders and screenshots without a visible window,
                         # so a scripted render never captures your keystrokes (M/P/1-3 would change the run)

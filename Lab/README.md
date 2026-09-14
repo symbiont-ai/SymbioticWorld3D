@@ -164,7 +164,7 @@ forage-greedy Lumen policy change the selection gradient on alpha?").
   arena as virtual bodies with a sense radius; each observer can present
   only what they personally witnessed, and the sim can render them as labelled
   bodies (Manny/Quinn mannequins when the project has that content, else engine
-  capsules; V key / `Look.bScientistAvatars`, off by default). Costs
+  cylinders; V key / `Look.bScientistAvatars`, off by default). Costs
   render load and partial observability — use it when the point is the
   fieldwork, not the fastest science.
 

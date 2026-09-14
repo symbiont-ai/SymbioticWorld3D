@@ -136,11 +136,14 @@ Printed in the UE log as `[host:port] text`.
 
 Reports embodied field observers (the Symbiotic Lab's `observe --embody`) for
 the sim's avatar layer: the sim renders one labelled body per entry (the Manny/Quinn
-mannequin when the host project has that content, else an engine capsule) and
+mannequin with idle/walk/jog clips when the host project has that content, see
+`Tools/import_mannequins.py`, else an engine cylinder) and
 smooths movement between reports. `Look.bScientistAvatars` gates the layer and
 is OFF by default (the plain god-view is the stable demo configuration); turn
 it on at launch with `-SWSet "Look.bScientistAvatars=true"` or live through
 the control file (`set Look.bScientistAvatars=1`), and off again the same way.
+Each avatar carries a screen-space name tag in its own colour; key G cycles a
+chase camera through the team (`-SWFollowScientist=<Name>|any` at launch).
 The lab's witnessing and evidence are bridge-side and work identically with
 the layer off.
 Coordinates are arena uu, the same space as organism `position`. Send at most

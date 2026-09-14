@@ -20,6 +20,7 @@ class UFont;
 //   bottom-left   ECOSYSTEM FLOW minimap: water, Trace X (cyan), Trace Y (amber), organisms, nodes
 //   bottom-right  keys (H toggles)
 //   bottom-centre drought banner when active
+//   in the scene  field-team name tags over the scientist avatars (Look.bScientistAvatars)
 //
 // "Stability" is population steadiness over the last 30 logical seconds:
 // 1 - (max - min) / max of the total population in that window. It is a
@@ -56,5 +57,7 @@ protected:
 	float MinimapWaterLevel = 0.f;
 	void DrawHelp(float X, float Y);
 	void DrawSelectionMarker(const ASWAgent& A);
+	// Field-team name tags: screen space, fixed pixel size at any distance, drawn under the panels.
+	void DrawScientistTags(const ASWWorldManager& M);
 	void DrawEvolutionStrip(const ASWWorldManager& M, float X, float Y, float W);
 };

@@ -167,9 +167,13 @@ performs that comparison across seeds.
   percept field, no trace deposit, no collision, no draw from the seeded stream,
   so `hello`/`decide`/`actions` are unchanged. `Look.bScientistAvatars` (default
   false; `-SWSet "Look.bScientistAvatars=1"` at launch, `set Look.bScientistAvatars=1`
-  in the control file, or key V) renders one labelled body per entry of the
+  in the control file, or key V) renders one body per entry of the
   bridge's `scientists` side message (docs/POLICY_API.md §5), positions the Lab
-  computes from the decide stream. Bodies spawn, move (wall-clock smoothing,
+  computes from the decide stream. The body is Epic's mannequin at true human
+  scale (about 1.8 m, against a 3.4 m Lumen and a 7 m Tecton), its paint tinted in
+  the scientist's colour, playing idle / walk / jog clips; the name is a
+  screen-space HUD tag so the team reads from the start camera (human researcher
+  avatars are allowed by the 2026-09-14 amendment in docs/SPEC_TEXT.txt). Bodies spawn, move (wall-clock smoothing,
   like the camera) and retire on the rendered frame, never inside a substep, and
   hide when no report has arrived for 20 logical seconds. Determinism: with no
   policy server the layer never spawns, so a run with the flag on is byte-identical
