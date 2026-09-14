@@ -710,6 +710,8 @@ void ASWWorldManager::Tick(float DeltaSeconds)
 	// reset issued while paused still get a pose. Timed on its own for -SWCreatureAudit.
 	const double PoseStart = FPlatformTime::Seconds();
 	for (ASWAgent* A : Agents) if (IsValid(A)) A->UpdateAuthoredVisual(Accumulator);
+	// Same interpolation for the predator, which is also only moved on the substep.
+	for (ASWLeviathan* Lv : Leviathans) if (IsValid(Lv)) Lv->UpdateVisual(Accumulator);
 	const double CreaturePoseMs = (FPlatformTime::Seconds() - PoseStart) * 1000.0;
 	if (Steps > 0 && Look.bLumenTrails)
 	{
