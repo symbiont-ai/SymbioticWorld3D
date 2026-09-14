@@ -509,6 +509,17 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) float LeviathanTurnInterval = 12.f;    // logical s between patrol decisions (mean)
 	UPROPERTY(EditAnywhere) float LeviathanTurnChance = 0.35f;     // probability a decision reverses the direction
 	UPROPERTY(EditAnywhere) float LeviathanLoiterChance = 0.15f;   // probability a decision loiters until the next one
+	// Steering (2026-09-11). The chase was bang-bang: the direction flipped whenever the prey was
+	// more than 60 uu away along X, while one substep moves LeviathanChaseSpeed x LogicalSubstep
+	// (150 uu at the defaults), so the animal overshot, reversed, overshot again and snapped its
+	// 18 m body end-for-end at the substep rate. It now brakes into the prey (the step is clamped to
+	// the distance left), never steps against its facing (inside the band it holds station), commits
+	// to a direction only outside a band wider than one step, and turns at a bounded rate, slowing
+	// through the turn and resuming once the heading has caught up.
+	UPROPERTY(EditAnywhere) float LeviathanChaseBand = 250.f;      // uu along X; the direction only flips outside this band (floored at 1.5 x one substep's travel)
+	UPROPERTY(EditAnywhere) float LeviathanTurnRate = 45.f;        // deg of yaw per logical s (a reversal is a 4 s turn, not a snap)
+	UPROPERTY(EditAnywhere) float LeviathanPreyHold = 1.25f;       // keep the current prey until it leaves the water or passes this x LeviathanSenseRadius, so two equidistant organisms cannot flip the target every substep
+	UPROPERTY(EditAnywhere) float LeviathanBedFollowRate = 3.f;    // per logical s; how fast the belly clamp follows the riverbed, low-passing its +-70 uu floor noise into a glide
 	// Restrict the predator to one species. Both is the honest default: hunting one
 	// species only turns predation into a species-specific handicap rather than a shared
 	// environmental pressure, which changes what a mode C vs N comparison means.

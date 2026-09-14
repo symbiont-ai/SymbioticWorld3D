@@ -119,10 +119,36 @@ performs that comparison across seeds.
   banner then reads "(predation paused)"). Movement and surfacing
   (`LeviathanSubmersion`, `LeviathanBreachRise`, `LeviathanSurfaceInterval`,
   `LeviathanSurfaceDuration`) are visual and use their own `LookSeed` stream.
-  Movement (2026-09-11): the animal hunts, chasing the nearest organism that
-  is in the water within `LeviathanSenseRadius` (2400 uu) at `LeviathanChaseSpeed`
-  (1500 uu/s) and steering across the channel toward it (a target that climbs
-  out is dropped at once); with no prey in range it patrols at `LeviathanSpeed`
+  Movement (2026-09-11): the animal hunts, chasing an organism that is in the
+  water within `LeviathanSenseRadius` (2400 uu) at `LeviathanChaseSpeed`
+  (1500 uu/s) and steering across the channel toward it, up to 1.2 x
+  `RiverWidth` off the centreline (the water reaches ~1.8 x each side and the jaw
+  needs `LeviathanStrikeRadius`, so nothing it can see is out of reach). It keeps
+  that target until the organism leaves the water, dies or passes
+  `LeviathanPreyHold` x the sense radius, and it does not hunt while the strike
+  cooldown runs or while a drought pauses predation. The chase brakes into the
+  prey (the step is clamped to the distance left) and never translates against
+  its facing: inside `LeviathanChaseBand` (250 uu, floored at 1.5 x one
+  substep's travel) it holds station rather than slide backwards under a prey
+  that has walked past, and it commits to a new direction only once the prey
+  leaves that band. The heading then turns at `LeviathanTurnRate` (45 deg per
+  logical s) with travel scaled by how far the body still has to turn, so a
+  reversal is a slow turn near station rather than a snap. History: the first
+  version re-picked the nearest prey every substep and flipped direction
+  whenever it was more than 60 uu away along X while one substep moves 150 uu;
+  it could not settle inside its own deadband and snapped its 18 m body
+  end-for-end at the substep rate (an offline replication of that rule against
+  synthetic prey tracks counted ~47 reversals per 10 s of chase). The first fix
+  added the brake without the no-backwards rule; an adversarial review
+  (146 agents, 13 of 54 claims upheld) found that the heading then froze on
+  acquisition while the animal tracked the prey's X backwards, and that the
+  interpolated body was drawn toward the world origin before the first substep.
+  Both are fixed. The belly clamp follows the riverbed at
+  `LeviathanBedFollowRate` for the same reason -- sampled raw, the bed's noise
+  bobbed the body between substeps. The rendered body is interpolated between
+  substeps (`ASWLeviathan::UpdateVisual`, as `ASWAgent` does for its authored
+  body); the actor transform the strike test reads is never interpolated.
+  With no prey in range the animal patrols at `LeviathanSpeed`
   with seeded random decisions every `LeviathanTurnInterval` s (x 0.5-1.5):
   reverse with `LeviathanTurnChance`, loiter with `LeviathanLoiterChance`, else
   cruise at 0.8-1.2x. Those draws come from the manager's stream in substep
