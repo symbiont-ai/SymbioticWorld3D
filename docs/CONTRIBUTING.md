@@ -144,6 +144,13 @@ CHECKLIST.md, PROGRESS.md   phases with exit conditions; one line per verified c
 12. Visuals use their own streams seeded from `Look.LookSeed` (`ASWAgent::BuildBody`, `ASWResourcePatch::Init`,
     `ASWEnvironment`), so the look never perturbs the simulation.
 13. Iteration order is deterministic (arrays, `RemoveAtSwap`), so same seed + mode => byte-identical CSVs.
+    That must also hold across compile partitions: UBT's adaptive unity build compiles every source file that
+    `git status` reports modified outside the unity blob, so a worktree with edits and a clean checkout compile
+    different translation units of the same source. `Tools/build.bat -DisableAdaptiveUnity` builds the
+    clean-checkout layout on demand. Never use a function's out-parameter in the same expression as the call
+    (`f(x, Out) / Out`): the order of the call and of the read is unspecified, and MSVC picked different orders
+    in the unity and in the standalone TU (`SpawnPatches`, found and fixed 2026-09-14). Rounding is not the
+    issue: `/fp:fast` is on and every probed value matched to 9 significant digits across partitions.
 14. External policies do not touch `Rng`; a fallback (timeout, infeasible reply) does, so runs with `--policy`
     are reproducible only if the server is.
 15. `-SWDuration` ends the run exactly at that logical time (`Tick` checks before each substep).
@@ -159,8 +166,9 @@ CHECKLIST.md, PROGRESS.md   phases with exit conditions; one line per verified c
   Any change to `SWTypes.h` that alters behaviour lands with the matching `DESIGN.md` edit in the same PR.
 - All randomness through the manager's seeded `FRandomStream` (§3.11). Fixed substep.
 - The no-policy path stays **byte-identical**: same seed + mode twice must give identical CSVs (after stripping
-  `run_id`). If your change legitimately alters the draw sequence (e.g. one more Gaussian per birth), say so in
-  the PR and add the reproducibility note to `DESIGN.md` §5, as was done for `e`.
+  `run_id`), and the result must not depend on which files are modified in the checkout (§3.13). If your change
+  legitimately alters the draw sequence (e.g. one more Gaussian per birth), say so in the PR and add the
+  reproducibility note to `DESIGN.md` §5, as was done for `e`.
 - Every change is verified with numbers: `Tools/run_sim.py` + `Analysis/analyze_run.py` output in the PR,
   plus a screenshot for anything visible. Adjectives are not evidence.
 - Every shown run states seed and mode; learning claims come with the mode A control, evolution claims with mode N.
@@ -359,6 +367,13 @@ drought test needs step 2.
    after the pair; a `--policy` run or a different `--duration` with the same seed in between prints `DIFFER` for
    a reason that has nothing to do with your change. If the change intentionally alters the draw sequence, run the
    pair anyway (it proves the new build is self-consistent) and note it in `DESIGN.md` §5.
+   Reference line counts (`wc -l`, header included; e256eda + the 2026-09-14 `SpawnPatches` fix): seed 7 C 300 s
+   agents 23715 / births 195 / deaths 160 / population 117; seed 7 C 120 s 7735 / 65 / 43 / 47; seed 1 C 600 s
+   54735 / 427 / 387 / 235. A pair that is self-identical but off these counts means either an intentional
+   draw-sequence change or a build-partition dependence: rebuild with `Tools/build.bat -DisableAdaptiveUnity`
+   (every file in the unity blob, the clean-checkout layout) and rerun; if that reproduces the reference, the
+   working-set build is the one that differs, so look for evaluation-order or uninitialised-state bugs in the
+   modified files (§3.13), not for floating-point drift.
 4. Analyze: `python Analysis/analyze_run.py <dir1> <dir2>` (or `--root Saved/SymbioticWorld`); paste the lines
    the change is about (lifetime learning, inheritance, per generation, Welch).
 5. Screenshot for anything visible:
