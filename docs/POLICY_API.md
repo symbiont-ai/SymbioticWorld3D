@@ -56,6 +56,14 @@ see "Adding servers while the sim runs" below. `-SWPolicy` is the launch-time al
 `actions` is the action order used by every `mask` and `q` array. `controls` lists the
 species any configured server drives (the hello is shared between servers).
 
+`water_mask` (added 2026-09-14, optional; elided above): `{"cell":200,"cols":80,"rows":55,
+"x0":-8000.0,"y0":-5500.0,"data":["000111...", ...]}` — one string per row of `cell`-uu
+cells covering the arena from `(x0, y0)`, `data[j][i]` is `"1"` where the cell centre fails the
+`on_land` test (terrain below the water level). Built with the hello, so fixed until the next
+reset (a live `set Look.*` that moves the terrain or the water level reaches the Lab only after a
+`reset`); about 5 KB. The embodied field
+team (§5) routes on it; servers that drive organisms can ignore it.
+
 ### 2. `decide` (sim -> server), at most one per logical substep per server
 
 Sent in every substep in which at least one of that server's organisms is due to decide
@@ -144,6 +152,13 @@ it on at launch with `-SWSet "Look.bScientistAvatars=true"` or live through
 the control file (`set Look.bScientistAvatars=1`), and off again the same way.
 Each avatar carries a screen-space name tag in its own colour; key G cycles a
 chase camera through the team (`-SWFollowScientist=<Name>|any` at launch).
+The Lab side (`Lab/embodiment.py`) sends each scientist toward the nearest organism
+that fits their rule, keeps them on land using the hello's `water_mask`, and crosses
+water by jet ski only when the target is on the other side; each entry also carries
+`"mode":"walk"|"jetski"`, informational — the sim draws the jet ski from its own
+water test at the rendered position, so an older bridge that walks straight through
+the river still renders correctly. During a drought that test uses the lowered
+surface, so a scientist reported as `jetski` over the exposed bed walks on screen.
 The lab's witnessing and evidence are bridge-side and work identically with
 the layer off.
 Coordinates are arena uu, the same space as organism `position`. Send at most

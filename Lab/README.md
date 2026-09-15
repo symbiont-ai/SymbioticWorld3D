@@ -161,7 +161,10 @@ forage-greedy Lumen policy change the selection gradient on alpha?").
   behavior distribution per species (`live_*_action_*_frac`). Cheapest for
   the sim (no avatar rendering), complete information for the scientists.
 - **Embodied field team** — add `--embody`. The eight researchers walk the
-  arena as virtual bodies with a sense radius; each observer can present
+  arena as virtual bodies with a sense radius, each heading for the nearest
+  organism that fits their rule (`Lab/embodiment.py`), keeping to land and
+  crossing the river by jet ski only when the target is on the other side;
+  each observer can present
   only what they personally witnessed, and the sim can render them as labelled
   bodies (Manny/Quinn mannequins when the project has that content, else engine
   cylinders; V key / `Look.bScientistAvatars`, off by default). Costs

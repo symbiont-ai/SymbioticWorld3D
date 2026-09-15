@@ -1688,12 +1688,36 @@ FString ASWWorldManager::BuildHelloLine() const
 		if (bL) Controls += TEXT("\"Lumen\"");
 		if (bT) Controls += FString(bL ? TEXT(",") : TEXT("")) + TEXT("\"Tecton\"");
 	}
+	// Water mask for the embodied field team (Lab/embodiment.py keeps the scientists on land and crosses
+	// by jet ski): 200 uu cells over the arena, '1' where the on_land percept would be false. Terrain and
+	// arena are fixed for a run, so this is built with the hello (once per run / reset, ~4400 samples).
+	FString WaterMask;
+	{
+		const float Cell = 200.f;
+		const float HalfX = Settings.WorldHalfSize, HalfY = SWArenaHalfY(Settings);
+		const int32 Cols = FMath::Clamp(FMath::CeilToInt(2.f * HalfX / Cell), 1, 400);
+		const int32 Rows = FMath::Clamp(FMath::CeilToInt(2.f * HalfY / Cell), 1, 400);
+		FString Data;
+		Data.Reserve(Rows * (Cols + 4));
+		for (int32 j = 0; j < Rows; ++j)
+		{
+			Data += j ? TEXT(",\"") : TEXT("\"");
+			for (int32 i = 0; i < Cols; ++i)
+			{
+				const float WX = -HalfX + (i + 0.5f) * Cell, WY = -HalfY + (j + 0.5f) * Cell;
+				Data += SWProc::TerrainHeight(Look, WX, WY) > Look.WaterLevel ? TEXT("0") : TEXT("1");
+			}
+			Data += TEXT("\"");
+		}
+		WaterMask = FString::Printf(TEXT("{\"cell\":%.0f,\"cols\":%d,\"rows\":%d,\"x0\":%.1f,\"y0\":%.1f,\"data\":[%s]}"),
+			Cell, Cols, Rows, -HalfX, -HalfY, *Data);
+	}
 	return FString::Printf(TEXT("{\"type\":\"hello\",\"protocol\":1,\"actions\":[%s],\"bins\":[\"LOW\",\"MID\",\"HIGH\"],\"species\":[\"Lumen\",\"Tecton\"],")
 		TEXT("\"controls\":[%s],\"seed\":%d,\"mode\":\"%c\",\"mode_name\":%s,\"run_id\":%s,\"decision_interval\":%.3f,\"substep\":%.3f,")
-		TEXT("\"timeout_ms\":%d,\"share\":%.3f,\"world_half_size\":%.1f,\"world_half_size_y\":%.1f,\"max_energy\":{\"Lumen\":%.1f,\"Tecton\":%.1f},")
+		TEXT("\"timeout_ms\":%d,\"share\":%.3f,\"world_half_size\":%.1f,\"world_half_size_y\":%.1f,\"water_mask\":%s,\"max_energy\":{\"Lumen\":%.1f,\"Tecton\":%.1f},")
 		TEXT("\"max_age\":{\"Lumen\":%.1f,\"Tecton\":%.1f},\"learning\":\"tabular contextual bandit, gamma 0; the sim keeps updating each organism's own table with every reward\"}"),
 		*Actions, *Controls, Settings.Seed, ModeName.Len() > 0 ? ModeName[0] : TEXT('?'), *JsonStr(ModeName), *JsonStr(RunId),
-		Settings.DecisionInterval, Settings.LogicalSubstep, PolicyClient.GetTimeoutMs(), Settings.PolicyShare, Settings.WorldHalfSize, SWArenaHalfY(Settings),
+		Settings.DecisionInterval, Settings.LogicalSubstep, PolicyClient.GetTimeoutMs(), Settings.PolicyShare, Settings.WorldHalfSize, SWArenaHalfY(Settings), *WaterMask,
 		LumenParams.MaxEnergy, TectonParams.MaxEnergy, LumenParams.MaxAge, TectonParams.MaxAge);
 }
 

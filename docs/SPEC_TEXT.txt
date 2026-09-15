@@ -75,8 +75,9 @@ World topologyOne compact valley with river/wetland, rocky uplands, resource pat
 gradients.
 Arches Natural geological erosion formations only; never ruins or constructed infrastructure.
 Active speciesExactly two: Lumen and Tecton. No higher species or civilization in the MVP. Human 
-researcher avatars (the Symbiotic Lab field team) and the Leviathan river predator (an 
-environmental perturbation) are allowed; neither is a species (amended 14 September 2026).
+researcher avatars (the Symbiotic Lab field team, who cross water on a visual-only jet ski) and 
+the Leviathan river predator (an environmental perturbation) are allowed; neither is a species 
+(amended 14 and 15 September 2026).
 Visual codingCyan = Lumen information/learning; amber = Tecton terrain modification; green = 
 resource recovery; red = perturbation.
 Environment Water, vegetation, soil/moisture field, two resource types, local environmental traces.
@@ -86,7 +87,9 @@ World truth Gameplay variables remain simple even if the visual layer appears ri
 Non-goals for the hack
 No cities, buildings, crafting, tool use or civilization simulation.
 Human researcher avatars are in scope (amended 14 September 2026, lifting the earlier ban on 
-human-like NPCs): the Symbiotic Lab field team walks the valley as visual-only human bodies.
+human-like NPCs): the Symbiotic Lab field team walks the valley as visual-only human bodies and 
+crosses the river on a visual-only jet ski (amended 15 September 2026); the jet ski is the 
+researchers' scenery, not organism tool use or infrastructure, and no organism can see or use it.
 No LLM controlling each organism.
 No third “higher” species.
 No fungi or mushrooms growing on Tecton; terrain effects come from physical disturbance and environmental modification.

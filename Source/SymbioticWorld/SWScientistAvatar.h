@@ -23,9 +23,14 @@ class ASWWorldManager;
 // has them (Tools/import_mannequins.py copies Epic's template content into the git-ignored
 // Content/Characters/Mannequins), else an engine cylinder; a missing mesh or clip is logged
 // as a warning. The body's paint is tinted in the scientist's colour. Idle / walk / jog clips
-// play as single-node animations picked from the avatar's own smoothed speed (no animation
-// blueprint). The name is drawn by the HUD in screen space (ASWHUD::DrawScientistTags):
-// a world-space label on a body this size is a few pixels tall from the start camera.
+// play as single-node animations picked from the pace the Lab's reports imply (no animation
+// blueprint). Over water the body stands on a jet ski built from engine shapes on the visible
+// water line: the organisms' on_land terrain test, run at the rendered position against the drawn,
+// drought-lowered surface, so during a drought the exposed bed is land for the avatar although
+// on_land and the hello `water_mask` still call it water. The Lab keeps the team on land and
+// crosses only when the target is on the other side (hello `water_mask`). The name is drawn by the HUD in screen space
+// (ASWHUD::DrawScientistTags): a world-space label on a body this size is a few pixels tall
+// from the start camera.
 UCLASS()
 class SYMBIOTICWORLD_API ASWScientistAvatar : public AActor
 {
@@ -39,11 +44,13 @@ public:
 	// Latest reported position (arena uu, same space as organism positions).
 	void SetTargetXY(float X, float Y);
 
-	// Wall-clock movement toward the target at the Lab's reported pace; Z from the terrain; gait from that pace.
+	// Wall-clock movement toward the target at the Lab's reported pace; Z from the terrain or the
+	// water line; gait from that pace; jet ski shown over water.
 	void UpdateVisual(float DeltaSeconds);
 
 	const FString& GetScientistName() const { return ScientistName; }
 	bool HasMannequin() const { return bHasMannequin; }
+	bool IsOnWater() const { return bOnWater; }
 	const FLinearColor& GetTagColor() const { return TagColor; }
 	int32 GetGaitChanges() const { return GaitChanges; }
 
@@ -56,6 +63,12 @@ protected:
 	UPROPERTY(VisibleAnywhere) USceneComponent* Root;
 	UPROPERTY(VisibleAnywhere) USkeletalMeshComponent* Body;
 	UPROPERTY(VisibleAnywhere) UStaticMeshComponent* FallbackBody;
+	// Stand-up jet ski under the feet while over water: hull, bow, steering pole, handlebar.
+	UPROPERTY(VisibleAnywhere) USceneComponent* JetSki;
+	UPROPERTY(VisibleAnywhere) UStaticMeshComponent* JetSkiHull;
+	UPROPERTY(VisibleAnywhere) UStaticMeshComponent* JetSkiBow;
+	UPROPERTY(VisibleAnywhere) UStaticMeshComponent* JetSkiPole;
+	UPROPERTY(VisibleAnywhere) UStaticMeshComponent* JetSkiBar;
 	UPROPERTY() ASWWorldManager* Manager = nullptr;
 	UPROPERTY() UAnimSequence* IdleAnim = nullptr;
 	UPROPERTY() UAnimSequence* WalkAnim = nullptr;
@@ -67,11 +80,15 @@ protected:
 	FVector2D TargetXY = FVector2D::ZeroVector;
 	bool bHasTarget = false;
 	bool bHasMannequin = false;
-	float ReportedPace = 0.f;    // sim uu per sim s between the last two reports (the Lab walks 260)
+	bool bOnWater = false;
+	float ReportedPace = 0.f;    // sim uu per sim s between the last two reports (the Lab walks 260, rides 600)
 	float LastReportSim = -1.f;  // SimTime of the last report
 	float SmoothedPace = 0.f;    // on-screen uu/s the reports imply, smoothed; drives the gait and play rate
 	int32 GaitChanges = 0;       // clip switches since spawn, logged at EndPlay (a flapping gait shows here)
+	int32 WaterCrossings = 0;    // land -> water transitions since spawn, logged at EndPlay
 
 	// Switch the single-node clip only when the gait changes; the play rate follows the speed.
 	void SetGait(UAnimSequence* Anim, float PlayRate);
+	// Load the engine shapes for the jet ski and tint the hull; hidden until the avatar is over water.
+	void SetupJetSki();
 };
