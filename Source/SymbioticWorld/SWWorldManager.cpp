@@ -546,7 +546,11 @@ void ASWWorldManager::SpawnPatches()
 			{
 				const FVector Candidate = RandomArenaPoint(300.f);
 				float ChannelWidth = 1.f, ChannelDepth = 0.f;
-				const float Ratio = SWProc::RiverDistance(Look, Candidate.X, Candidate.Y, ChannelWidth, ChannelDepth) / FMath::Max(ChannelWidth, 1.f);
+				// Two statements on purpose: RiverDistance writes ChannelWidth, and in one expression the
+				// order of the call and the divisor's read is unspecified (MSVC read the initial 1.f in a
+				// non-unity build and the written width in a unity build, 2026-09-14).
+				const float RiverDist = SWProc::RiverDistance(Look, Candidate.X, Candidate.Y, ChannelWidth, ChannelDepth);
+				const float Ratio = RiverDist / FMath::Max(ChannelWidth, 1.f);
 				const bool bDry = SWProc::TerrainHeight(Look, Candidate.X, Candidate.Y) >= Look.WaterLevel + Look.WetlandBand;   // the floor noise puts puddles past the channel test
 				const float Rank = Ratio + (bDry ? 100.f : 0.f);
 				if (Rank > FallbackRank) { FallbackRank = Rank; if (BestScore < 0.f) Loc = Candidate; }

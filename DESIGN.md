@@ -250,7 +250,12 @@ One seeded `FRandomStream` per run. The world advances in fixed
 `LogicalSubstep` (0.1 s) steps from the manager's Tick; 1×/10×/50× (and
 `-SWSpeed`) only change how many substeps run per rendered frame, never the
 step size. Same seed + same mode ⇒ same run (up to floating-point order,
-which is fixed because iteration order is deterministic).
+which is fixed because iteration order is deterministic). Verified 2026-09-14
+to hold across compile partitions as well (UBT's adaptive unity build compiles
+git-modified files outside the unity blob): the one cross-partition mismatch
+ever traced was an unspecified evaluation order in patch placement, not
+rounding; every probed value matched to 9 significant digits under `/fp:fast`
+(docs/CONTRIBUTING.md §3.13).
 
 Live control file (`Settings.ControlFile`, `Settings.ControlFilePollSec`;
 `docs/CONTROL_FILE.md`): commands appended to that file while the sim runs are
