@@ -6,6 +6,7 @@
 #include "Engine/StaticMesh.h"
 #include "Animation/AnimSequence.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "SWProcMesh.h"
 #include "SWWorldManager.h"
 #include "SymbioticWorld.h"
 
@@ -30,12 +31,15 @@ namespace
 	const TCHAR* IdleAnimPath = TEXT("/Game/Characters/Mannequins/Anims/Unarmed/MM_Idle.MM_Idle");
 	const TCHAR* WalkAnimPath = TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Walk/MF_Unarmed_Walk_Fwd.MF_Unarmed_Walk_Fwd");
 	const TCHAR* JogAnimPath  = TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jog/MF_Unarmed_Jog_Fwd.MF_Unarmed_Jog_Fwd");
-	// The engine ships no /Engine/BasicShapes/Capsule; the cylinder is what exists.
-	const TCHAR* FallbackMeshPath = TEXT("/Engine/BasicShapes/Cylinder.Cylinder");
+	// Engine shapes: the cylinder fallback body and the jet ski (there is no Capsule in BasicShapes).
+	const TCHAR* CubePath = TEXT("/Engine/BasicShapes/Cube.Cube");
+	const TCHAR* SpherePath = TEXT("/Engine/BasicShapes/Sphere.Sphere");
+	const TCHAR* CylinderPath = TEXT("/Engine/BasicShapes/Cylinder.Cylinder");
+	const TCHAR* ShapeMaterialPath = TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial");
 	// Vector parameter of M_Mannequin (set by MI_Manny_01_New / MI_Quinn_01) that colours the body paint.
 	const FName PaintTintParam(TEXT("Paint Tint"));
 
-	// Team tints (body paint and HUD name tag) so the eight scientists read apart at a
+	// Team tints (body paint, jet ski hull and HUD name tag) so the eight scientists read apart at a
 	// glance (no species colour: cyan is Lumen's, amber is Tecton's — the team gets its own hues).
 	const FColor TeamColors[8] = {
 		FColor(240, 240, 240),   // Vesper  - white
@@ -50,9 +54,12 @@ namespace
 
 	constexpr float BodyHeightUu = 180.f;         // Manny at scale 1: a 1.8 m person (1 uu = 1 cm, like the valley)
 	constexpr float TagClearanceUu = 30.f;        // HUD tag anchor above the head
+	constexpr float JetSkiDeckUu = 14.f;          // the deck (the feet) above the water line while riding
 	constexpr float CatchUpSpeedUu = 400.f;       // catch-up speed at 1x when more than a report's travel behind (the Lab walks 260 uu/logical s)
 	constexpr float PaceGain = 1.05f;             // walk a little faster than the reported pace so the lag never grows
-	constexpr float StandingSpeedUu = 20.f;       // smoothed pace below which the avatar idles
+	constexpr float CreepSpeedUu = 20.f;          // slowest on-screen speed toward the target (closing a residual)
+	constexpr float IdleBelowUu = 15.f;           // smoothed pace below which a walking avatar idles ...
+	constexpr float WalkAboveUu = 45.f;           // ... and above which an idling one walks (hysteresis: a step per report must not flap)
 	constexpr float GaitSmoothing = 2.f;          // FInterpTo speed of the pace estimate (tau 0.5 s = one report period)
 	constexpr float GaitHysteresis = 0.15f;       // walk <-> jog switches 15 % either side of the stride midpoint
 	// Ground speed of the walk / jog clips at play rate 1 (uu/s, approximate): the clips are root-locked,
@@ -78,6 +85,28 @@ ASWScientistAvatar::ASWScientistAvatar()
 	FallbackBody->SetupAttachment(Root);
 	FallbackBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	FallbackBody->SetVisibility(false);
+
+	// Stand-up jet ski in actor space (X forward, the feet at the origin): a 2.2 m hull whose deck is
+	// the origin and whose keel sits 45 uu under it, a rounded bow, a steering pole hinged at the bow
+	// leaning back to a handlebar at chest height. Shapes are assigned in Init (assets load at runtime).
+	JetSki = CreateDefaultSubobject<USceneComponent>(TEXT("JetSki"));
+	JetSki->SetupAttachment(Root);
+	JetSki->SetVisibility(false, true);
+	auto MakePart = [this](const TCHAR* Name, UStaticMeshComponent*& Out, const FVector& Loc, const FRotator& Rot, const FVector& Scale)
+	{
+		Out = CreateDefaultSubobject<UStaticMeshComponent>(Name);
+		Out->SetupAttachment(JetSki);
+		Out->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Out->SetRelativeLocation(Loc);
+		Out->SetRelativeRotation(Rot);
+		Out->SetRelativeScale3D(Scale);
+		Out->SetVisibility(false);
+	};
+	MakePart(TEXT("JetSkiHull"), JetSkiHull, FVector(0.f, 0.f, -22.f), FRotator::ZeroRotator, FVector(2.2f, 0.8f, 0.45f));
+	MakePart(TEXT("JetSkiBow"), JetSkiBow, FVector(110.f, 0.f, -22.f), FRotator::ZeroRotator, FVector(0.9f, 0.8f, 0.45f));
+	// Pole from the bow (100, 0, 0) to the bar (40, 0, 110): 125 uu long, leaning 29 degrees toward the rider.
+	MakePart(TEXT("JetSkiPole"), JetSkiPole, FVector(70.f, 0.f, 55.f), FRotator(29.f, 0.f, 0.f), FVector(0.08f, 0.08f, 1.25f));
+	MakePart(TEXT("JetSkiBar"), JetSkiBar, FVector(40.f, 0.f, 112.f), FRotator(0.f, 0.f, 90.f), FVector(0.06f, 0.06f, 0.6f));
 
 	SetActorEnableCollision(false);   // nothing in the world can bump into a scientist
 }
@@ -126,7 +155,7 @@ void ASWScientistAvatar::Init(ASWWorldManager* InManager, const FString& InName,
 	{
 		// No mannequin content: an engine cylinder stands in (procedural-only clones).
 		Body->SetVisibility(false);
-		if (UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, FallbackMeshPath, nullptr, Quiet))
+		if (UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, CylinderPath, nullptr, Quiet))
 		{
 			FallbackBody->SetStaticMesh(Cylinder);
 			FallbackBody->SetVisibility(true);
@@ -135,6 +164,41 @@ void ASWScientistAvatar::Init(ASWWorldManager* InManager, const FString& InName,
 		}
 		UE_LOG(LogSymbioticWorld, Warning,
 			TEXT("Field team: mannequin meshes missing, %s is a plain cylinder; run: python Tools/import_mannequins.py"), *InName);
+	}
+
+	SetupJetSki();
+}
+
+void ASWScientistAvatar::SetupJetSki()
+{
+	const uint32 Quiet = LOAD_NoWarn | LOAD_Quiet;
+	UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, CubePath, nullptr, Quiet);
+	UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, SpherePath, nullptr, Quiet);
+	UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, CylinderPath, nullptr, Quiet);
+	UMaterialInterface* Base = LoadObject<UMaterialInterface>(nullptr, ShapeMaterialPath, nullptr, Quiet);
+	if (!Cube || !Sphere || !Cylinder)
+	{
+		UE_LOG(LogSymbioticWorld, Warning, TEXT("Field team: engine BasicShapes missing, %s has no jet ski (walks through water)"), *ScientistName);
+		return;
+	}
+	JetSkiHull->SetStaticMesh(Cube);
+	JetSkiBow->SetStaticMesh(Sphere);
+	JetSkiPole->SetStaticMesh(Cylinder);
+	JetSkiBar->SetStaticMesh(Cylinder);
+	// Hull and bow in the scientist's colour, pole and bar dark (BasicShapeMaterial's "Color").
+	const FLinearColor Dark(0.08f, 0.08f, 0.09f);
+	UStaticMeshComponent* Parts[4] = { JetSkiHull, JetSkiBow, JetSkiPole, JetSkiBar };
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (Base)
+		{
+			if (UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Base, this))
+			{
+				MID->SetVectorParameterValue(TEXT("Color"), i < 2 ? TagColor : Dark);
+				Parts[i]->SetMaterial(0, MID);
+			}
+		}
+		Parts[i]->SetVisibility(false);
 	}
 }
 
@@ -147,7 +211,8 @@ void ASWScientistAvatar::EndPlay(const EEndPlayReason::Type Reason)
 {
 	if (bHasMannequin)
 	{
-		UE_LOG(LogSymbioticWorld, Log, TEXT("Field team: %s retired at sim %.0f s after %d gait changes"), *ScientistName, LastReportSim, GaitChanges);
+		UE_LOG(LogSymbioticWorld, Log, TEXT("Field team: %s retired at sim %.0f s after %d gait changes, %d water crossings"),
+			*ScientistName, LastReportSim, GaitChanges, WaterCrossings);
 	}
 	Super::EndPlay(Reason);
 }
@@ -190,16 +255,29 @@ void ASWScientistAvatar::UpdateVisual(float DeltaSeconds)
 
 	const FVector Loc = GetActorLocation();
 	const FVector2D Now2D(Loc.X, Loc.Y);
-	// Walk at the reported pace (on screen: pace x time scale, so 10x / 50x fast-forward keeps up), which
+	// Move at the reported pace (on screen: pace x time scale, so 10x / 50x fast-forward keeps up), which
 	// makes the motion continuous between reports; more than a report's travel behind (a late report,
 	// the team reappearing after a stale spell) the catch-up speed closes the gap.
 	const float TS = FMath::Max(1.f, Manager->GetTimeScale());
 	const float Pace = ReportedPace * TS;
 	const float Behind = FVector2D::Distance(Now2D, TargetXY);
-	float Speed = FMath::Max(Pace * PaceGain, StandingSpeedUu * TS);
+	float Speed = FMath::Max(Pace * PaceGain, CreepSpeedUu * TS);
 	if (Behind > FMath::Max(0.75f * Pace, 150.f * TS)) Speed = FMath::Max(Speed, CatchUpSpeedUu * TS);
 	const FVector2D Next2D = FMath::Vector2DInterpConstantTo(Now2D, TargetXY, DeltaSeconds, Speed);
-	const FVector Next(Next2D.X, Next2D.Y, Manager->GetGroundZ(Next2D.X, Next2D.Y));
+
+	// Over water the body rides the jet ski on the visible water line: the on_land percept's terrain test,
+	// but against the drought-lowered surface the environment draws, so in a drought the ski neither floats
+	// above the water nor rides over the exposed bed. On land it stands on the terrain.
+	const FSWLookSettings& L = Manager->GetLook();
+	const float Surface = L.WaterLevel - Manager->GetDroughtWaterDrop();
+	const bool bWater = !(SWProc::TerrainHeight(L, Next2D.X, Next2D.Y) > Surface);
+	if (bWater != bOnWater)
+	{
+		bOnWater = bWater;
+		JetSki->SetVisibility(bWater, true);
+		if (bWater) ++WaterCrossings;
+	}
+	const FVector Next(Next2D.X, Next2D.Y, bWater ? Surface + JetSkiDeckUu : Manager->GetGroundZ(Next2D.X, Next2D.Y));
 
 	const FVector2D Delta = Next2D - Now2D;
 	if (!Delta.IsNearlyZero(0.1f))
@@ -212,13 +290,15 @@ void ASWScientistAvatar::UpdateVisual(float DeltaSeconds)
 
 	// Gait from the reported pace, smoothed over a report period: the pace only changes when a report
 	// lands, so the clip is not restarted by the frame-to-frame motion; the play rate matches the stride.
+	// Riding, the body stands (idle clip) whatever the pace.
 	if (bHasMannequin)
 	{
-		SmoothedPace = FMath::FInterpTo(SmoothedPace, Pace, DeltaSeconds, GaitSmoothing);
+		SmoothedPace = FMath::FInterpTo(SmoothedPace, bOnWater ? 0.f : Pace, DeltaSeconds, GaitSmoothing);   // riding feeds no pace: no slow-motion jog on landing
 		const float Midpoint = 0.5f * (WalkStrideUu + JogStrideUu);
 		const bool bJog = SmoothedPace > Midpoint * (CurrentAnim == JogAnim ? 1.f - GaitHysteresis : 1.f + GaitHysteresis);
 		UAnimSequence* Locomotion = bJog ? (JogAnim ? JogAnim : WalkAnim) : (WalkAnim ? WalkAnim : JogAnim);
-		if (SmoothedPace < StandingSpeedUu || !Locomotion)
+		const bool bStanding = CurrentAnim == IdleAnim ? SmoothedPace < WalkAboveUu : SmoothedPace < IdleBelowUu;
+		if (bOnWater || bStanding || !Locomotion)
 		{
 			SetGait(IdleAnim, 1.f);
 		}

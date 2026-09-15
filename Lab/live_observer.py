@@ -120,7 +120,8 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                     last_team_sent = -1.0   # a reset run restarts t at 0: report the team again at once
                     if srv.embody:
                         from .embodiment import EmbodiedField
-                        field = EmbodiedField(run_id, msg.get("world_half_size"), msg.get("world_half_size_y"))
+                        field = EmbodiedField(run_id, msg.get("world_half_size"), msg.get("world_half_size_y"),
+                                              msg.get("water_mask"), msg.get("decision_interval"))
                     if manager:
                         manager.load_doctrine(con)
                     print(f"[observe] hello: run {run_id}, mode {msg.get('mode_name')}, "

@@ -173,7 +173,14 @@ performs that comparison across seeds.
   scale (about 1.8 m, against a 3.4 m Lumen and a 7 m Tecton), its paint tinted in
   the scientist's colour, playing idle / walk / jog clips; the name is a
   screen-space HUD tag so the team reads from the start camera (human researcher
-  avatars are allowed by the 2026-09-14 amendment in docs/SPEC_TEXT.txt). Bodies spawn, move (wall-clock smoothing,
+  avatars and their jet ski are allowed by the 2026-09-14 and 2026-09-15 amendments
+  in docs/SPEC_TEXT.txt). Over water the body rides a jet ski built from engine
+  shapes on the visible water line: the organisms' `on_land` terrain test, run at the
+  rendered position against the drawn, drought-lowered surface, so during a drought
+  the exposed bed is land for the avatar although `on_land` and the hello mask still
+  call it water (the Lab may then report `jetski` while the body walks); the Lab routes the team on land using the hello's
+  `water_mask` (200 uu cells) and crosses only when the target is on the other
+  side, each scientist heading for the nearest organism that fits their rule. Bodies spawn, move (wall-clock smoothing,
   like the camera) and retire on the rendered frame, never inside a substep, and
   hide when no report has arrived for 20 logical seconds. Determinism: with no
   policy server the layer never spawns, so a run with the flag on is byte-identical
