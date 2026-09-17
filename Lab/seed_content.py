@@ -23,6 +23,10 @@ CAVEATS = [
     ("The 2026-09-05 seed-stream change (4 Gaussians per birth, not 3) means runs "
      "recorded before it do not reproduce number-for-number with the same seed.",
      "DESIGN.md §5"),
+    ("lumen_min_n and tecton_min_n are the opening-seconds trough, not a late-run outcome: "
+     "they cannot test a claim about foraging, exploration or energy spent over a run. "
+     "Experiment X-020 preregistered lumen_min_n for the novelty bonus and both arms returned "
+     "exactly 40.0.", "measured 2026-09-17, experiment X-020"),
 ]
 
 CONJECTURES = [
@@ -38,6 +42,27 @@ CONJECTURES = [
      "e scales both the Trace deposit and its energy cost; the cost only pays "
      "off when regrowth is the binding constraint.",
      "Mode C, compare env_effect trajectories across resource regimes."),
+    # The Leviathan, the mutation width and the novelty bonus all landed in the sim after the
+    # first three conjectures were written, so nothing on the docket could reach them: a claim
+    # nobody states is a claim the design bench never gets to test.
+    ("Leviathan predation, not starvation, sets the Lumen population floor.",
+     "A strike removes a forager within 600 uu on a 5 s cooldown; if predation is what caps "
+     "the population, the low-water mark has to move when the predator is switched off.",
+     "Mode C, bLeviathan on vs off, >=3 seeds; lumen_min_n."),
+    ("Predation selects for higher epsilon in Lumen lineages.",
+     "Predation prices hesitation: foragers that linger in the strike zone die before they "
+     "reproduce, so the surviving lineages should carry higher epsilon.",
+     "Mode C, bLeviathan on vs off; inherited epsilon at run end."),
+    ("The novelty bonus (WeightNovelty=0.2) spends the Lumen energy budget without buying "
+     "exploration.",
+     "wN rewards unvisited cells, but the patch dry margin puts the food at the valley rims: "
+     "the explore leg may cost more energy than the novelty ever finds.",
+     "Mode C, wN=0 vs 0.2; motivated by the 2026-09-14 river-crossing counter-result."),
+    ("Inheritance fidelity sets the speed of selection: widening MutationSigma decouples "
+     "parent and offspring alpha.",
+     "alpha is inherited with Gaussian noise of width MutationSigma=0.03, measured "
+     "parent/child correlation 0.76; doubling the width should break that correlation.",
+     "Mode C, sigma 0.06 vs 0.03; inherit_alpha_corr."),
 ]
 
 
