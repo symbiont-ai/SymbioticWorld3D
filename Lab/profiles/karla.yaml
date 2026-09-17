@@ -1,4 +1,5 @@
 name: Karla
+model: meta-llama/llama-3.1-70b-instruct   # the veto gate needs sound judgment; 8B vetoed a valid design
 role: Critic
 domains: [behavior, genetics, ecology]
 temperature: 0.3

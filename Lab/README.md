@@ -29,6 +29,7 @@ consequential is enforced in code, never by the model's judgment:
 
 ```
 python -m Lab.lab session --meetings 3 --llm ollama      # needs Ollama + llama3.1
+python -m Lab.lab session --meetings 3 --llm openrouter  # hosted models (OPENROUTER_API_KEY)
 python -m Lab.lab session --meetings 3 --llm mock        # no model needed
 python -m Lab.lab ingest Saved/SymbioticWorld/<run_id>   # feed it existing runs
 python -m Lab.lab run-queued                             # sim machine: execute experiments
@@ -51,9 +52,20 @@ commands; run them (or `python -m Lab.lab run-queued`) on the sim machine.
 - `--llm ollama` — one local `llama3.1` via Ollama structured outputs
   (`format` = JSON schema, one profile = one system prompt + temperature).
   Model/URL via `LAB_MODEL` / `OLLAMA_URL` env vars.
+- `--llm openrouter` — hosted models via OpenRouter's OpenAI-compatible API.
+  Set `OPENROUTER_API_KEY`; default model via `LAB_OPENROUTER_MODEL`
+  (fallback `meta-llama/llama-3.1-8b-instruct`). **Per-scientist models:** add
+  `model: <openrouter-id>` to any `profiles/*.yaml` (e.g. Karla on a strong
+  critic model, observers on a cheap fast one); profiles without one use the
+  default. Structured output via `response_format` json_schema where the model
+  supports it, schema-in-prompt otherwise — code-side validation applies either way.
+- `--llm claude` — turns through the local `claude` CLI in print mode; model
+  via `LAB_CLAUDE_MODEL` (default haiku).
 - `--llm mock` — deterministic scripted scientists driven by each profile's
   declared priors (the `mock:` block in `profiles/*.yaml`). The disagreements
   are real but scripted; use it for pipeline tests and dry demos.
+
+The default backend is `ollama`; override per shell with `LAB_LLM=openrouter`.
 
 ## The lab evolves
 

@@ -12,6 +12,7 @@ Every turn returns a dict already parsed from JSON; callers validate content
 """
 import hashlib
 import json
+import urllib.error
 import urllib.request
 
 from . import config
@@ -54,6 +55,8 @@ SCHEMAS = {
         "confidence": _N(), "reason": _S()}),
     "challenge": _obj({"text": _S()}),
     "minutes": _obj({"summary": _S()}),
+    "agenda": _obj({"priorities": _A(_S()), "focus_metric": _S(), "rationale": _S()}),
+    "arbitration": _obj({"uphold": _B(), "reason": _S()}),
 }
 
 
@@ -128,6 +131,79 @@ class ClaudeCLILLM:
                 if attempt:
                     raise RuntimeError(
                         f"claude CLI returned no parseable JSON for {kind}: {out[:200]}")
+
+
+class OpenRouterLLM:
+    """Hosted models via OpenRouter's OpenAI-compatible chat completions.
+    One backend, many models: a profile may name its own `model:` in its YAML
+    (per-scientist models), falling back to LAB_OPENROUTER_MODEL. Structured
+    output is requested twice over — `response_format` json_schema where the
+    hosted model supports it, and the schema restated in the prompt — and the
+    same code-side validation applies regardless: never trust the model."""
+
+    URL = "https://openrouter.ai/api/v1/chat/completions"
+
+    def __init__(self, model=None, key=None):
+        import os
+        self.default_model = model or os.environ.get(
+            "LAB_OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct")
+        self.key = key or os.environ.get("OPENROUTER_API_KEY", "")
+
+    def available(self):
+        return bool(self.key)
+
+    def turn(self, profile, kind, prompt, ctx=None):
+        model = getattr(profile, "model", "") or self.default_model
+        schema = SCHEMAS[kind]
+        body = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": profile.system_prompt()},
+                {"role": "user", "content":
+                    prompt + "\n\nRespond with ONLY a JSON object matching "
+                    "this JSON schema (no prose, no code fences):\n"
+                    + json.dumps(schema)},
+            ],
+            "temperature": profile.temperature,
+            "response_format": {"type": "json_schema", "json_schema": {
+                "name": kind, "strict": True, "schema": schema}},
+        }
+        import time
+        out = ""
+        for attempt in range(4):
+            if attempt >= 2:
+                body.pop("response_format", None)   # late tries: prompt only
+            req = urllib.request.Request(
+                self.URL, data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json",
+                         "Authorization": "Bearer " + self.key})
+            try:
+                with urllib.request.urlopen(req, timeout=300) as r:
+                    reply = json.loads(r.read())
+            except urllib.error.HTTPError as ex:
+                # A model without json_schema support 4xxes the response_format;
+                # drop it and retry rather than fail the turn.
+                if ex.code < 500 and body.pop("response_format", None) is not None:
+                    continue
+                if ex.code >= 500 and attempt < 3:   # provider hiccup
+                    time.sleep(2 * attempt + 1)
+                    continue
+                raise
+            except OSError:
+                # Connection reset / DNS blip / timeout: transient — an
+                # always-on lab must outlive them, not die mid-meeting.
+                if attempt < 3:
+                    time.sleep(2 * attempt + 1)
+                    continue
+                raise
+            out = (reply.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+            try:
+                start, end = out.index("{"), out.rindex("}") + 1
+                return json.loads(out[start:end])
+            except (ValueError, json.JSONDecodeError):
+                continue                            # malformed JSON: retry
+        raise RuntimeError(
+            f"OpenRouter/{model} returned no parseable JSON for {kind}: {out[:200]}")
 
 
 # --- deterministic mock ------------------------------------------------------
@@ -279,6 +355,20 @@ class MockLLM:
     def _minutes(self, profile, ctx):
         return {"summary": ctx.get("draft", "Meeting held; see structured records.")}
 
+    def _agenda(self, profile, ctx):
+        qs = [q for q in ctx.get("open_questions", [])][:2]
+        return {"priorities": qs or ["What governs population stability under drought?"],
+                "focus_metric": "lumen_min_n",
+                "rationale": "Populations first; the registry's open questions set the docket."}
+
+    def _arbitration(self, profile, ctx):
+        vr = (ctx.get("veto_reason") or "").lower()
+        uphold = "identical" in vr or "missing control" in vr
+        return {"uphold": uphold,
+                "reason": ("Without a control the data is uninterpretable; veto stands."
+                           if uphold else
+                           "The design is imperfect but controlled; run it and let the data argue.")}
+
 
 def make_llm(backend):
     if backend == "mock":
@@ -288,6 +378,12 @@ def make_llm(backend):
         if not llm.available():
             raise SystemExit("`claude` CLI not found on PATH; install Claude Code "
                              "or run with --llm mock / --llm ollama.")
+        return llm
+    if backend == "openrouter":
+        llm = OpenRouterLLM()
+        if not llm.available():
+            raise SystemExit("OPENROUTER_API_KEY not set; export it (and optionally "
+                             "LAB_OPENROUTER_MODEL), or run with --llm mock/claude/ollama.")
         return llm
     llm = OllamaLLM()
     if not llm.available():

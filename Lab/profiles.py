@@ -6,7 +6,7 @@ import yaml
 
 from . import config
 
-TURN_ORDER = ["Vesper", "Bastion", "Mendel", "Ada", "Fisher", "Karla", "Archie"]
+TURN_ORDER = ["Humboldt", "Vesper", "Bastion", "Mendel", "Ada", "Fisher", "Karla", "Archie"]
 OBSERVERS = ["Vesper", "Bastion", "Mendel"]
 # Non-voting staff: loaded, but never in a meeting round, never a stance,
 # never a vote. Vega's outputs go to the report annex only.
@@ -19,6 +19,7 @@ class Profile:
         self.role = d["role"]
         self.domains = d.get("domains", [])
         self.temperature = float(d.get("temperature", 0.7))
+        self.model = d.get("model", "")   # per-scientist model id (OpenRouter backend)
         self.veto_rights = bool(d.get("veto_rights", False))
         self.non_voting = bool(d.get("non_voting", False))
         self.priors = d.get("priors", [])

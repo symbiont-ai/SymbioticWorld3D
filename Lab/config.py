@@ -15,6 +15,10 @@ ANALYSIS_DIR = ROOT / "Analysis"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("LAB_MODEL", "llama3.1")
 
+# Demo pacing: minimum seconds between scientist turns so viewers can watch
+# the conversation form (LAB_TURN_PACE env; 0 = as fast as the model replies).
+TURN_PACE_S = float(os.environ.get("LAB_TURN_PACE", "30"))
+
 # Hard caps (design principle: structure over prompt-hope)
 MAX_FINDINGS_PER_OBSERVER = 3
 MAX_NEW_HYPOTHESES_PER_MEETING = 2
