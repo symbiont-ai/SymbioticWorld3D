@@ -392,6 +392,29 @@ struct FSWLookSettings
 	// or live via the control file (set Look.bScientistAvatars=1) — and back off
 	// again the same way; the layer spawns/despawns cleanly at runtime.
 	UPROPERTY(EditAnywhere) bool bScientistAvatars = false;
+	// Clean framing for a recorded take (docs/CONTROL_FILE.md): false makes ASWHUD::DrawHUD return
+	// before it draws anything, so title, stat cards, panels, minimap and name tags disappear. Visual
+	// only: the run is unchanged. Live: control "set Look.bShowHUD=0", back with "=1".
+	UPROPERTY(EditAnywhere) bool bShowHUD = true;
+	// Scenario titles for a recorded take (control "caption=<text>", docs/CONTROL_FILE.md): one large
+	// centred line in the lower third, held for CaptionSeconds and fading out over the last 0.5 s.
+	// Timed on the WALL clock, so a paused take keeps its title. Drawn even when bShowHUD is false:
+	// hiding the HUD is for framing, the caption is the narration. Visual only.
+	UPROPERTY(EditAnywhere) bool bShowCaptions = true;
+	UPROPERTY(EditAnywhere) float CaptionSeconds = 6.f;
+	// Predation kill effects (Settings.bLeviathan): a red plume at the victim's position, a visual
+	// stand-in body that tumbles and sinks, the kill feed under the LEVIATHAN card and a minimap mark.
+	// Visual only: the stand-in is never a simulation actor, never collides and never enters a percept.
+	// 0 turns the whole layer off for a take that wants the water clean.
+	UPROPERTY(EditAnywhere) bool bPredationEffects = true;
+	UPROPERTY(EditAnywhere) float KillPlumeSeconds = 1.5f;    // plume spread + fade
+	UPROPERTY(EditAnywhere) float KillBodySeconds = 1.4f;     // stand-in tumble + sink, then the shrink tail
+	UPROPERTY(EditAnywhere) float KillFeedSeconds = 5.0f;     // HUD kill feed and minimap mark
+	// SYMBIOTIC LAB panel: the last bridge "log" lines (docs/POLICY_API.md), drawn only while a policy
+	// server is connected.
+	// DEFAULT OFF: the lab's own dashboard (python -m Lab.lab ui) is the normal way to watch the
+	// scientists; this panel is the opt-in version inside the sim's HUD (set Look.bShowLabPanel=1).
+	UPROPERTY(EditAnywhere) bool bShowLabPanel = false;
 	// Elevation/azimuth are measured from the world origin; the moon sits MoonDistance away, so from the start camera
 	// (86 m behind the origin, pitch -15, ~49 deg vertical FOV => frame top ~+9.5 deg, HUD stat boxes cover the top
 	// ~4 deg) elevation 8 reads as ~3.5 deg: a 4 deg disc just above the hero crown (-1 deg) and 9 deg right of the

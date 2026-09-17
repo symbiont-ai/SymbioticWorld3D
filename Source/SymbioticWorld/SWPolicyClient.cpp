@@ -345,7 +345,15 @@ bool FSWPolicyClient::HandleSideMessage(FSWPolicyServer& S, const TSharedPtr<FJs
 	const FString Type = Msg->GetStringField(TEXT("type"));
 	if (Type == TEXT("log"))
 	{
-		UE_LOG(LogSymbioticWorld, Log, TEXT("[%s] %s"), *S.Name, *Msg->GetStringField(TEXT("text")));
+		const FString Text = Msg->GetStringField(TEXT("text"));
+		UE_LOG(LogSymbioticWorld, Log, TEXT("[%s] %s"), *S.Name, *Text);
+		// Also kept for the SYMBIOTIC LAB HUD panel, drained by the manager once per frame. Bounded:
+		// an unattended run (no HUD draining nothing) can never grow this list.
+		if (!Text.IsEmpty())
+		{
+			PendingLogLines.Add(Text);
+			while (PendingLogLines.Num() > 16) PendingLogLines.RemoveAt(0);
+		}
 		return true;
 	}
 	if (Type == TEXT("scientists"))

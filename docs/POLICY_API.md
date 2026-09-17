@@ -134,7 +134,20 @@ being applied to the next substep).
 {"type":"log","text":"epoch 3, mean reward 0.21"}
 ```
 
-Printed in the UE log as `[host:port] text`.
+Printed in the UE log as `[host:port] text`, and kept for the optional **SYMBIOTIC LAB** HUD panel.
+The normal way to watch the lab is its own dashboard (`python -m Lab.lab ui`), so the panel is **off
+by default**: `set Look.bShowLabPanel=1` (or `-SWSet="Look.bShowLabPanel=1"`) draws the last six lines
+in the sim's left column, between the meta-parameter strip and the minimap, each with the sim time it
+arrived and elided with `...` when too long; it appears only while at least one policy server is
+connected. Text only: a log line never reaches an organism, never enters a percept and never touches
+the seeded stream.
+
+Keep them short (about 90 characters) and rare (about one a second) so the panel stays readable.
+`Lab/live_observer.py` does exactly that: a read-only, lock-tolerant poller (`LabActivity`) watches the
+lab's own `lab.sqlite` for new meetings, transcript turns, hypotheses, experiments and predictions and
+forwards one line per second, e.g. `H-013 proposed by Ada: drought lowers lumen_min_n` or
+`X-005 verdict PASS (diff 4.2, threshold 3)`. A meeting writing that database at the same time
+(`python -m Lab.lab session --llm mock --meetings 1`) only means "no report this second".
 
 ### 5. `scientists` (server -> sim), optional, visual only
 

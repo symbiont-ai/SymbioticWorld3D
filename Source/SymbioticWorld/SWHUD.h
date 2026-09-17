@@ -18,8 +18,10 @@ class UFont;
 //   right         individual inspector (inherited vs learned Q table), then
 //                 SPECIES B - TECTON panel below it
 //   bottom-left   ECOSYSTEM FLOW minimap: water, Trace X (cyan), Trace Y (amber), organisms, nodes
+//   left (middle) SYMBIOTIC LAB: the bridge's log lines, while a policy server is connected
 //   bottom-right  keys (H toggles)
 //   bottom-centre drought banner when active
+//   lower third  scenario caption for a recorded take (control "caption=<text>"; survives Look.bShowHUD=0)
 //   in the scene  field-team name tags over the scientist avatars (Look.bScientistAvatars)
 //
 // "Stability" is population steadiness over the last 30 logical seconds:
@@ -57,6 +59,17 @@ protected:
 	float MinimapWaterLevel = 0.f;
 	void DrawHelp(float X, float Y);
 	void DrawSelectionMarker(const ASWAgent& A);
+	// Scenario title for a recorded take (control "caption=<text>"): large centred line in the lower third,
+	// held for Look.CaptionSeconds on the wall clock, fading out over the last 0.5 s. Drawn before the
+	// Look.bShowHUD gate, so a clean-framed take still carries its narration.
+	void DrawCaption(const ASWWorldManager& M);
+	// Kill feed under the LEVIATHAN stat card: the last three predation kills, newest first, each
+	// fading after Look.KillFeedSeconds (wall clock, like the plume).
+	void DrawKillFeed(const ASWWorldManager& M, float CardX, float CardW, float CardBottom);
+	// SYMBIOTIC LAB: the last bridge "log" lines, drawn only while a policy server is connected.
+	void DrawLabPanel(const ASWWorldManager& M, float X, float Y, float W);
+	// Longest prefix of Text that fits in W at Scale, with "..." when it had to cut.
+	FString Elide(const FString& Text, float W, float Scale) const;
 	// Field-team name tags: screen space, fixed pixel size at any distance, drawn under the panels.
 	void DrawScientistTags(const ASWWorldManager& M);
 	void DrawEvolutionStrip(const ASWWorldManager& M, float X, float Y, float W);

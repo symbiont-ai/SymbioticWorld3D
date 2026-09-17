@@ -4,10 +4,13 @@
 #include "SWEnvironment.h"
 #include "SWLeviathan.h"
 #include "SWScientistAvatar.h"
+#include "SWCameraPawn.h"
+#include "SWKillMark.h"
 #include "SWProcMesh.h"
 #include "SymbioticWorld.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
+#include "Misc/App.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Misc/DateTime.h"
@@ -374,6 +377,11 @@ void ASWWorldManager::StartRun()
 	ExternalCount = 0;
 	StepCounter = 0;
 	ControlCommandsExecuted = 0;   // a control command that resets counts for the run it created (incremented after the reset)
+	ClearScheduledCommands(TEXT("run start"));   // a new run restarts the logical clock, so an "at=" from the old one must not fire
+	CaptionText.Reset();   // a new run starts with no scenario title on screen
+	CaptionRaisedWall = 0.0;
+	KillEvents.Reset();    // and with no kill feed, no plume and no lab lines from the run before it
+	LabLines.Reset();
 	InitialLumenTarget = Settings.InitialLumen;
 	InitialTectonTarget = Settings.InitialTecton;
 
@@ -442,6 +450,7 @@ void ASWWorldManager::ClearWorld()
 	for (ASWResourcePatch* P : Patches) if (IsValid(P)) P->Destroy();
 	for (ASWLeviathan* Lv : Leviathans) if (IsValid(Lv)) Lv->Destroy();
 	DestroyScientistAvatars();
+	for (TActorIterator<ASWKillMark> It(GetWorld()); It; ++It) It->Destroy();   // visual markers of the old run
 	PolicyClient.ClearScientistPings();
 	ScientistLastPingSim = -1.f;
 	Agents.Reset();
@@ -494,6 +503,22 @@ void ASWWorldManager::LeviathanStep(float Dt)
 		DeathsPredationBySpecies[static_cast<int32>(V->GetSpecies())]++;
 		// deaths.csv already carries a 'cause' column, so this needs no schema change.
 		Logger.LogDeath(SimTime, *V, TEXT("predation"));
+		if (Look.bPredationEffects)
+		{
+			// Visual bookkeeping only: the marker actor is spawned from Tick (SpawnPendingKillMarks),
+			// never from inside this substep, and nothing here draws from the seeded stream.
+			FSWKillEvent K;
+			K.Location = V->GetActorLocation();
+			K.Rotation = V->GetActorRotation();
+			K.Species = V->GetSpecies();
+			K.Label = V->GetLabel();
+			K.AgentId = V->GetAgentId();
+			K.MeshScale = V->GetParams().MeshScale;
+			K.SimTime = SimTime;
+			K.WallTime = FPlatformTime::Seconds();
+			KillEvents.Add(K);
+			while (KillEvents.Num() > 8) KillEvents.RemoveAt(0);   // the HUD shows 3; the rest is headroom for a fast run
+		}
 		const bool bWasSelected = (SelectedAgent == V);
 		if (bWasSelected) SelectedAgent = nullptr;
 		V->Destroy();
@@ -670,9 +695,17 @@ void ASWWorldManager::Tick(float DeltaSeconds)
 	// no seeded draws). Polled while paused too, so "pause=off" works. Without a file this is one stat every
 	// ControlFilePollSec; without new lines nothing in the sim changes.
 	PollControlFile();
+	// Scheduled commands ("at=<sim_time> <command>"): same placement and the same rules as the poll above
+	// (between frames, never inside a substep, no seeded draws). Fires on the logical clock, not the wall clock.
+	RunDueScheduledCommands();
 	if (PolicyClient.HasServers())
 	{
 		PolicyClient.Tick();
+		// Bridge "log" side messages (docs/POLICY_API.md): kept for the SYMBIOTIC LAB panel. Text only,
+		// visual layer, nothing reaches an organism.
+		TArray<FString> NewLabLines;
+		PolicyClient.DrainLogLines(NewLabLines);
+		for (const FString& Line : NewLabLines) PushLabLine(Line);
 		const double NowWall = FPlatformTime::Seconds();
 		if (NowWall >= PolicyReportNextTime)
 		{
@@ -687,6 +720,9 @@ void ASWWorldManager::Tick(float DeltaSeconds)
 	// Field-team avatars: rendered-frame visual layer, updated while paused too
 	// (the labels should face the camera even when time is stopped).
 	UpdateScientistAvatars(DeltaSeconds);
+	// Predation kill effects: one marker actor per new kill, spawned here, between frames, never
+	// inside a substep. The marker animates and destroys itself (ASWKillMark).
+	SpawnPendingKillMarks();
 
 	const bool bRunning = !bPaused && TimeScale > 0.f;
 	int32 Steps = 0;
@@ -1524,6 +1560,95 @@ FString ASWWorldManager::ExecuteControlCommand(const FString& Line)
 	return Result;
 }
 
+void ASWWorldManager::RunDueScheduledCommands()
+{
+	// Every command whose scheduled time has arrived runs this frame, in ascending scheduled time (the list
+	// is kept sorted when a command is queued). Each is removed before it runs, so nothing repeats, and a
+	// command that resets the run finds an already-cleared list.
+	while (ScheduledCommands.Num() > 0 && ScheduledCommands[0].Time <= SimTime)
+	{
+		const float Scheduled = ScheduledCommands[0].Time;
+		const FString Line = ScheduledCommands[0].Line;   // copied: a reset / mode= empties the array
+		ScheduledCommands.RemoveAt(0);
+		UE_LOG(LogSymbioticWorld, Log, TEXT("control: scheduled t=%.2f fires at t=%.2f (%d still pending)"), Scheduled, SimTime, ScheduledCommands.Num());
+		ExecuteControlCommand(Line);   // the typed-line path: same result text, same UE log line, same commands.csv row
+	}
+}
+
+void ASWWorldManager::SpawnPendingKillMarks()
+{
+	// One marker per kill event that has not got one yet. Called from Tick, so a kill that happened
+	// several substeps ago in the same frame still gets its plume on that frame.
+	if (!Look.bPredationEffects || !FApp::CanEverRender()) return;
+	UWorld* W = GetWorld();
+	if (!W) return;
+	for (FSWKillEvent& K : KillEvents)
+	{
+		if (K.bSpawned) continue;
+		K.bSpawned = true;
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		ASWKillMark* Mark = W->SpawnActor<ASWKillMark>(ASWKillMark::StaticClass(), K.Location, FRotator::ZeroRotator, SpawnParams);
+		if (Mark) Mark->Init(this, K.Species, K.AgentId, K.Location, K.Rotation, K.MeshScale);
+		// The position is in the log so a take can be framed on a kill it has already seen once
+		// (the same seed takes the same organism at the same time and place).
+		UE_LOG(LogSymbioticWorld, Log, TEXT("kill marker: %s %s at (%.0f, %.0f, %.0f), t=%.1f"),
+			SWSpeciesName(K.Species), *K.Label, K.Location.X, K.Location.Y, K.Location.Z, K.SimTime);
+	}
+}
+
+void ASWWorldManager::PushLabLine(const FString& Text)
+{
+	FString Trimmed = Text.TrimStartAndEnd();
+	if (Trimmed.IsEmpty()) return;
+	// One line per report: a multi-line bridge message would push the others off the panel.
+	Trimmed.ReplaceInline(LINE_TERMINATOR, TEXT(" "));
+	Trimmed.ReplaceInline(TEXT("\n"), TEXT(" "));
+	Trimmed.ReplaceInline(TEXT("\t"), TEXT(" "));
+	FSWLabLine Line;
+	Line.Text = Trimmed.Left(200);
+	Line.SimTime = SimTime;
+	LabLines.Add(Line);
+	while (LabLines.Num() > 6) LabLines.RemoveAt(0);   // the panel shows the last six, newest last
+}
+
+void ASWWorldManager::ClearScheduledCommands(const TCHAR* Reason)
+{
+	if (ScheduledCommands.Num() == 0) return;
+	UE_LOG(LogSymbioticWorld, Log, TEXT("control: %d scheduled command(s) dropped (%s; the new run restarts the logical clock)"),
+		ScheduledCommands.Num(), Reason);
+	ScheduledCommands.Reset();
+}
+
+ASWCameraPawn* ASWWorldManager::GetCameraPawn() const
+{
+	// The observer camera is the default pawn (ASWGameMode), so the first player controller owns it.
+	// A headless -nullrhi run has none: "cam=" / "follow=" are rejected there instead of doing nothing.
+	if (const UWorld* W = GetWorld())
+	{
+		if (APlayerController* PC = W->GetFirstPlayerController())
+		{
+			return Cast<ASWCameraPawn>(PC->GetPawn());
+		}
+	}
+	return nullptr;
+}
+
+namespace
+{
+	// "A number" for the control grammar. FString::IsNumeric rejects exponents but accepts a lone "-"/"+",
+	// so a digit is required as well; the caller parses the value and checks that it is finite.
+	bool SWIsNumberArg(const FString& S)
+	{
+		if (S.IsEmpty() || !S.IsNumeric()) return false;
+		for (TCHAR C : S)
+		{
+			if (FChar::IsDigit(C)) return true;
+		}
+		return false;
+	}
+}
+
 FString ASWWorldManager::RunControlCommand(const FString& InLine, bool& bOutAccepted)
 {
 	bOutAccepted = false;
@@ -1565,6 +1690,54 @@ FString ASWWorldManager::RunControlCommand(const FString& InLine, bool& bOutAcce
 		LatestNote = Arg;
 		bOutAccepted = true;
 		return FString::Printf(TEXT("ok: note recorded (%d chars)"), Arg.Len());
+	}
+
+	if (Key == TEXT("caption"))
+	{
+		// Everything after "caption=" verbatim (like note=, so '#', '=' and ',' survive): the scenario title
+		// a recorded take announces a beat with. Drawn by the HUD for Look.CaptionSeconds; empty text clears
+		// it at once. Visual only: nothing here touches the world or the seeded stream.
+		if (!bHasEq) return TEXT("rejected: caption=<text> (caption= alone clears it)");
+		CaptionText = Arg;
+		CaptionRaisedWall = FPlatformTime::Seconds();   // wall clock: a paused take keeps its title on screen
+		bOutAccepted = true;
+		if (CaptionText.IsEmpty()) return TEXT("ok: caption cleared");
+		return FString::Printf(TEXT("ok: caption up for %.1f s (%d chars)"), FMath::Max(Look.CaptionSeconds, 0.f), CaptionText.Len());
+	}
+	if (Key == TEXT("at"))
+	{
+		// "at=<sim_time> <command>": queue any other command for an exact logical time (recorded takes,
+		// docs/CONTROL_FILE.md). Handled before the comment strip below so the queued line is stored verbatim
+		// and obeys its own rules when it runs (a scheduled note= keeps its text, a scheduled drought= does not).
+		if (!bHasEq) return TEXT("rejected: at=<sim_time> <command>");
+		FString TimeStr, Rest;
+		if (!Arg.Split(TEXT(" "), &TimeStr, &Rest)) return TEXT("rejected: at=<sim_time> <command>");
+		TimeStr.TrimStartAndEndInline();
+		Rest.TrimStartAndEndInline();
+		if (!SWIsNumberArg(TimeStr)) return TEXT("rejected: at=<sim_time> <command> (sim_time in logical seconds)");
+		const float When = FCString::Atof(*TimeStr);
+		if (!FMath::IsFinite(When) || When < 0.f) return TEXT("rejected: at= needs a finite sim_time >= 0");
+		if (Rest.IsEmpty()) return TEXT("rejected: at=<sim_time> needs a command to run");
+		{
+			// No recursion: a scheduled command may not schedule another one.
+			int32 REq = INDEX_NONE, RSp = INDEX_NONE;
+			Rest.FindChar(TEXT('='), REq);
+			Rest.FindChar(TEXT(' '), RSp);
+			int32 RCut = Rest.Len();
+			if (REq != INDEX_NONE) RCut = FMath::Min(RCut, REq);
+			if (RSp != INDEX_NONE) RCut = FMath::Min(RCut, RSp);
+			const FString RestKey = Rest.Left(RCut).TrimStartAndEnd();
+			if (RestKey.Equals(TEXT("at"), ESearchCase::IgnoreCase)) return TEXT("rejected: at= cannot schedule another at=");
+		}
+		// Ascending scheduled time; equal times keep the order they were queued in.
+		FSWScheduledCommand Item;
+		Item.Time = When;
+		Item.Line = Rest;
+		int32 Insert = ScheduledCommands.Num();
+		while (Insert > 0 && ScheduledCommands[Insert - 1].Time > When) Insert--;
+		ScheduledCommands.Insert(Item, Insert);
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: queued for t=%.2f (%d pending): %s"), When, ScheduledCommands.Num(), *Rest);
 	}
 
 	// Inline "# comment" (a '#' preceded by a space) is dropped for every other command.
@@ -1643,7 +1816,42 @@ FString ASWWorldManager::RunControlCommand(const FString& InLine, bool& bOutAcce
 		bOutAccepted = true;
 		return FString::Printf(TEXT("ok: run %s ended at t=%.1f; started %s (mode %s, seed %d)"), *Prev, PrevT, *RunId, SWModeName(Settings.Mode), Settings.Seed);
 	}
-	return TEXT("rejected: unknown command (drought | speed | pause | set | reset | mode | note)");
+	if (Key == TEXT("cam"))
+	{
+		// "cam=x,y,z,pitch,yaw": the -SWCam pose, live. Camera only: no percept, no collision, no seeded draw.
+		if (!bHasEq) return TEXT("rejected: cam=x,y,z,pitch,yaw");
+		TArray<FString> Parts;
+		Arg.ParseIntoArray(Parts, TEXT(","), false);
+		if (Parts.Num() != 5) return TEXT("rejected: cam=x,y,z,pitch,yaw (5 numbers)");
+		float V[5] = { 0.f, 0.f, 0.f, 0.f, 0.f };
+		for (int32 i = 0; i < 5; ++i)
+		{
+			const FString Num = Parts[i].TrimStartAndEnd();
+			if (!SWIsNumberArg(Num)) return TEXT("rejected: cam=x,y,z,pitch,yaw (5 numbers)");
+			const float Val = FCString::Atof(*Num);
+			if (!FMath::IsFinite(Val)) return TEXT("rejected: cam=x,y,z,pitch,yaw (finite numbers)");
+			V[i] = Val;
+		}
+		ASWCameraPawn* Cam = GetCameraPawn();
+		if (!Cam) return TEXT("rejected: no observer camera in this run (a headless -nullrhi run has none)");
+		Cam->SetPose(FVector(V[0], V[1], V[2]), FRotator(V[3], V[4], 0.f));
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: camera at %.0f,%.0f,%.0f pitch %.1f yaw %.1f, follow released"), V[0], V[1], V[2], V[3], V[4]);
+	}
+	if (Key == TEXT("follow"))
+	{
+		// "follow=Lumen|Tecton|Leviathan|<scientist name>|none": the -SWFollowSpecies / -SWFollowScientist
+		// paths, live. Camera only, like every follow.
+		if (!bHasEq || Arg.IsEmpty()) return TEXT("rejected: follow=Lumen|Tecton|Leviathan|<scientist name>|none");
+		ASWCameraPawn* Cam = GetCameraPawn();
+		if (!Cam) return TEXT("rejected: no observer camera in this run (a headless -nullrhi run has none)");
+		FString What;
+		const bool bSet = Cam->SetFollowSpec(Arg, What);
+		if (!bSet) return TEXT("rejected: follow=Lumen|Tecton|Leviathan|<scientist name>|none");
+		bOutAccepted = true;
+		return FString::Printf(TEXT("ok: follow %s"), *What);
+	}
+	return TEXT("rejected: unknown command (drought | speed | pause | set | reset | mode | note | caption | at | cam | follow)");
 }
 
 namespace

@@ -106,7 +106,14 @@ Command-line flags understood by the sim (all optional):
 -SWSet="Look.bScientistAvatars=1"               # Symbiotic Lab field-team avatars (visual only, off by default; docs/POLICY_API.md §5); live: control "set Look.bScientistAvatars=1"
 -SWPolicyFile=Saved/policy_servers.txt         # server list file polled every 3 s while running (run_sim: --policy-file); edit it to add/remove servers
 -SWControlFile=Saved/control.txt               # live control file polled every 2 s (run_sim: --control-file): append "drought=on", "set Lumen.MaxAge=200", "reset seed=3" ... (docs/CONTROL_FILE.md)
+-SWSet="Look.bShowHUD=0"                       # hide the whole HUD for clean framing (live: control "set Look.bShowHUD=0"); scenario captions still draw
+-SWSet="Look.CaptionSeconds=10"                # how long a control "caption=<text>" title stays up (Look.bShowCaptions=0 turns the layer off)
+-SWSet="Look.bPredationEffects=0"              # no blood plume, sinking body, kill feed or minimap mark on a predation kill (default on)
+-SWSet="Look.bShowLabPanel=1"                  # SYMBIOTIC LAB panel in the sim's HUD (the bridge's own log lines; OFF by default, the lab's dashboard `python -m Lab.lab ui` is the normal way to watch it)
 ```
+
+`run_sim.py --windowed` opens a 1600x900 window; `--res WxH` (e.g. `--res 1920x1080`) changes it, which is
+what a screen recorder captures.
 
 `-SWSet` reaches any numeric/bool/colour/string field of `FSWRunSettings` (scope `Settings`),
 `FSWSpeciesParams` (`Lumen` / `Tecton`), the founder `FSWGenome` (`Genome`) or the
@@ -214,6 +221,25 @@ To perturb the running world from a script or a second terminal instead of its k
 speed, pause, any `--set` parameter, reset, mode), append lines to `Saved/control.txt`:
 `python Tools/control.py "drought=on"`; every executed command is logged to the run's `commands.csv`.
 Grammar and which settings take effect live: `docs/CONTROL_FILE.md`.
+
+## Recorded takes
+
+A demo video is a scripted take, not a live performance: start a rendering run, append the whole shot list
+to its control file, and record the window with Game Bar (Win+Alt+R).
+
+```bash
+python Tools/run_sim.py --mode C --seed 1 --duration 400 --speed 1 --windowed --res 1920x1080 --control-file Saved/take1.txt
+python Tools/control.py --file Saved/take1.txt "at=58 caption=Drought: the river drops" "at=60 drought=on" "at=90 follow=Leviathan" "at=120 cam=-3000,900,420,-8,10" "at=150 set Look.bShowHUD=0"
+```
+
+`at=<sim_time> <command>` runs any control command at an exact **logical** time, so the same seed and shot
+list produce the same take twice; `cam=x,y,z,pitch,yaw` places the camera, `follow=Lumen|Tecton|Leviathan|<scientist>|none`
+frames a subject, `caption=<text>` announces the scenario with a large title in the lower third for
+`Look.CaptionSeconds` (6 s; `set Look.bShowCaptions=0` turns the layer off), and `set Look.bShowHUD=0` hides
+the HUD — captions keep drawing, so a clean-framed take still carries its narration (all of these are
+camera/HUD only and change nothing in the world). The pending list is cleared by `reset` / `mode=`, so an old shot never re-fires into a new run.
+`commands.csv` records each scheduled command at the sim time it actually ran. Append the shot list **after**
+the sim starts: lines that already exist in the file when it launches are ignored.
 
 ## Scientist agents: experiment service
 

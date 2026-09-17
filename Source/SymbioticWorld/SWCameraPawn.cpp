@@ -124,6 +124,53 @@ void ASWCameraPawn::SetFollowScientist(ASWScientistAvatar* Avatar)
 	FollowScientist = Avatar;
 }
 
+void ASWCameraPawn::SetPose(const FVector& Loc, const FRotator& Rot)
+{
+	// control "cam=x,y,z,pitch,yaw": the -SWCam path, live. Releasing first means a scripted pose
+	// is not fought over by a follow that is still running.
+	SetFollowTarget(nullptr);
+	PlaceCamera(Loc, Rot);
+}
+
+bool ASWCameraPawn::SetFollowSpec(const FString& Spec, FString& OutWhat)
+{
+	// control "follow=...": sets the same requests the launch flags do, then evaluates them once so a
+	// command scheduled for an exact sim time frames its subject on that frame instead of the next.
+	const FString S = Spec.TrimStartAndEnd();
+	if (S.IsEmpty()) return false;
+	SetFollowTarget(nullptr);   // clears FollowTarget / FollowActor / FollowScientist and both requests
+	if (S.Equals(TEXT("none"), ESearchCase::IgnoreCase))
+	{
+		OutWhat = TEXT("released");
+		return true;
+	}
+	for (const ESWSpecies Sp : { ESWSpecies::Lumen, ESWSpecies::Tecton })
+	{
+		if (S.Equals(SWSpeciesName(Sp), ESearchCase::IgnoreCase))
+		{
+			RequestedFollowSpecies = Sp;   // -SWFollowSpecies: selects one if none is selected, re-acquires on death
+			UpdateRequestedFollow();
+			OutWhat = SWSpeciesName(Sp);
+			return true;
+		}
+	}
+	if (S.Equals(TEXT("Leviathan"), ESearchCase::IgnoreCase))
+	{
+		bRequestedLeviathan = true;
+		bWarnedNoLeviathan = false;
+		UpdateRequestedFollow();
+		OutWhat = TEXT("Leviathan");
+		return true;
+	}
+	// Anything else is a field-team name (or "any"), exactly like -SWFollowScientist: the request waits
+	// for the avatar to join and warns once, after the grace period, if it never can.
+	RequestedScientist = S;
+	bWarnedNoScientist = false;
+	UpdateRequestedFollow();
+	OutWhat = FString::Printf(TEXT("scientist %s"), *S);
+	return true;
+}
+
 void ASWCameraPawn::UpdateRequestedFollow()
 {
 	// -SWFollowScientist: the team joins a few seconds after the bridge connects, so keep looking until then;
@@ -141,7 +188,7 @@ void ASWCameraPawn::UpdateRequestedFollow()
 				if (bAny || A->GetScientistName().Equals(RequestedScientist, ESearchCase::IgnoreCase))
 				{
 					FollowScientist = A;
-					UE_LOG(LogSymbioticWorld, Log, TEXT("-SWFollowScientist: following %s"), *A->GetScientistName());
+					UE_LOG(LogSymbioticWorld, Log, TEXT("follow: following scientist %s"), *A->GetScientistName());
 					break;
 				}
 			}
@@ -150,7 +197,7 @@ void ASWCameraPawn::UpdateRequestedFollow()
 				&& (!M->GetLook().bScientistAvatars || !M->HasPolicyServers()))
 			{
 				bWarnedNoScientist = true;
-				UE_LOG(LogSymbioticWorld, Warning, TEXT("-SWFollowScientist=%s: %s; nothing to follow"), *RequestedScientist,
+				UE_LOG(LogSymbioticWorld, Warning, TEXT("follow=%s (-SWFollowScientist or the control file): %s; nothing to follow"), *RequestedScientist,
 					!M->GetLook().bScientistAvatars ? TEXT("Look.bScientistAvatars is off (add -SWSet=\"Look.bScientistAvatars=1\")")
 					                                : TEXT("no policy bridge (add --policy host:port=Both with Lab.lab observe --embody running)"));
 			}
@@ -168,7 +215,7 @@ void ASWCameraPawn::UpdateRequestedFollow()
 				if (!M->GetSettings().bLeviathan || M->GetSettings().LeviathanCount <= 0)
 				{
 					bWarnedNoLeviathan = true;
-					UE_LOG(LogSymbioticWorld, Warning, TEXT("-SWFollowSpecies=Leviathan: no predator in this run (Settings.bLeviathan=%d, LeviathanCount=%d); nothing to follow"),
+					UE_LOG(LogSymbioticWorld, Warning, TEXT("follow=Leviathan (-SWFollowSpecies or the control file): no predator in this run (Settings.bLeviathan=%d, LeviathanCount=%d); nothing to follow"),
 						M->GetSettings().bLeviathan ? 1 : 0, M->GetSettings().LeviathanCount);
 				}
 			}
