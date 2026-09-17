@@ -165,14 +165,19 @@ it on at launch with `-SWSet "Look.bScientistAvatars=true"` or live through
 the control file (`set Look.bScientistAvatars=1`), and off again the same way.
 Each avatar carries a screen-space name tag in its own colour; key G cycles a
 chase camera through the team (`-SWFollowScientist=<Name>|any` at launch).
-The Lab side (`Lab/embodiment.py`) sends each scientist toward the nearest organism
-that fits their rule, keeps them on land using the hello's `water_mask`, and crosses
+The Lab side (`Lab/embodiment.py`) reports nine bodies: the eight who go out and Humboldt,
+the PI, who holds the camp and never does fieldwork. It sends each field scientist toward the
+nearest organism that fits their rule, keeps them on land using the hello's `water_mask`, and crosses
 water by jet ski only when the target is on the other side; each entry also carries
 `"mode":"walk"|"jetski"`, informational — the sim draws the jet ski from its own
 water test at the rendered position, so an older bridge that walks straight through
 the river still renders correctly. During a drought that test uses the lowered
 surface, so a scientist reported as `jetski` over the exposed bed walks on screen.
-The lab's witnessing and evidence are bridge-side and work identically with
+The team also has a duty cycle (`Lab/duty.py`): after five evidence windows of fieldwork the
+whole team walks back to the camp — a fixed spot on land derived from the arena size — and holds
+there until a meeting has run, so the same people are never in the field and in a meeting at once.
+No witnessed evidence is minted at camp; the instrument evidence (the god-view window statistics)
+continues in both phases. The lab's witnessing and evidence are bridge-side and work identically with
 the layer off.
 Coordinates are arena uu, the same space as organism `position`. Send at most
 a few per sim-second; entries beyond 16 are ignored. STRICTLY visual: no
@@ -188,10 +193,38 @@ Builds older than this message ignore it.
 * the action is **infeasible** under the organism's `mask`.
 
 Every fallback is counted: `population.csv` columns `ext_decisions` / `ext_fallbacks` (cumulative,
-per species), and the UE log reports connect / disconnect / timeout / recovery **once per state
+per species), and the UE log reports connect / disconnect / not-answering / recovery **once per state
 change**, plus a throughput line every 10 s. `agents.csv` has a final `policy` column
 (`builtin` or `ext:host:port`). The inspector shows `policy: external host:port` or
 `policy: builtin`; the title block shows `ext N/M` (external organisms / total).
+
+### Back-off: a server that stops answering never costs the world its frame rate
+
+The sim waits at most `Settings.PolicyTimeoutMs` (200 ms) per substep per server. A server that
+stops replying — wedged on a lock, swapped out, paused in a debugger — would cost that wait on
+*every* substep, and the world's picture stops moving. Since 2026-09-17 it does not:
+
+* after `Settings.PolicyTimeoutBackoffAfter` **consecutive** timeouts (default 3) the server is
+  marked **not answering**. The sim stops sending to it and stops waiting on it altogether, so its
+  organisms fall back to their own bandit with no per-substep stall at all;
+* while it is marked down the sim retries no more often than `Settings.PolicyBackoffStartSec`
+  (default 1 s), doubling after each unanswered probe up to `Settings.PolicyBackoffMaxSec`
+  (default 10 s). A probe is one ordinary `decide` exchange;
+* **any** reply restores it at once — the probe's, or a late reply arriving between substeps — and
+  the organisms go back to the server on the next decision;
+* exactly two log lines per episode, never per substep:
+  `PolicyServer host:port: not answering (3 replies missed in a row at 200 ms); its organisms use the
+  built-in bandit and the sim stops waiting on it, retrying every 1.0 s up to 10.0 s` and
+  `PolicyServer host:port: answering again after 12.4 s (7 timeouts so far)`.
+* `Settings.PolicyTimeoutBackoffAfter=0` disables the back-off (always wait, the behaviour before
+  2026-09-17). All three fields are live (`set Settings.PolicyBackoffMaxSec=30`).
+
+The fallback semantics above do not change: a missing or infeasible action still means "that
+organism uses its own bandit for that decision". The back-off only changes how long the sim is
+willing to **wait** before calling the reply missing. Measured on seed 7, mode C, 120 logical
+seconds against a listener that accepts the connection and never answers: 120 s of world in 9.4 s
+of wall clock with the back-off (3 requests, 3 timeouts in the whole run), against 5.1 logical
+seconds in 21 minutes with `PolicyTimeoutBackoffAfter=0`.
 
 ## Adding servers while the sim runs
 
@@ -258,7 +291,8 @@ on the printed lines; `--write` appends only `host:port`s that the file does not
   a neural network call per organism is not, unless you batch it.
 * `Tools/policy_server.py` prints decisions/s and the mean time it spent in `act()` per request
   every 5 s; the UE log prints the mean round trip as seen from the sim. If you see timeouts,
-  raise `--policy-timeout`, lower `--speed`, or make `act()` cheaper.
+  raise `--policy-timeout`, lower `--speed`, or make `act()` cheaper. A server that stops answering
+  altogether is written off after three misses (back-off, above) instead of slowing the world down.
 * Handle `learn()` from the *next* request: `last_action`/`last_reward` are delivered in the
   same message as the new observation, so a learning agent never needs a second round trip.
 
@@ -269,7 +303,13 @@ Without `--policy` the sim is byte-identical to the previous build for a given s
 **logged**, and it is reproducible only if the external agent is: same replies to the same
 requests (seeded RNG in your agent, no dependence on wall time), no timeouts. A timeout or a
 disconnect changes which organisms draw from the sim's seeded stream, so two runs against a
-slow server can differ.
+slow server can differ. That also means a run with `--policy` is **not** comparable to one without
+it, even when the server never answers a single request: an organism bound to a server resolves its
+decision after the substep's agent loop instead of inside it, so the seeded draws happen in a
+different order. Two runs against a server that never answers *are* identical to each other,
+whatever the reason it is silent — unreachable port, wedged process, or written off by the back-off
+above (verified: seed 7, mode C, 120 s, identical `agents/births/deaths/population.csv` apart from
+the `policy` column that names the port).
 
 ## Offline development on a Mac (no Unreal)
 

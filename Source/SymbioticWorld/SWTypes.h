@@ -591,6 +591,14 @@ struct FSWRunSettings
 	// Also settable as -SWPolicy=... ; ',' and ';' are not allowed in the value (command-line parsing).
 	UPROPERTY(EditAnywhere) FString PolicyServers;
 	UPROPERTY(EditAnywhere) int32 PolicyTimeoutMs = 200;    // per-substep wait for a reply; on timeout the built-in bandit decides
+	// Back-off for a server that stops answering (docs/POLICY_API.md): after this many consecutive
+	// timeouts the sim stops waiting on it altogether — its organisms fall back to the built-in
+	// bandit with no per-substep stall — and only retries every PolicyBackoffStartSec, doubling to
+	// PolicyBackoffMaxSec, until a reply lands. A wedged bridge costs the world one timeout, not its
+	// frame rate. 0 disables the back-off (always wait, the behaviour before 2026-09-17).
+	UPROPERTY(EditAnywhere) int32 PolicyTimeoutBackoffAfter = 3;
+	UPROPERTY(EditAnywhere) float PolicyBackoffStartSec = 1.0f;
+	UPROPERTY(EditAnywhere) float PolicyBackoffMaxSec = 10.0f;
 	UPROPERTY(EditAnywhere) float PolicyShare = 1.0f;       // fraction of a served species assigned to the server, decided per organism at birth (seeded stream)
 	// Server list file, watched on the wall clock while the sim runs (docs/POLICY_API.md, "Adding servers while
 	// the sim runs"): one "host:port=Species" per line, '#' comments. Its entries are added to PolicyServers

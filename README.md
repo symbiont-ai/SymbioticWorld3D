@@ -102,6 +102,7 @@ Command-line flags understood by the sim (all optional):
                         # so a scripted render never captures your keystrokes (M/P/1-3 would change the run)
 -SWPolicy="host:port=Lumen|host:port=Tecton"   # external policy servers (run_sim: --policy); '|' and '=' only, no ',' or ';'
 -SWPolicyTimeoutMs=200  -SWPolicyShare=1.0     # run_sim: --policy-timeout / --policy-share; see docs/POLICY_API.md
+-SWSet="Settings.PolicyTimeoutBackoffAfter=3;Settings.PolicyBackoffStartSec=1;Settings.PolicyBackoffMaxSec=10"   # a server that misses 3 replies in a row is left alone (its organisms use the built-in bandit) and retried on a growing interval, so a wedged bridge never slows the world
 -SWSet="Settings.bLeviathan=1"                  # river predator (off by default; DESIGN.md §4); live: control "set Settings.bLeviathan=1" then "reset"
 -SWSet="Look.bScientistAvatars=1"               # Symbiotic Lab field-team avatars (visual only, off by default; docs/POLICY_API.md §5); live: control "set Look.bScientistAvatars=1"
 -SWPolicyFile=Saved/policy_servers.txt         # server list file polled every 3 s while running (run_sim: --policy-file); edit it to add/remove servers

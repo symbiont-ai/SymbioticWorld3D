@@ -203,7 +203,10 @@ bool FSWPolicyClient::TryConnect(FSWPolicyServer& S)
 	S.Socket = Sock;
 	S.bConnected = true;
 	S.bEverConnected = true;
-	S.bTimingOut = false;
+	S.ConsecutiveTimeouts = 0;
+	S.bNotAnswering = false;
+	S.BackoffSec = 0.0;
+	S.NextProbeTime = 0.0;
 	S.RecvBuf.Reset();
 	UE_LOG(LogSymbioticWorld, Log, TEXT("PolicyServer %s: connected (%s)"), *S.Name, *Addr->ToString(true));
 	if (!HelloLine.IsEmpty() && SendLine(S, HelloLine))
@@ -228,6 +231,10 @@ void FSWPolicyClient::Disconnect(FSWPolicyServer& S, const TCHAR* Reason)
 	}
 	S.bConnected = false;
 	S.bAwaitingReply = false;
+	S.bNotAnswering = false;       // a closed socket is the reconnect timer's business, not the back-off's
+	S.ConsecutiveTimeouts = 0;
+	S.BackoffSec = 0.0;
+	S.NextProbeTime = 0.0;
 	S.RecvBuf.Reset();
 	S.NextConnectAttempt = FPlatformTime::Seconds() + ReconnectSeconds;
 }
@@ -392,6 +399,8 @@ bool FSWPolicyClient::HandleSideMessage(FSWPolicyServer& S, const TSharedPtr<FJs
 	if (Type == TEXT("actions"))
 	{
 		S.Stale++;   // an actions reply outside (or after) its exchange window
+		// Late, but proof of life: a server that was written off is restored the moment anything lands.
+		MarkAnswering(S, FPlatformTime::Seconds());
 		return true;
 	}
 	return true;
@@ -437,6 +446,39 @@ bool FSWPolicyClient::ParseAction(const TSharedPtr<FJsonValue>& V, int32& OutIdx
 	return false;
 }
 
+void FSWPolicyClient::MarkNotAnswering(FSWPolicyServer& S, double Now)
+{
+	if (S.bNotAnswering) return;
+	S.bNotAnswering = true;
+	S.DownSince = Now;
+	S.BackoffSec = BackoffStartSec;
+	S.NextProbeTime = Now + S.BackoffSec;
+	UE_LOG(LogSymbioticWorld, Warning,
+		TEXT("PolicyServer %s: not answering (%d replies missed in a row at %d ms); its organisms use the built-in bandit and the sim stops waiting on it, retrying every %.1f s up to %.1f s"),
+		*S.Name, S.ConsecutiveTimeouts, TimeoutMs, BackoffStartSec, BackoffMaxSec);
+}
+
+void FSWPolicyClient::MarkAnswering(FSWPolicyServer& S, double Now)
+{
+	if (S.bNotAnswering)
+	{
+		UE_LOG(LogSymbioticWorld, Log, TEXT("PolicyServer %s: answering again after %.1f s (%d timeouts so far)"),
+			*S.Name, Now - S.DownSince, S.Timeouts);
+	}
+	S.bNotAnswering = false;
+	S.ConsecutiveTimeouts = 0;
+	S.BackoffSec = 0.0;
+	S.NextProbeTime = 0.0;
+}
+
+bool FSWPolicyClient::WantsRequest(int32 Idx) const
+{
+	if (!Servers.IsValidIndex(Idx)) return false;
+	const FSWPolicyServer& S = Servers[Idx];
+	if (!S.bConnected) return false;
+	return !S.bNotAnswering || FPlatformTime::Seconds() >= S.NextProbeTime;
+}
+
 void FSWPolicyClient::Exchange(int32 Step, const TArray<FString>& RequestLines, TArray<TMap<int32, int32>>& OutActions)
 {
 	OutActions.SetNum(Servers.Num());
@@ -448,8 +490,11 @@ void FSWPolicyClient::Exchange(int32 Step, const TArray<FString>& RequestLines, 
 		FSWPolicyServer& S = Servers[i];
 		S.bAwaitingReply = false;
 		if (!S.bConnected || !RequestLines.IsValidIndex(i) || RequestLines[i].IsEmpty()) continue;
-		DrainSideMessages(S);
+		DrainSideMessages(S);   // free: non-blocking, and a late reply here restores a written-off server
 		if (!S.bConnected) continue;
+		// Marked not answering and not due for a probe: send nothing and wait for nothing. Its
+		// organisms fall back to their own bandit exactly as a timeout would have made them.
+		if (S.bNotAnswering && FPlatformTime::Seconds() < S.NextProbeTime) continue;
 		S.SendTime = FPlatformTime::Seconds();
 		if (!SendLine(S, RequestLines[i])) continue;
 		S.Requests++;
@@ -501,19 +546,26 @@ void FSWPolicyClient::Exchange(int32 Step, const TArray<FString>& RequestLines, 
 			}
 		}
 		if (!S.bConnected) continue;   // dropped mid-exchange; Disconnect() already logged
+		const double Now = FPlatformTime::Seconds();
 		if (!bGot)
 		{
 			S.Timeouts++;
-			if (!S.bTimingOut)
+			S.ConsecutiveTimeouts++;
+			if (S.bNotAnswering)
 			{
-				S.bTimingOut = true;
-				UE_LOG(LogSymbioticWorld, Warning, TEXT("PolicyServer %s: no reply within %d ms; its organisms use the built-in bandit until it responds again"), *S.Name, TimeoutMs);
+				// A probe went unanswered: wait longer before the next one, up to the cap. No log line:
+				// the state has not changed.
+				S.BackoffSec = FMath::Min(S.BackoffSec * 2.0, static_cast<double>(BackoffMaxSec));
+				S.NextProbeTime = Now + S.BackoffSec;
+			}
+			else if (BackoffAfter > 0 && S.ConsecutiveTimeouts >= BackoffAfter)
+			{
+				MarkNotAnswering(S, Now);
 			}
 		}
-		else if (S.bTimingOut)
+		else
 		{
-			S.bTimingOut = false;
-			UE_LOG(LogSymbioticWorld, Log, TEXT("PolicyServer %s: responding again (%d timeouts so far)"), *S.Name, S.Timeouts);
+			MarkAnswering(S, Now);
 		}
 	}
 }
