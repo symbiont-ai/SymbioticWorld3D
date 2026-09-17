@@ -1,4 +1,5 @@
-"""Embodied field observers: eight bodies (the seven voting scientists plus Vega) in the arena.
+"""Embodied field observers: nine bodies in the arena — the eight who go out (the six voting
+field scientists, Vesper and Bastion among them, plus Vega) and Humboldt, the PI, who stays at camp.
 
 Enabled with `python -m Lab.lab observe --embody` (a mode toggle; off keeps
 the plain instrument-style observer). Each scientist gets a position in the
@@ -35,6 +36,15 @@ current message: a decide message carries just the organisms due that substep
 (about a tenth of the population), so the field keeps each organism's latest
 report and forgets it after STALE_DECISIONS decision intervals of silence.
 
+The team also has a duty cycle (Lab/duty.py): during the FIELD phase they work
+the arena as described above; when the lab calls a meeting they walk back to
+CAMP, a fixed rendezvous on land derived from the arena size, and hold there
+until the meeting ends. Nobody witnesses anything at camp, so no witnessed
+evidence is minted during a meeting — the instrument evidence (the god-view
+window statistics) continues in both phases, because those are instruments, not
+people. Humboldt, the PI, never does fieldwork: his body stands at camp in both
+phases (he votes, predicts and is scored exactly like the others).
+
 Movement is deterministic per run (the start position is seeded from the run
 id; everything after is a pure function of the decide stream), so an embodied
 run is reproducible like everything else. No organism is touched: embodiment
@@ -66,6 +76,13 @@ REPLANS_PER_STEP = 2   # refreshes of existing routes per decide message, grante
                        # small (a scientist with no route at all always gets a search: once at the start and
                        # once after each watch)
 YOUNGEST_N = 5         # Mendel's candidate pool
+# Camp: the team's rendezvous, derived from the arena the way the sim derives its start camera, and
+# moved to the nearest land cell if the water mask says the ideal spot is wet (the scientists keep to
+# land, so the camp must be on it). The PI stands at the centre, the others on a small ring.
+CAMP_FRAC_X = -0.55    # x of the arena half-length
+CAMP_FRAC_Y = 0.62     # y of the arena half-width: well off the valley's river axis
+CAMP_RADIUS = 260.0    # uu; the ring the field scientists hold on
+CAMP_HOLD_DIST = 60.0  # uu; close enough to their spot to stand still
 
 # name -> (rule, argument); see EmbodiedScientist.candidates. "any" scientists avoid an organism
 # another scientist already watches when there is a choice, so the team spreads over the population.
@@ -78,12 +95,41 @@ TARGETS = {
     "Karla":   ("any", None),           # skeptic
     "Archie":  ("any", None),           # archivist
     "Vega":    ("any", None),           # data scientist; report-only presence
+    # The PI does no fieldwork: his rule is the camp, in both phases. Listed last so the sim's
+    # avatar tints keep the order the eight field bodies already had.
+    "Humboldt": ("camp", None),         # principal investigator
 }
 
 # Vega is non-voting and report-only by construction (Lab/README.md): her body
 # walks and is rendered like the others, but she mints NO witnessed evidence,
-# so nothing she sees can enter a stance, a finding, or the registry.
-NO_EVIDENCE = {"Vega"}
+# so nothing she sees can enter a stance, a finding, or the registry. Humboldt
+# mints none either: he never leaves camp, so he has nothing witnessed to mint.
+NO_EVIDENCE = {"Vega", "Humboldt"}
+# Who actually goes out (the field roster), as opposed to the whole team of nine.
+FIELD_ROSTER = [n for n, (rule, _) in TARGETS.items() if rule != "camp"]
+
+
+def camp_site(half, half_y, water=None):
+    """The team's rendezvous in arena coordinates: a fixed fraction of the arena, moved to the
+    nearest land cell when the sim's water mask says that spot is in the river. Deterministic:
+    the same arena always gives the same camp."""
+    x, y = CAMP_FRAC_X * float(half), CAMP_FRAC_Y * float(half_y or half)
+    if water is None or not water.is_water(x, y):
+        return (x, y)
+    land = water.nearest_land(x, y)
+    return land or (x, y)
+
+
+def camp_spot(camp, index, count, water=None):
+    """Where one body holds at camp: the PI (index 0 of the camp rule) at the centre, the others on
+    a ring so nine bodies do not stand inside each other."""
+    if index < 0:
+        return camp
+    ang = 2.0 * math.pi * index / max(count, 1)
+    x, y = camp[0] + CAMP_RADIUS * math.cos(ang), camp[1] + CAMP_RADIUS * math.sin(ang)
+    if water is not None and water.is_water(x, y):
+        return camp
+    return (x, y)
 
 
 def _id_key(aid):
@@ -138,6 +184,28 @@ class WaterMask:
     def is_water(self, x, y):
         i, j = self.cell_of(x, y)
         return self.water[j][i]
+
+    def nearest_land(self, x, y):
+        """Centre of the land cell nearest (x, y), or None if the mask is all water. Deterministic:
+        ties break on (distance, row, column)."""
+        i0, j0 = self.cell_of(x, y)
+        for r in range(0, max(self.cols, self.rows) + 1):
+            best = None
+            for j in range(j0 - r, j0 + r + 1):
+                if j < 0 or j >= self.rows:
+                    continue
+                for i in range(i0 - r, i0 + r + 1):
+                    if i < 0 or i >= self.cols or max(abs(i - i0), abs(j - j0)) != r:
+                        continue
+                    if self.water[j][i]:
+                        continue
+                    cx, cy = self.center(i, j)
+                    key = ((cx - x) ** 2 + (cy - y) ** 2, j, i)
+                    if best is None or key < best[0]:
+                        best = (key, (cx, cy))
+            if best is not None:
+                return best[1]
+        return None
 
     def route(self, x0, y0, x1, y1):
         """Waypoints (cell centres, then the exact target) from (x0, y0) to (x1, y1): A* over the
@@ -194,19 +262,24 @@ class WaterMask:
 
 
 class EmbodiedScientist:
-    def __init__(self, name, run_id, half, half_y=None, water=None):
+    def __init__(self, name, run_id, half, half_y=None, water=None, camp=None, camp_index=0):
         self.name = name
         self.half = half              # arena half-length along the valley (X)
         self.half_y = half_y or half  # half-width across it (Y); the sim's hello carries both
         self.water = water            # WaterMask or None (straight lines)
         self.rng = _Rng(_seed_of(run_id, name))
         self.rule, self.rule_arg = TARGETS[name]
+        # Where this body holds during a meeting (the PI holds there always).
+        self.camp = camp_spot(camp, -1 if self.rule == "camp" else camp_index,
+                              max(len(TARGETS) - 1, 1), water) if camp else None
         # Start on land when the mask says where that is: a scientist does not spawn mid-river.
         for _ in range(12):
             self.x = self.rng.uniform(-half * 0.5, half * 0.5)
             self.y = self.rng.uniform(-self.half_y * 0.5, self.half_y * 0.5)
             if water is None or not water.is_water(self.x, self.y):
                 break
+        if self.rule == "camp" and self.camp:
+            self.x, self.y = self.camp   # the PI is at camp from the first frame
         self.target_id = None
         self.watching = False         # arrived: standing OBSERVE_DIST from the target
         self.path = []                # waypoints toward the target
@@ -304,6 +377,18 @@ class EmbodiedScientist:
         self.watching = False
         return (tx, ty)
 
+    def choose_camp(self, t):
+        """Head for this body's camp spot and hold there: the meeting phase, and the PI always."""
+        self.t = t
+        self.target_id = None
+        spot = self.camp or (0.0, 0.0)
+        if math.hypot(spot[0] - self.x, spot[1] - self.y) <= CAMP_HOLD_DIST:
+            self.watching = True     # standing at camp
+            self.path = []
+            return None
+        self.watching = False
+        return spot
+
     def move(self, goal, dt, replan):
         """Advance dt logical seconds toward goal along the planned route (searched now if replan)."""
         if goal is None or dt <= 0:
@@ -356,7 +441,8 @@ class EmbodiedScientist:
 
 
 class EmbodiedField:
-    """All eight bodies (Vega mints no evidence) plus per-window evidence minting."""
+    """All nine bodies — the eight who go out (Vega among them, minting no evidence) and the PI at
+    camp — plus per-window evidence minting."""
 
     def __init__(self, run_id, world_half_size, world_half_size_y=None, water_mask=None,
                  decision_interval=None):
@@ -369,18 +455,32 @@ class EmbodiedField:
                       f"{self.water.cell:.0f} uu, {self.water.n_water} water; routing on land")
             except (KeyError, TypeError, ValueError) as e:
                 print(f"[embody] water_mask ignored ({e!r}); routing straight lines")
-        self.team = [EmbodiedScientist(n, run_id, float(world_half_size or 4500.0),
-                                       float(world_half_size_y) if world_half_size_y else None,
-                                       self.water)
-                     for n in TARGETS]
+        half = float(world_half_size or 4500.0)
+        half_y = float(world_half_size_y) if world_half_size_y else half
+        self.camp = camp_site(half, half_y, self.water)
+        # The camp is a place people stand: it must pass the same land test the routes use. The one
+        # exception is an arena with no land at all (only a synthetic all-water mask), which is noted
+        # rather than fatal.
+        dry = self.water is None or not self.water.is_water(*self.camp)
+        no_land = self.water is not None and self.water.n_water == self.water.cols * self.water.rows
+        assert dry or no_land, "camp is in the water"
+        print(f"[embody] camp at ({self.camp[0]:.0f}, {self.camp[1]:.0f})"
+              f"{' on land' if dry else ' (no land in this arena)'}; "
+              f"{len(FIELD_ROSTER)} in the field, Humboldt (PI) at camp")
+        self.team = [EmbodiedScientist(n, run_id, half, half_y, self.water, self.camp, k)
+                     for k, n in enumerate(TARGETS)]
         self.last_t = None
         self.plan_offset = 0
+        self.in_field = True
         # Latest report of every organism seen (id -> agent dict) and when: see the module docstring.
         self.known = {}
         self.known_t = {}
         self.stale_s = STALE_DECISIONS * float(decision_interval or 1.0)
 
-    def step(self, t, agents):
+    def step(self, t, agents, in_field=True):
+        """Advance the team to sim time t. in_field=False is the meeting phase: every body routes
+        to camp and holds there, and nobody witnesses anything (Lab/duty.py)."""
+        self.in_field = in_field
         dt = 0.0 if self.last_t is None else max(0.0, t - self.last_t)
         self.last_t = t
         for a in agents:
@@ -395,7 +495,8 @@ class EmbodiedField:
         # Organisms the team already watches are off limits to the others (when there is a choice), so a
         # colleague's target is never taken from them and nobody is sent off after the next free one.
         claimed = {s.target_id for s in self.team if s.target_id is not None}
-        goals = [s.choose(population, t, claimed) for s in self.team]
+        goals = [s.choose(population, t, claimed) if in_field and s.rule != "camp" else s.choose_camp(t)
+                 for s in self.team]
         # Route searches are the only costly work here. A scientist with no route always searches
         # (once at the start, once after each watch); refreshes of existing routes are capped at
         # REPLANS_PER_STEP per message, granted from a rotating member so nobody starves.
@@ -416,7 +517,10 @@ class EmbodiedField:
             self.plan_offset = (self.plan_offset + 1) % n
         for s, goal, grant in zip(self.team, goals, grants):
             s.move(goal, dt, grant)
-            s.witness(agents)
+            # Nobody witnesses from camp: a meeting phase mints no witnessed evidence, and the PI
+            # never does fieldwork.
+            if in_field and s.rule != "camp":
+                s.witness(agents)
 
     def team_positions(self):
         """[{name, x, y, mode}] for the sim's avatar layer (docs/POLICY_API.md); mode is informational."""
@@ -468,4 +572,4 @@ class EmbodiedField:
             lines.append(f"{s.name}@({s.x:.0f},{s.y:.0f}) saw {n_tot}, {s.switches} switches")
             s.reset_window()
         con.commit()
-        return "field: " + ", ".join(lines)
+        return ("field: " if self.in_field else "camp: ") + ", ".join(lines)

@@ -1,4 +1,5 @@
-"""Unit checks for the embodied field team's targeting and land-first routing (no sim needed).
+"""Unit checks for the embodied field team: targeting, land-first routing and the duty cycle
+(camp, meetings, the PI who never goes out). No sim, no engine, no network.
 
     python -m pytest Lab/tests/test_embodiment.py -q
     python Lab/tests/test_embodiment.py
@@ -12,7 +13,9 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from Lab.embodiment import (EmbodiedField, WaterMask, OBSERVE_DIST, RESUME_DIST,  # noqa: E402
-                            SPEED, JETSKI_SPEED, WATER_COST, REPLANS_PER_STEP)
+                            SPEED, JETSKI_SPEED, WATER_COST, REPLANS_PER_STEP,
+                            CAMP_FRAC_X, CAMP_FRAC_Y, CAMP_HOLD_DIST, FIELD_ROSTER, camp_site)
+from Lab import duty  # noqa: E402
 import time  # noqa: E402
 
 CELL = 200.0
@@ -165,7 +168,7 @@ def test_jetski_is_faster_on_water():
 
 def test_full_size_mask_search_is_cheap_and_bounded_per_step():
     # The sim's real mask is 80 x 55 cells; a river band along X with two gaps-free banks. One search
-    # must be milliseconds, and a step with 8 scientists must run at most REPLANS_PER_STEP searches.
+    # must be milliseconds, and a step with the whole team must run at most REPLANS_PER_STEP searches.
     water = {(i, j) for i in range(80) for j in range(24, 33)}
     spec = mask(80, 55, water)
     m = WaterMask(spec)
@@ -184,7 +187,7 @@ def test_full_size_mask_search_is_cheap_and_bounded_per_step():
     agents = [agent(f"L{k}", *m.center(70, 45 + k), "Tecton" if k == 7 else "Lumen") for k in range(8)]
     f.step(0.0, agents)
     f.step(0.5, agents)   # first routes: one search each, by design unbounded
-    assert len(calls) == 8 and all(s.path for s in f.team), len(calls)
+    assert len(calls) == len(f.team) and all(s.path for s in f.team), len(calls)   # the PI routes to camp
     calls.clear()
     moved = [agent(f"L{k}", *m.center(60, 40 + k), "Tecton" if k == 7 else "Lumen") for k in range(8)]   # every target changes cell
     f.step(3.0, moved)   # 2.5 s later every route is stale: refreshes are rationed
@@ -203,12 +206,13 @@ def test_due_subset_stream_keeps_targets_stable():
                        "Tecton" if k % 4 == 0 else "Lumen", age=1.0 + k) for k in range(20)]
     for k in range(10):   # one decision interval: everyone reports once
         f.step(0.1 * k, [o for i, o in enumerate(organisms) if i % 10 == k % 10])
-    before = [s.target_id for s in f.team]
+    out = [s for s in f.team if s.rule != "camp"]   # the PI has no organism target: he is at camp
+    before = [s.target_id for s in out]
     assert all(before), before
     changes = 0
     for k in range(10, 40):
         f.step(0.1 * k, [o for i, o in enumerate(organisms) if i % 10 == k % 10])
-        now = [s.target_id for s in f.team]
+        now = [s.target_id for s in out]
         changes += sum(x != y for x, y in zip(before, now))
         before = now
     assert changes <= 1, changes
@@ -274,6 +278,190 @@ def test_same_run_id_and_stream_reproduce_positions():
         outs.append(f.team_positions())
     assert outs[0] == outs[1]
     assert all(p["mode"] in ("walk", "jetski") for p in outs[0])
+
+
+# --------------------------------------------------------------------- duty cycle
+# The team is either in the field or at camp for a meeting, never both (Lab/duty.py).
+
+
+def _db(tmp_name):
+    import tempfile
+    from Lab import db as labdb
+    path = os.path.join(tempfile.mkdtemp(prefix="labduty"), tmp_name)
+    return labdb.connect(path)
+
+
+def test_camp_is_on_land_and_derived_from_the_arena():
+    # A river band across the middle rows: the ideal camp fraction lands in it, so the camp moves
+    # to the nearest land cell instead.
+    spec = mask(20, 10, {(i, j) for i in range(20) for j in (5, 6)})
+    m = WaterMask(spec)
+    half, half_y = spec["cols"] * CELL / 2, spec["rows"] * CELL / 2
+    ideal = (CAMP_FRAC_X * half, CAMP_FRAC_Y * half_y)
+    camp = camp_site(half, half_y, m)
+    assert not m.is_water(*camp), camp
+    # Same arena, same camp; and it is near the ideal spot, not somewhere random.
+    assert camp == camp_site(half, half_y, m)
+    assert math.hypot(camp[0] - ideal[0], camp[1] - ideal[1]) <= 4 * CELL
+    f = field(spec)
+    assert not m.is_water(*f.camp)
+
+
+def test_meeting_phase_walks_everyone_to_camp_and_mints_no_witnessed_evidence():
+    spec = mask(20, 10, set())
+    f = field(spec)
+    organisms = [agent(f"L{k}", 500 * k - 1500, 300, "Tecton" if k == 3 else "Lumen") for k in range(6)]
+    con = _db("camp.sqlite")
+    for k in range(60):                      # fieldwork: everyone walks out to an organism
+        f.step(0.5 * k, organisms, in_field=True)
+    out_pos = [(s.x, s.y) for s in f.team]
+    assert any(s.target_id for s in f.team)
+    f.flush(con, 2, 120.0, 180.0)            # the window that ends the field phase
+    minted = con.execute("SELECT COUNT(*) FROM evidence "
+                         "WHERE provenance LIKE 'witnessed by%'").fetchone()[0]
+    assert minted > 0
+    for k in range(60, 500):                 # meeting: called back to camp
+        f.step(0.5 * k, organisms, in_field=False)
+    for s in f.team:
+        assert math.hypot(s.x - s.camp[0], s.y - s.camp[1]) <= CAMP_HOLD_DIST, (s.name, s.x, s.y)
+        assert not s.seen["Lumen"] and not s.seen["Tecton"], s.name   # nobody witnesses from camp
+    assert out_pos != [(s.x, s.y) for s in f.team]
+
+    note = f.flush(con, 3, 180.0, 240.0)     # a whole window spent at camp mints nothing witnessed
+    after = con.execute("SELECT COUNT(*) FROM evidence "
+                        "WHERE provenance LIKE 'witnessed by%'").fetchone()[0]
+    assert after == minted, (minted, after)
+    assert note.startswith("camp: "), note
+    # The instruments are not people: a window's god-view statistics are minted in either phase.
+    from Lab.live_observer import _Window
+    w = _Window(3)
+    for a in organisms:
+        w.add(dict(a, genome={"alpha": 0.1, "epsilon": 0.2, "e": 0.5}, last_reward=0.3,
+                   last_action="forage", percept={"trace_x": 0.0, "trace_y": 0.0}))
+    stats = w.stats("run-test", 180.0, 240.0)
+    assert any(s.startswith("live_lumen_n") for s, _, _ in stats), stats
+    con.close()
+
+
+def test_field_phase_mints_witnessed_evidence_again():
+    f = field(mask(20, 10, set()))
+    organisms = [agent(f"L{k}", 300 * k, 0) for k in range(8)]
+    for k in range(200):
+        f.step(0.5 * k, organisms, in_field=True)
+    con = _db("field.sqlite")
+    note = f.flush(con, 1, 60.0, 120.0)
+    witnessed = con.execute("SELECT COUNT(*) FROM evidence "
+                            "WHERE provenance LIKE 'witnessed by%'").fetchone()[0]
+    assert witnessed > 0
+    assert note.startswith("field: "), note
+    con.close()
+
+
+def test_humboldt_never_leaves_camp():
+    f = field(mask(20, 10, set()))
+    pi = [s for s in f.team if s.name == "Humboldt"][0]
+    assert pi.rule == "camp" and (pi.x, pi.y) == pi.camp == f.camp
+    organisms = [agent("L1", 1800, 900), agent("T1", -1700, -800, "Tecton")]
+    for k in range(200):                     # a whole field phase happens around him
+        f.step(0.5 * k, organisms, in_field=True)
+    assert (pi.x, pi.y) == f.camp, (pi.x, pi.y)
+    assert pi.target_id is None
+    assert not pi.seen["Lumen"] and not pi.seen["Tecton"]
+    assert "Humboldt" not in FIELD_ROSTER and len(FIELD_ROSTER) == 8
+    con = _db("pi.sqlite")
+    f.flush(con, 0, 0.0, 60.0)
+    row = con.execute("SELECT COUNT(*) FROM evidence WHERE provenance LIKE 'witnessed by Humboldt%'").fetchone()[0]
+    assert row == 0
+    con.close()
+
+
+def test_phase_machine_calls_a_meeting_and_the_meeting_sends_the_team_back():
+    con = _db("phase.sqlite")
+    duty.ensure(con, 0)
+    assert duty.read(con)["phase"] == duty.FIELD
+    for w in range(1, duty.FIELD_WINDOWS):
+        assert duty.advance(con, w) is None
+        assert duty.in_field(duty.read(con)["phase"])
+    note = duty.advance(con, duty.FIELD_WINDOWS)
+    assert "returns to camp" in note and "meeting 1" in note, note
+    assert duty.read(con)["phase"] == duty.MEETING_REQUESTED
+    assert not duty.in_field(duty.read(con)["phase"])
+    duty.begin_meeting(con)                       # the meeting runner picks the request up
+    assert duty.read(con)["phase"] == duty.MEETING
+    assert duty.advance(con, duty.FIELD_WINDOWS + 9) is None   # a long meeting is never interrupted
+    assert duty.read(con)["phase"] == duty.MEETING
+    duty.end_meeting(con)
+    st = duty.read(con)
+    assert st["phase"] == duty.FIELD and st["since"] == duty.FIELD_WINDOWS + 9   # the field clock restarts
+    con.close()
+
+
+def test_a_request_nobody_answers_times_out_back_to_the_field():
+    con = _db("stall.sqlite")
+    duty.ensure(con, 0)
+    duty.advance(con, duty.FIELD_WINDOWS)
+    assert duty.read(con)["phase"] == duty.MEETING_REQUESTED
+    w = duty.FIELD_WINDOWS + duty.STALL_WINDOWS - 1
+    assert duty.advance(con, w) is None            # still waiting
+    note = duty.advance(con, w + 1)
+    assert "returns to the field" in note, note
+    assert duty.read(con)["phase"] == duty.FIELD
+    con.close()
+
+
+def test_loop_waits_for_the_cycle_while_an_observer_is_live():
+    con = _db("wait.sqlite")
+    duty.ensure(con, 0)
+    clock = [1000.0]
+    slept = []
+
+    def now():
+        return clock[0]
+
+    def sleep(dt):
+        slept.append(dt)
+        clock[0] += dt
+        if len(slept) == 3:                        # the team comes back to camp on the third poll
+            duty.write(con, duty.MEETING_REQUESTED, since=5, meeting=1)
+
+    duty.heartbeat(con, now())                     # an observer is attached
+    assert duty.observer_live(con, now())
+    assert duty.wait_for_turn(con, 5.0, poll_s=2.0, now=now, sleep=sleep) == "requested"
+    assert sum(slept) > 5.0                        # it waited past the fallback interval, for the cycle
+    # With nothing observing, the interval is the timer again.
+    duty.write(con, duty.FIELD, since=0)
+    clock[0] += duty.OBSERVER_FRESH_S + 1
+    slept.clear()
+    assert duty.wait_for_turn(con, 4.0, poll_s=2.0, now=now, sleep=sleep) == "interval"
+    con.close()
+
+
+def test_a_run_reset_restamps_the_phase_clock():
+    con = _db("reset.sqlite")
+    duty.ensure(con, 0)
+    duty.advance(con, 4)
+    assert duty.read(con)["since"] == 0
+    duty.ensure(con, 0)                            # the sim restarted: window 0 again
+    st = duty.read(con)
+    assert st["since"] == 0 and st["phase"] == duty.FIELD
+    duty.write(con, duty.MEETING, since=4, meeting=2)
+    duty.ensure(con, 0)                            # a meeting in session survives a sim reset
+    assert duty.read(con)["phase"] == duty.MEETING
+    con.close()
+
+
+def test_dashboard_describes_the_phase():
+    con = _db("desc.sqlite")
+    duty.ensure(con, 0)
+    duty.advance(con, 2)
+    d = duty.describe(con)
+    assert d["phase"] == duty.FIELD and d["windows_left"] == duty.FIELD_WINDOWS - 2
+    assert "field" in d["label"]
+    duty.advance(con, duty.FIELD_WINDOWS)
+    duty.begin_meeting(con)
+    d = duty.describe(con)
+    assert d["phase"] == duty.MEETING and "in session" in d["label"]
+    con.close()
 
 
 if __name__ == "__main__":

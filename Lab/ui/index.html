@@ -80,7 +80,9 @@
 <main id="main"><div class="empty">loading…</div></main>
 <script>
 const TABS = ["World","Conversation","Experiments","Registry","Conservation","Data","Lab"];
-let S = null, tab = "World";
+// ?tab=<name> opens the dashboard straight on that tab (a recorded take wants Conversation, not the
+// World tab's embedded stream); it still switches like any other click afterwards.
+let S = null, tab = new URLSearchParams(location.search).get("tab") || "World";
 
 const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const ag = n => `<span class="agent ${esc(n)}">${esc(n)}</span>`;
@@ -185,7 +187,13 @@ function worldSide(){
   const paused = S.live_collect === "off";
   const btn = `style="cursor:pointer;background:none;border:1px solid var(--cyan);
     color:var(--cyan);border-radius:4px;font:inherit;font-size:11px;padding:1px 7px;margin-left:4px"`;
+  const duty = S.duty;
+  const dutyMark = duty && duty.phase === "field" ? "in the field" : "at camp";
   return `
+    ${duty ? `<div class="card"><h3>Field team <span class="dim">(duty cycle)</span></h3>
+      <div><b>${esc(dutyMark)}</b> &mdash; ${esc(duty.label)}</div>
+      <div class="dim" style="margin-top:2px">eight go out, Humboldt (PI) holds the camp;
+        witnessed evidence pauses during a meeting, the instruments keep recording</div></div>` : ""}
     <div class="card"><h3>Live telemetry <span class="dim">(policy bridge)</span>
       <span style="float:right">
         <button ${btn} onclick="liveCtl('${paused ? "play" : "pause"}')">${paused ? "▶ collect" : "⏸ pause"}</button>

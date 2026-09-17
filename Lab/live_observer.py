@@ -23,10 +23,29 @@ import sqlite3
 import threading
 import time
 
-from . import config, db
+from . import config, db, duty
 from .population_manager import PopulationManager
 
 WINDOW_S = 60.0     # sim-seconds per evidence window
+def _skippable(call, *args, **kwargs):
+    """Run a duty read/write that must never hold up the sim.
+
+    The observer answers the live simulator from this thread, and a meeting on another connection
+    can hold the write lock for as long as it takes to hold the meeting. A heartbeat or a phase
+    advance that cannot get in right now is simply skipped: both are retried on the next cycle, and
+    the sim keeps its frame rate. Returns None when it was skipped.
+    """
+    try:
+        return call(*args, **kwargs)
+    except sqlite3.OperationalError as ex:
+        if "locked" not in str(ex) and "busy" not in str(ex):
+            raise
+        return None
+
+
+HEARTBEAT_S = 10.0  # wall seconds between "an observer is live" notes for the duty cycle
+PHASE_POLL_S = 1.0  # ... and between reads of the shared duty phase: the sim waits on this thread,
+                    # so the phase is cached rather than read once per decide message
 LAB_LINE_MAX = 90   # the sim's SYMBIOTIC LAB panel is one short line per report
 LAB_POLL_S = 1.0    # how often the lab's own DB is checked for new rows
 LAB_SEND_S = 1.0    # at most one report per second, so the panel stays readable
@@ -275,8 +294,13 @@ class ObserverHandler(socketserver.StreamRequestHandler):
         print(f"[observe] sim connected from {peer}")
         run_id, window, field = None, None, None
         last_team_sent = -1.0
+        next_beat = 0.0
+        next_phase_read = 0.0
+        in_field = True
         manager = PopulationManager() if srv.manage else None
-        con = db.connect(srv.lab_db_path)     # this thread's own connection
+        # This thread's own connection, with a 250 ms busy wait: it answers the live sim, so a write
+        # blocked by a meeting is skipped (see _skippable) rather than stalling the world.
+        con = db.connect(srv.lab_db_path, timeout=0.25)
         # What the lab itself is doing, forwarded to the sim's SYMBIOTIC LAB panel: a separate
         # read-only connection, polled once a second, one line at a time (LabActivity).
         activity = LabActivity(srv.lab_db_path)
@@ -296,6 +320,13 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                         from .embodiment import EmbodiedField
                         field = EmbodiedField(run_id, msg.get("world_half_size"), msg.get("world_half_size_y"),
                                               msg.get("water_mask"), msg.get("decision_interval"))
+                        # A new run restarts the sim clock; the duty phase itself survives it.
+                        st = _skippable(duty.ensure, con, 0)
+                        phase = st["phase"] if st is not None else duty.FIELD   # locked: start in the field
+                        in_field = duty.in_field(phase)
+                        next_phase_read = time.monotonic() + PHASE_POLL_S
+                        _skippable(duty.heartbeat, con)
+                        print(f"[observe] duty phase: {phase}")
                     if manager:
                         manager.load_doctrine(con)
                     print(f"[observe] hello: run {run_id}, mode {msg.get('mode_name')}, "
@@ -333,7 +364,16 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                     if window is None:
                         continue
                     if field:
-                        field.step(t, agents)
+                        wall = time.monotonic()
+                        if wall >= next_phase_read:
+                            next_phase_read = wall + PHASE_POLL_S
+                            st = _skippable(duty.read, con)
+                            if st is not None:          # locked by a meeting: keep the last phase
+                                in_field = duty.in_field(st["phase"])
+                        field.step(t, agents, in_field)
+                        if wall >= next_beat:
+                            next_beat = wall + HEARTBEAT_S
+                            _skippable(duty.heartbeat, con)   # `loop` waits while this is fresh
                         # Avatar layer: report the team's positions at most twice
                         # per sim-second. Old sim builds ignore the message type;
                         # organisms never see it (visual only, docs/POLICY_API.md).
@@ -345,11 +385,20 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                     if k > window.index:
                         self._flush(con, run_id, window)
                         if field:
-                            note = field.flush(con, window.index,
-                                               window.index * WINDOW_S,
-                                               (window.index + 1) * WINDOW_S)
-                            print(f"[observe] {note}")
-                            self._send({"type": "log", "text": note})
+                            note = _skippable(field.flush, con, window.index,
+                                              window.index * WINDOW_S,
+                                              (window.index + 1) * WINDOW_S)
+                            if note:   # locked by a meeting: this window's witnessed rows are skipped
+                                print(f"[observe] {note}")
+                                self._send({"type": "log", "text": note})
+                        if field:
+                            # The duty cycle runs on the same window clock as the evidence: five
+                            # windows of fieldwork, then the team is called back to camp until a
+                            # meeting has run (Lab/duty.py).
+                            note = _skippable(duty.advance, con, k)
+                            if note:
+                                print(f"[observe] {note}")
+                                self._send({"type": "log", "text": note})
                         if manager:
                             changed = manager.load_doctrine(con)   # scientists' latest
                             if changed:
@@ -387,10 +436,25 @@ class ObserverHandler(socketserver.StreamRequestHandler):
         if not stats:
             return
         wid = f"live:{run_id}:w{window.index}"
-        for stat, value, prov in stats:
-            db.add_evidence(con, wid, stat, float(value), prov)
-        con.execute("UPDATE runs SET sim_end=? WHERE run_id=?", (t1, f"live:{run_id}"))
-        con.commit()
+        # A meeting on another connection can hold the write lock. This connection's busy wait is
+        # deliberately short (it answers the live sim), so retry briefly across the gaps a meeting
+        # leaves between turns, and give the window up rather than kill the bridge: the sim keeps
+        # running and the next window is minted normally.
+        for attempt in range(10):
+            try:
+                for stat, value, prov in stats:
+                    db.add_evidence(con, wid, stat, float(value), prov)
+                con.execute("UPDATE runs SET sim_end=? WHERE run_id=?", (t1, f"live:{run_id}"))
+                con.commit()
+                break
+            except sqlite3.OperationalError as ex:
+                if "locked" not in str(ex) and "busy" not in str(ex):
+                    raise
+                con.rollback()
+                if attempt == 9:
+                    print(f"[observe] window {window.index}: database busy, window not minted")
+                    return
+                time.sleep(0.2)
         lum = next((v for s, v, _ in stats if s == "live_lumen_n"), 0)
         tec = next((v for s, v, _ in stats if s == "live_tecton_n"), 0)
         print(f"[observe] window {window.index} ({t0:.0f}-{t1:.0f}s): "
@@ -424,7 +488,8 @@ def serve(db_path=None, port=9000, host="0.0.0.0", manage=False, embody=False):
     ip = my_lan_ip()
     role = "POPULATION MANAGER (driving organisms)" if manage else "observer (read-only)"
     if embody:
-        role += " + EMBODIED FIELD TEAM (eight walking bodies: seven voting scientists plus Vega, witnessed-only evidence)"
+        role += (" + EMBODIED FIELD TEAM (nine bodies: eight in the field — the voting field scientists"
+                 " plus Vega — and Humboldt the PI at camp; witnessed-only evidence, duty cycle in Lab/duty.py)")
     print(f"Symbiotic Lab live bridge on {host}:{port} — {role} (db: {srv.lab_db_path})")
     print("On the sim host, attach the lab to a run with:")
     print(f'  python Tools/run_sim.py --mode C --seed 7 --duration 900 --speed 20 '

@@ -94,11 +94,19 @@ def now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def connect(path=None):
+def connect(path=None, timeout=5.0):
+    """`timeout` is the busy wait in seconds. The observer passes a small one: it answers a live sim,
+    so a write that cannot get the lock right now must fail in milliseconds and be skipped, not wait."""
     p = Path(path) if path else config.DB_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(p, timeout=30)   # observer + session may share this file
+    # The observer answers a LIVE sim from its connection while a meeting writes from another, so a
+    # writer must never block it: WAL lets readers and the writer work at the same time, and the busy
+    # wait is seconds rather than half a minute. With the rollback journal and timeout=30 a meeting
+    # stalled the policy bridge for up to 30 s, the sim timed out every substep, and the world froze.
+    con = sqlite3.connect(p, timeout=timeout)
     con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA synchronous=NORMAL")
     con.executescript(SCHEMA)
     return con
 
@@ -144,6 +152,10 @@ def evidence_exists(con, eid):
 def log_turn(con, meeting_id, round_name, agent, payload):
     con.execute("INSERT INTO transcript(meeting_id, round, agent, payload) VALUES(?,?,?,?)",
                 (meeting_id, round_name, agent, json.dumps(payload)))
+    # Commit each turn as it is spoken. A meeting is minutes long, so holding one write transaction
+    # for all of it (a) blocks the observer answering the live sim until the meeting ends, and
+    # (b) hides the conversation from the dashboard, which polls this file, until it is over.
+    con.commit()
 
 
 def get_notebook(con, agent):
