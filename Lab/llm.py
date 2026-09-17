@@ -217,6 +217,112 @@ def _match(text, keywords):
     return sum(1 for k in keywords if k.lower() in t)
 
 
+# The designer's bench: one row per kind of experiment this world can actually run, each carrying
+# the two arms, the metric to preregister and the direction the claim implies if it is true. A claim
+# takes the FIRST row whose `when` keyword it mentions (and, where `also` is set, one of those too).
+# Before this table the designer was a three-branch keyword router: every challenge-card claim
+# contains the word "drought", so one branch swallowed the docket and ten experiments came out as
+# three distinct designs, six of them the same already-failed contrast. Mode A and every
+# predator / mutation / novelty knob were unreachable, which is why the last unmet victory condition
+# (OQ-VC-3, "the policy changed because of experience", missing its learning-off control) could not
+# be proposed at all: a C-vs-C design with empty arms is vetoed in code as identical arms.
+# arms = (intervention_mode, intervention_set, control_mode, control_set).
+DESIGN_TEMPLATES = [
+    dict(name="learning-off control",
+         when=("learning-off", "learning off", "because of experience", "learned policy changed"),
+         arms=("C", "", "A", ""),
+         metric="lumen_q_drift_median", direction="treatment_higher", threshold=0.05,
+         why="Mode A freezes the bandit while everything else is held equal: if lifetime learning "
+             "is what moves the policy, Q-drift has to collapse in the control arm."),
+    dict(name="predation selects exploration",
+         when=("predat", "leviathan"), also=("epsilon", "avoid", "explor"),
+         arms=("C", "Settings.bLeviathan=1", "C", "Settings.bLeviathan=0"),
+         metric="lumen_end_mean_epsilon", direction="treatment_higher", threshold=0.01,
+         why="A strike radius that removes foragers should price hesitation: if predation "
+             "selects at all, the surviving lineages carry higher epsilon."),
+    dict(name="predation sets the population floor",
+         when=("predat", "leviathan"),
+         arms=("C", "Settings.bLeviathan=1", "C", "Settings.bLeviathan=0"),
+         metric="lumen_min_n", direction="treatment_lower", threshold=3.0,
+         why="Separates predation from starvation as the binding constraint on the low-water "
+             "mark of the population."),
+    dict(name="drought selects exploration",
+         when=("drought",), also=("epsilon",),
+         arms=("C", "Settings.PatchRegenPerSec=1.8", "C", ""),
+         metric="lumen_end_mean_epsilon", direction="treatment_higher", threshold=0.01,
+         why="0.3x of the regen-6 baseline makes resources scarce and shifting; energy-gated "
+             "reproduction should then favour the higher-epsilon genomes."),
+    dict(name="adaptation continues under drought",
+         when=("without offline retraining", "adaptation continuing", "keeps learning"),
+         arms=("C", "Settings.PatchRegenPerSec=1.8", "C", ""),
+         metric="lumen_greedy_changed_pct", direction="treatment_higher", threshold=2.0,
+         why="The claim is about learning during the shock, not about surviving it: the share of "
+             "state-action rows whose greedy action changed is what 'still adapting' means for a "
+             "tabular contextual bandit."),
+    dict(name="high-e crossover",
+         when=("high-e", "env_effect", "plenty"),
+         arms=("C", "Settings.PatchRegenPerSec=1.8", "C", ""),
+         metric="lumen_end_mean_env_effect", direction="treatment_higher", threshold=0.01,
+         why="The two halves of the crossover are the two arms: e pays for itself only where "
+             "regrowth is the binding constraint, so end env_effect must separate drought "
+             "from plenty."),
+    dict(name="Tecton engineering",
+         when=("trace", "engineering"),
+         arms=("C", "", "C", "Settings.WeightInteraction=0"),
+         metric="lumen_end_n", direction="treatment_higher", threshold=3.0,
+         why="wI=0.10 is the only reason 'modify' is learnable for a gamma=0 bandit (caveat "
+             "H-001), so zeroing it is the cleanest available no-engineering control."),
+    dict(name="survivable drought dip",
+         when=("drought",), also=("surviv", "dip", "population"),
+         arms=("C", "Settings.PatchRegenPerSec=1.8", "C", ""),
+         metric="lumen_min_n", direction="treatment_lower", threshold=3.0,
+         why="A visible but survivable dip is a statement about the minimum, not the endpoint."),
+    dict(name="inheritance fidelity",
+         when=("inherit", "mutation", "sigma", "fidelity"),
+         arms=("C", "Settings.MutationSigma=0.06", "C", ""),
+         metric="inherit_alpha_corr", direction="treatment_lower", threshold=0.05,
+         why="Doubling the mutation width should decouple parent and offspring alpha; the "
+             "parent/child correlation is the direct readout."),
+    dict(name="novelty bonus",
+         when=("novelty", "exploration bonus", "explore leg", "river"),
+         arms=("C", "Settings.WeightNovelty=0", "C", ""),
+         metric="lumen_end_n", direction="treatment_higher", threshold=3.0,
+         why="Turning the novelty reward off tests whether wN=0.2 buys exploration or just "
+             "spends the Lumen energy budget on the dry valley rim. Read at the END of the run, "
+             "not at the minimum: X-020 preregistered lumen_min_n and both arms returned exactly "
+             "40.0, because the trough is reached in the opening seconds, before a novelty bonus "
+             "can have spent anything (caveat H-025)."),
+    dict(name="regen band robustness",
+         when=("band", "stable", "regen-6"),
+         arms=("C", "Settings.PatchRegenPerSec=4", "C", ""),
+         metric="lumen_min_n", direction="treatment_lower", threshold=3.0,
+         seeds=[1, 2, 3, 4, 5], duration=1800.0,
+         why="The open question asks for seeds 1-5 at 1800 s, so the protocol asks for exactly "
+             "that: a regen-4 arm against the regen-6 baseline."),
+    dict(name="selection within a run",
+         when=("selection", "turnover", "drift", "generation"),
+         arms=("C", "", "N", ""),
+         metric="lumen_end_mean_alpha", direction="treatment_higher", threshold=0.01,
+         why="Neutral drift is the null this claim needs: same world, same turnover, no "
+             "selection on the learning parameters."),
+]
+
+# Nothing matched: still a real contrast (C against neutral drift), never two identical arms.
+DEFAULT_DESIGN = dict(name="learning and evolution vs neutral drift",
+                      when=(), arms=("C", "", "N", ""),
+                      metric="lumen_end_mean_alpha", direction="treatment_higher",
+                      threshold=0.01,
+                      why="No bench row fits the claim; the standing contrast at least "
+                          "separates selection from drift.")
+
+
+def _threshold_for(metric):
+    """Band to use when a docketed crux replaces the bench row's own metric."""
+    if any(k in metric for k in ("alpha", "epsilon", "corr", "slope", "env_effect", "frac")):
+        return 0.01
+    return 3.0
+
+
 class MockLLM:
     """Profile-driven scripted scientist. context is passed via `ctx` on turn()."""
 
@@ -273,45 +379,38 @@ class MockLLM:
         return {"stance": "abstain", "confidence": 0.3,
                 "reason": "Insufficient evidence either way.", "evidence_ids": []}
 
+    def _design(self, claim):
+        """The bench row this claim calls for (see DESIGN_TEMPLATES)."""
+        c = (claim or "").lower()
+        for t in DESIGN_TEMPLATES:
+            if not any(k in c for k in t["when"]):
+                continue
+            if t.get("also") and not any(k in c for k in t["also"]):
+                continue
+            return t
+        return DEFAULT_DESIGN
+
     def _crux(self, profile, ctx):
-        claim = ctx.get("claim", "").lower()
-        metric, direction = "lumen_end_mean_alpha", "treatment_higher"
-        if "epsilon" in claim:
-            metric = "lumen_end_mean_epsilon"
-        elif "drought" in claim and ("surviv" in claim or "dip" in claim or "population" in claim):
-            metric, direction = "lumen_min_n", "treatment_lower"
-        elif "selection" in claim or "drift" in claim or "turnover" in claim:
-            metric = "lumen_end_mean_alpha"
-        elif "env_effect" in claim or "high-e" in claim or "engineering" in claim or "trace" in claim:
-            metric = "lumen_end_n" if "lumen" in claim else "trace_y_end_mean"
-        elif "regen" in claim or "band" in claim or "stable" in claim:
-            metric, direction = "lumen_min_n", "treatment_lower"
-        return {"observable": f"{metric} under the intervention arm vs control",
-                "measurable": True, "metric": metric,
-                "direction_if_claim_true": direction}
+        t = self._design(ctx.get("claim", ""))
+        return {"observable": f"{t['metric']} under the intervention arm vs control",
+                "measurable": True, "metric": t["metric"],
+                "direction_if_claim_true": t["direction"]}
 
     def _protocol(self, profile, ctx):
-        crux = ctx.get("crux", {})
-        if not crux.get("metric"):
-            crux = self._crux(profile, ctx)   # no docketed crux: derive metric from the claim
-        claim = ctx.get("claim", "").lower()
-        inter_set, control_set, mode, control_mode = "", "", "C", "C"
-        if "drought" in claim:
-            inter_set = "Settings.PatchRegenPerSec=1.8"   # 0.3x of the regen-6 baseline, schedulable today
-        elif "selection" in claim or "drift" in claim:
-            control_mode = "N"
-        elif "regen" in claim or "stable" in claim or "band" in claim:
-            inter_set = "Settings.PatchRegenPerSec=4"
-        return {"intervention_mode": mode, "intervention_set": inter_set,
-                "control_mode": control_mode, "control_set": control_set,
-                "seeds": [1, 2, 3], "duration": 900.0,
-                "metric": crux.get("metric", "lumen_end_mean_alpha"),
-                "threshold": 0.01 if "alpha" in crux.get("metric", "") or
-                                     "epsilon" in crux.get("metric", "") else 3.0,
-                "direction_if_claim_true": crux.get("direction_if_claim_true",
-                                                    "treatment_higher"),
-                "rationale": "Cheapest decisive contrast for the docketed crux; "
-                             "3 seeds, control arm, preregistered metric."}
+        t = self._design(ctx.get("claim", ""))
+        crux = ctx.get("crux", {}) or {}
+        metric = crux.get("metric") or t["metric"]
+        imode, iset, cmode, cset = t["arms"]
+        seeds = list(t.get("seeds", [1, 2, 3]))
+        return {"intervention_mode": imode, "intervention_set": iset,
+                "control_mode": cmode, "control_set": cset,
+                "seeds": seeds, "duration": t.get("duration", 900.0),
+                "metric": metric,
+                "threshold": t["threshold"] if metric == t["metric"] else _threshold_for(metric),
+                "direction_if_claim_true": crux.get("direction_if_claim_true", t["direction"]),
+                "rationale": f"{t['why']} [{t['name']}: {imode}/{iset or 'baseline'} vs "
+                             f"{cmode}/{cset or 'baseline'}, {len(seeds)} seeds x 2 arms, "
+                             f"{t.get('duration', 900.0):.0f}s]"}
 
     def _review(self, profile, ctx):
         proto = ctx.get("protocol", {})

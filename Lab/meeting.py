@@ -15,6 +15,7 @@ one protocol slot, the docket is ranked by credibility-weighted interest
 (sum of vote weights of agents holding a non-abstain stance on the card).
 """
 import json
+import re
 import time
 
 from . import config, conservation, db, evidence, memory, scorer
@@ -131,13 +132,34 @@ class MeetingRunner:
             self.log(f"  [evidence] {agent}: {len(kept)} finding(s)")
         return findings
 
+    @staticmethod
+    def _condition_key(text):
+        """What identifies a card: the condition itself, without the [status] tag or the
+        parenthetical 'why' tail. victory.sync_questions rewrites both every meeting as
+        experiments accumulate, so matching on the full text made the same unmet condition
+        look new each time -- OQ-VC-6 minted H-015..H-020 on 2026-09-17, six fresh cards with
+        no experiment between them, each re-designing the contrast X-005 had already failed."""
+        t = re.sub(r"^\s*\[[^\]]*\]\s*", "", text or "").rstrip()
+        if t.endswith(")"):                       # strip the final balanced parenthetical,
+            depth = 0                             # nesting included ("experiment(s) ... X-004")
+            for i in range(len(t) - 1, -1, -1):
+                if t[i] == ")":
+                    depth += 1
+                elif t[i] == "(":
+                    depth -= 1
+                    if depth == 0:
+                        t = t[:i]
+                        break
+        return " ".join(t.split()).lower()
+
     def _candidate_claims(self):
         """Open questions and seeded conjectures not yet on a card."""
-        carded = {r["claim"] for r in self.con.execute("SELECT claim FROM hypotheses")}
+        carded = {self._condition_key(r["claim"])
+                  for r in self.con.execute("SELECT claim FROM hypotheses")}
         out = []
         for q in self.con.execute("SELECT * FROM open_questions WHERE status='open'"):
             claim = q["text"]
-            if claim not in carded:
+            if self._condition_key(claim) not in carded:
                 out.append((claim, "mechanism to be argued", f"origin: {q['origin']}"))
         return out
 
@@ -297,17 +319,25 @@ class MeetingRunner:
             card = self.con.execute("SELECT * FROM hypotheses WHERE id=?",
                                     (best["hypothesis_id"],)).fetchone()
             return card, best, json.loads(best["crux"])
-        # fallback: the newest active card still lacking a queued/done experiment —
-        # research-day behavior: open questions get experiments even before anyone
-        # has evidence to argue over.
-        for card in cards:
-            if card["proposer"] == "Docket":
-                continue   # program-managed; never the free design slot's target
-            has = self.con.execute(
-                "SELECT 1 FROM experiments WHERE hypothesis_id=? AND status IN "
-                "('queued','awaiting-sim','done')", (card["id"],)).fetchone()
-            if not has:
-                return card, None, None
+        # fallback: the OLDEST active card still lacking an experiment — research-day
+        # behavior: open questions get experiments even before anyone has evidence to argue
+        # over. Oldest rather than newest, because the stance round only ever sees the four
+        # newest cards (config.MAX_ACTIVE_CARDS_PER_MEETING): a conjecture nobody argues over
+        # was otherwise never designed at all, which is how the seeded H-005 (drought selects
+        # for epsilon), H-006 (Tecton engineering) and H-007 (high-e crossover) sat untested
+        # through seventeen meetings while re-minted cards took every design slot.
+        # A card may carry up to MAX_EXPERIMENTS_PER_CARD distinct experiments: one claim can
+        # need more than one contrast (H-014's survival arm X-004 answers nothing about whether
+        # the policy keeps moving during the shock). Duplicates count toward the cap, so a card
+        # whose second design merely repeats an existing one is not re-drafted every meeting.
+        row = self.con.execute(
+            "SELECT h.*, (SELECT COUNT(*) FROM experiments e WHERE e.hypothesis_id = h.id "
+            "AND e.status IN ('queued','awaiting-sim','done','duplicate')) AS n_exp "
+            "FROM hypotheses h WHERE h.status IN ('conjecture','supported') "
+            "AND h.proposer <> 'Docket' AND n_exp < ? ORDER BY n_exp, h.id LIMIT 1",
+            (self.MAX_EXPERIMENTS_PER_CARD,)).fetchone()
+        if row is not None:
+            return row, None, None
         return None, None, None
 
     # (disputes passed in are fresh this meeting; cards with pending experiments
@@ -346,7 +376,31 @@ class MeetingRunner:
             return None, "intervention and control arms identical"
         return proto, None
 
-    def _design_round(self, mid, disputes, cards, stance_map):
+    MAX_EXPERIMENTS_PER_CARD = 2
+
+    SIGNATURE_KEYS = ("intervention_mode", "intervention_set", "control_mode",
+                      "control_set", "metric", "duration")
+
+    def _identical_experiment(self, proto):
+        """Id of an experiment already queued or run with exactly these arms, metric, seeds and
+        duration. Duplicates themselves are skipped, so the pointer always names the original."""
+        def sig(d):
+            return tuple(d.get(k) for k in self.SIGNATURE_KEYS) + (tuple(d.get("seeds", [])),)
+        mine = sig(proto)
+        for row in self.con.execute(
+                "SELECT id, protocol FROM experiments WHERE status IN "
+                "('queued','awaiting-sim','done') ORDER BY id"):
+            try:
+                other = json.loads(row["protocol"])
+            except (TypeError, ValueError):
+                continue
+            if sig(other) == mine:
+                return row["id"]
+        return None
+
+    MAX_DESIGN_ATTEMPTS = 4
+
+    def _design_round(self, mid, disputes, cards, stance_map, _attempt=1):
         card, dispute, crux = self._pick_design_target(disputes, cards, stance_map)
         if card is None:
             self.log("  [design] nothing to design this meeting")
@@ -355,10 +409,13 @@ class MeetingRunner:
         caveats = "\n".join(f"- {c['id']}: {c['claim']}" for c in memory.caveat_cards(self.con))
         prompt = (f"ROUND 5 — DESIGN. Draft one experiment protocol for {card['id']}: "
                   f"\"{card['claim']}\".\nDocketed crux: {crux_text}\n"
-                  f"Intervention surface: modes A/B/C/N, seeds, duration (logical s), and "
+                  f"Intervention surface: modes A/B/C/N (A is learning off, the control a "
+                  f"lifetime-learning claim needs; N is neutral drift), seeds, duration "
+                  f"(logical s), and "
                   f"-SWSet parameter overrides such as Settings.PatchRegenPerSec, "
-                  f"Settings.DroughtRegenMultiplier, Lumen.ReproThreshold, "
-                  f"Settings.WeightInteraction.\nAllowed metrics: {', '.join(METRICS)}\n"
+                  f"Settings.DroughtRegenMultiplier, Settings.MutationSigma, "
+                  f"Settings.WeightNovelty, Settings.WeightInteraction, "
+                  f"Settings.bLeviathan (predation on/off), Lumen.ReproThreshold.\nAllowed metrics: {', '.join(METRICS)}\n"
                   f"Standing caveat cards you must not contradict:\n{caveats}")
         raw = self._turn("Fisher", "protocol", prompt,
                          {"claim": card["claim"], "crux": crux or {}})
@@ -366,6 +423,26 @@ class MeetingRunner:
         proto, err = self._validate_protocol(raw, crux)
         if err:
             self.log(f"  [design] Fisher's protocol rejected in code: {err}")
+            return None
+
+        twin = self._identical_experiment(proto)
+        if twin:
+            # The docket's real failure mode: X-005..X-010 were one design run six times, which
+            # cost the lab its whole experiment budget on a question X-005 had already answered.
+            # File the design so the card counts as served, spend no sim time on it.
+            proto["duplicate_of"] = twin
+            exp_id = db.next_id(self.con, "experiments", "X")
+            self.con.execute("INSERT INTO experiments VALUES(?,?,?,?,?,?,?,?)",
+                             (exp_id, card["id"], json.dumps(proto), "duplicate",
+                              None, None, None, mid))
+            self.con.commit()
+            self.log(f"  [design] {exp_id} for {card['id']} repeats {twin} exactly "
+                     f"(same arms, metric, seeds and duration): filed as a duplicate, not run")
+            # The filed duplicate counts toward the card's cap, so the next pick is a different
+            # card: a meeting that catches a repeat still gets to design something real. The
+            # retry skips the dispute branch, whose target was the repeat just filed.
+            if _attempt < self.MAX_DESIGN_ATTEMPTS:
+                return self._design_round(mid, [], cards, stance_map, _attempt + 1)
             return None
 
         exp_id = db.next_id(self.con, "experiments", "X")
