@@ -41,6 +41,11 @@ def main():
     # runs into the fixture lab — that changes what the fixtures assert.
     os.environ["LAB_SAVED"] = str(work / "saved_isolated")
     os.environ["LAB_TURN_PACE"] = "0"   # no demo pacing in tests
+    # The test asserts the engine-less path (experiments park as awaiting-sim). On a machine that HAS
+    # UE 5.7 the runner would otherwise launch real sims — minutes of wall time, and run_sim.py writes
+    # them under the repo's Saved/ whatever LAB_SAVED says. Pointing at a dead service forces the
+    # documented no-sim path for both kinds of machine.
+    os.environ["LAB_SIM_SERVICE"] = "127.0.0.1:1"
     fixtures = work / "fixtures"
     treatment, control = [], []
     for seed in (1, 2, 3):
