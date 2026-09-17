@@ -100,6 +100,12 @@ void ASWHUD::DrawHUD()
 		DrawLine(20.f, 20.f, TEXT("Symbiotic World: no world manager in level"), ColRed, 1.3f);
 		return;
 	}
+	// The scenario caption is drawn before the Look.bShowHUD gate below: hiding the HUD is for clean
+	// framing, the caption is the take's narration and has to survive it.
+	DrawCaption(*M);
+	// Look.bShowHUD=0: draw nothing else at all (clean framing for a recorded take, docs/CONTROL_FILE.md).
+	// Visual only and reversible with "set Look.bShowHUD=1"; nothing below this line touches the sim.
+	if (!M->GetLook().bShowHUD) return;
 	const float SX = Canvas->SizeX, SY = Canvas->SizeY;
 
 	DrawScientistTags(*M);   // first, so the panels draw over a tag that lands behind them
@@ -110,6 +116,12 @@ void ASWHUD::DrawHUD()
 	const float LeftW = 330.f;
 	DrawSpeciesPanel(*M, ESWSpecies::Lumen, 20.f, 96.f, LeftW);
 	DrawEvolutionStrip(*M, 20.f, 96.f + 232.f + 10.f, LeftW);   // 124 px tall
+	// Free band in the left column between the evolution strip (ends at 462) and the minimap panel
+	// (top at 625 on a 900 px tall window, lower on a taller one): the lab's own reports.
+	if (M->GetLook().bShowLabPanel && M->GetPolicyConnectedCount() > 0)
+	{
+		DrawLabPanel(*M, 20.f, 472.f, LeftW);
+	}
 	const float MapSize = 280.f;
 	const float MapH = MapSize * SWArenaHalfY(M->GetSettings()) / FMath::Max(M->GetSettings().WorldHalfSize, 1.f);   // the map keeps the arena's aspect
 	DrawMinimap(*M, 20.f, SY - (MapH + 62.f) - 20.f, MapSize);   // the panel is the map plus a 62 px header and legend
@@ -154,6 +166,48 @@ void ASWHUD::DrawHUD()
 			bPredationPaused ? TEXT("PERTURBATION ACTIVE:  DROUGHT   (predation paused)")
 			                 : TEXT("PERTURBATION ACTIVE:  DROUGHT"), ColText, 1.2f);
 	}
+}
+
+void ASWHUD::DrawCaption(const ASWWorldManager& M)
+{
+	// control "caption=<text>" (docs/CONTROL_FILE.md). Purely a drawing layer: no sim state is read except
+	// the text and the wall-clock age, and a paused sim keeps its title because the age is wall time.
+	const FSWLookSettings& L = M.GetLook();
+	if (!L.bShowCaptions) return;
+	const FString Text = M.GetCaptionText();
+	if (Text.IsEmpty()) return;
+	const float Duration = FMath::Max(L.CaptionSeconds, 0.f);
+	const float Age = M.GetCaptionAgeSeconds();
+	if (Age < 0.f || Age >= Duration) return;
+	const float FadeSeconds = 0.5f;
+	const float Remaining = Duration - Age;
+	const float Alpha = FMath::Clamp(Remaining / FadeSeconds, 0.f, 1.f);   // full, then out over the last half second
+
+	const float SX = Canvas->SizeX, SY = Canvas->SizeY;
+	// Big enough to read in a recorded frame at any window size, shrunk to fit a long line.
+	float Scale = 3.0f * FMath::Clamp(SY / 900.f, 0.7f, 2.0f);
+	const float MaxW = FMath::Max(SX - 120.f, 100.f);
+	const float RawW = TextWidth(Text, Scale);
+	if (RawW > MaxW && RawW > 1.f) Scale *= MaxW / RawW;
+	const float W = TextWidth(Text, Scale);
+	const float H = LineHeight * Scale;
+	const float X = (SX - W) * 0.5f;
+	// Lower third, above the KEYS panel (SY - 150) and the drought banner (SY - 66), below the stat cards.
+	const float Y = SY * 0.66f - H * 0.5f;
+	const float PadX = 30.f, PadY = 16.f;
+
+	DrawRect(X - PadX, Y - PadY, W + 2.f * PadX, H + 2.f * PadY, FLinearColor(0.02f, 0.03f, 0.05f, 0.62f * Alpha));
+	DrawRect(X - PadX, Y - PadY, W + 2.f * PadX, 2.f, FLinearColor(ColLumen.R, ColLumen.G, ColLumen.B, 0.85f * Alpha));
+
+	const FText T = FText::FromString(Text);
+	FCanvasTextItem Shadow(FVector2D(X + 2.f, Y + 2.f), T, Font, FLinearColor(0.f, 0.f, 0.f, 0.70f * Alpha));
+	Shadow.Scale = FVector2D(Scale, Scale);
+	Shadow.BlendMode = SE_BLEND_Translucent;
+	Canvas->DrawItem(Shadow);
+	FCanvasTextItem Item(FVector2D(X, Y), T, Font, FLinearColor(ColText.R, ColText.G, ColText.B, Alpha));
+	Item.Scale = FVector2D(Scale, Scale);
+	Item.BlendMode = SE_BLEND_Translucent;
+	Canvas->DrawItem(Item);
 }
 
 void ASWHUD::DrawTitle(const ASWWorldManager& M)
@@ -212,13 +266,86 @@ void ASWHUD::DrawStatCards(const ASWWorldManager& M)
 	const float Total = Cards.Num() * CardW + (Cards.Num() - 1) * Gap;
 	// Keep clear of the 330 px title panel on the left; centre when there is room.
 	float X = FMath::Max(370.f, Canvas->SizeX * 0.5f - Total * 0.5f);
+	float LeviathanX = -1.f;
 	for (const FCard& C : Cards)
 	{
 		DrawPanel(X, 14.f, CardW, CardH, ColPanel, &C.C, 18.f);
 		DrawLine(X + 10.f, 20.f, C.Label, ColDim, 0.9f);
 		DrawLine(X + 10.f, 34.f, C.Value, C.C, 1.5f);
 		DrawLine(X + 10.f, 58.f, C.Sub, ColDim, 0.85f);
+		if (C.Label == TEXT("LEVIATHAN")) LeviathanX = X;
 		X += CardW + Gap;
+	}
+	if (LeviathanX >= 0.f) DrawKillFeed(M, LeviathanX, CardW, 14.f + CardH);
+}
+
+FString ASWHUD::Elide(const FString& Text, float W, float Scale) const
+{
+	const float Full = TextWidth(Text, Scale);
+	if (Full <= W || Text.Len() <= 1) return Text;
+	// Proportional first guess, then trim until it fits: the small font is near fixed width.
+	int32 Keep = FMath::Clamp(FMath::FloorToInt(Text.Len() * W / FMath::Max(Full, 1.f)) - 3, 1, Text.Len());
+	while (Keep > 1)
+	{
+		const FString Cut = Text.Left(Keep) + TEXT("...");
+		const float CutW = TextWidth(Cut, Scale);
+		if (CutW <= W) return Cut;
+		Keep--;
+	}
+	return Text.Left(1) + TEXT("...");
+}
+
+void ASWHUD::DrawKillFeed(const ASWWorldManager& M, float CardX, float CardW, float CardBottom)
+{
+	// The card keeps the count; this is who was taken, newest first, fading on the wall clock so a
+	// paused take keeps the feed on screen. Visual only.
+	const FSWLookSettings& L = M.GetLook();
+	if (!L.bPredationEffects) return;
+	const TArray<FSWKillEvent>& Kills = M.GetKillEvents();
+	if (Kills.Num() == 0) return;
+	const float Hold = FMath::Max(L.KillFeedSeconds, 0.1f);
+	const double Now = FPlatformTime::Seconds();
+	const float FeedW = 210.f;
+	// Under the card, but never over the inspector column on the right (1600x900 puts the six cards
+	// close to it): the feed slides left until it clears that column.
+	const float Right = FMath::Min(CardX + CardW, Canvas->SizeX - 396.f);
+	const float X = FMath::Max(Right - FeedW, 20.f);
+	float Y = CardBottom + 6.f;
+	int32 Shown = 0;
+	for (int32 i = Kills.Num() - 1; i >= 0 && Shown < 3; --i)
+	{
+		const float Age = static_cast<float>(Now - Kills[i].WallTime);
+		if (Age < 0.f || Age > Hold) continue;
+		const float Alpha = FMath::Clamp((Hold - Age) / 0.8f, 0.f, 1.f);   // out over the last 0.8 s
+		const FString Line = FString::Printf(TEXT("%s %s taken"), SWSpeciesName(Kills[i].Species), *Kills[i].Label);
+		const FLinearColor C = FLinearColor(ColRed.R, ColRed.G, ColRed.B, Alpha);
+		DrawRect(X, Y, FeedW, 14.f, FLinearColor(0.02f, 0.03f, 0.05f, 0.42f * Alpha));
+		DrawRect(X, Y, 2.f, 14.f, C);
+		DrawLine(X + 7.f, Y + 1.f, Elide(Line, FeedW - 14.f, 0.95f), C, 0.95f);
+		Y += 16.f;
+		Shown++;
+	}
+}
+
+void ASWHUD::DrawLabPanel(const ASWWorldManager& M, float X, float Y, float W)
+{
+	// The bridge's own "log" lines (docs/POLICY_API.md): what the Symbiotic Lab is doing right now.
+	// Drawn only while a policy server is connected, so a run without a bridge keeps the old layout.
+	const TArray<FSWLabLine>& Lines = M.GetLabLines();
+	const float H = 34.f + 6.f * 13.f;
+	DrawPanel(X, Y, W, H, ColPanel, &ColLumen, 26.f);
+	float y = DrawLine(X + 10.f, Y + 8.f, TEXT("SYMBIOTIC LAB"), ColText, 1.05f);
+	y += 4.f;
+	if (Lines.Num() == 0)
+	{
+		DrawLine(X + 10.f, y, TEXT("bridge connected, waiting for its first report"), ColDim, 0.85f);
+		return;
+	}
+	for (const FSWLabLine& Line : Lines)
+	{
+		const FString Text = FString::Printf(TEXT("%3.0fs  %s"), Line.SimTime, *Line.Text);
+		DrawLine(X + 10.f, y, Elide(Text, W - 20.f, 0.85f), ColDim, 0.85f);
+		y += 13.f;
 	}
 }
 
@@ -352,6 +479,23 @@ void ASWHUD::DrawMinimap(const ASWWorldManager& M, float X, float Y, float Size)
 			const FVector2D Q = ToMap(Sel->GetActorLocation().X, Sel->GetActorLocation().Y);
 			DrawRect(Q.X - 5.f, Q.Y - 5.f, 10.f, 1.f, ColText); DrawRect(Q.X - 5.f, Q.Y + 4.f, 10.f, 1.f, ColText);
 			DrawRect(Q.X - 5.f, Q.Y - 5.f, 1.f, 10.f, ColText); DrawRect(Q.X + 4.f, Q.Y - 5.f, 1.f, 10.f, ColText);
+		}
+	}
+	// Recent predation kills: a red cross where the organism was taken, for Look.KillFeedSeconds
+	// (wall clock, like the plume and the kill feed). Visual only.
+	if (L.bPredationEffects)
+	{
+		const float Hold = FMath::Max(L.KillFeedSeconds, 0.1f);
+		const double Now = FPlatformTime::Seconds();
+		for (const FSWKillEvent& K : M.GetKillEvents())
+		{
+			const float Age = static_cast<float>(Now - K.WallTime);
+			if (Age < 0.f || Age > Hold) continue;
+			const float Alpha = FMath::Clamp((Hold - Age) / 0.8f, 0.f, 1.f);
+			const FVector2D Q = ToMap(K.Location.X, K.Location.Y);
+			const FLinearColor C(ColRed.R, ColRed.G, ColRed.B, Alpha);
+			DrawRect(Q.X - 4.f, Q.Y - 1.f, 9.f, 2.f, C);
+			DrawRect(Q.X - 1.f, Q.Y - 4.f, 2.f, 9.f, C);
 		}
 	}
 	// Legend.

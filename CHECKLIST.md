@@ -42,6 +42,43 @@ only once everything works. Exit conditions are what the tester checks.
 | 8 | Demo | camera rail (`-SWDemo=1`), 90 s story, backup video via `-benchmark -dumpmovie` | rehearsed twice from the demo seed |
 | 9 | AI scientist (P3, last) | intervention/narration agent over the CSV logs | only after 1-8 are green |
 
+## Backlog (added 2026-09-15)
+
+Open work found in the 2026-09-15 status review, fork check and Lab test prep.
+
+- [ ] **Merge WKrohg's fork branch `discourse-trajectory`** (8 commits after PR #2, no PR): OpenRouter
+      backend with per-scientist `model:` in `profiles/*.yaml`; Humboldt, a 9th scientist (PI) with a ROUND 0
+      agenda and veto arbitration; Fisher revise-and-resubmit before a Karla veto is final; `python -m Lab.lab
+      loop` (always-on lab, `--interval`, `--consolidate-every`, failed cycles roll back); dashboard
+      collect / pause / reset / save / load (`POST /api/live/*`, `Lab/saves/`); `LAB_TURN_PACE` (default 30 s),
+      `LAB_LLM`, `LAB_STREAM_URL`; `Lab/tests/test_openrouter.py`; session-5 report + transcript. Only conflict:
+      `.gitignore` (keep both `Content/Characters/Mannequins/` and `Lab/saves/`). Exit: `pytest Lab/tests`,
+      `python Lab/tests/test_smoke.py` and `python Lab/tests/test_openrouter.py` pass on the merged tree
+      (pytest alone does not collect the two script-style tests).
+- [ ] **Humboldt vs the field team**: after the merge the roster is nine; check `Lab/embodiment.py` routing, the
+      sim's avatar cap and the "eight" headcount strings. Exit: `observe --embody` shows Humboldt as a body, or
+      his exclusion is deliberate and documented.
+- [ ] **Harden the Claude CLI backend** (`Lab/llm.py` `ClaudeCLILLM`): profile as `--system-prompt`, `--tools ""`,
+      `--strict-mcp-config`, `--no-session-persistence`, `--json-schema` + `--output-format json`, prompt via
+      stdin (Windows argv limit), strip the host `CLAUDE_CODE_*` env, current model ids (`claude-opus-5`,
+      `claude-sonnet-5`, `claude-haiku-4-5`, no date suffix), per-scientist `claude_model:` (Fisher, Karla,
+      Humboldt on the stronger model). Exit: one probe per response kind returns schema-valid JSON; mock tests pass.
+- [ ] **Lab test on Claude models**: `session --llm claude --meetings 1` with `LAB_TURN_PACE=0` (model choice
+      open). Exit: the designed experiment runs headless, verdict + Brier scores + report are written.
+- [ ] **Demo recording (block 8, revived 2026-09-17)**: scripted takes instead of the never-built `-SWDemo` rail.
+      Control-file additions — `at=<sim_time> <command>` (any command at an exact sim time, pending list cleared on
+      reset/mode so a new run never re-fires an old shot), `cam=x,y,z,pitch,yaw` (place the camera, release follow),
+      `follow=Lumen|Tecton|Leviathan|<scientist>|none` (the existing -SWFollow paths), `Look.bShowHUD` for clean
+      framing — plus `run_sim.py --res WxH` (the windowed run is hard-coded 1600x900; Game Bar records the window).
+      Capture with Game Bar (Win+Alt+R, NVENC on the RTX 4060), cut with ffmpeg 8.1. Story beats: learning +
+      evolution, Leviathan predation, the field team, drought. Exit: a shot-list control file drives one take with
+      every beat, `commands.csv` shows each scheduled command at its preregistered sim time, a second take from the
+      same seed + shot list lands the same rows, and the no-policy determinism pair stays byte-identical.
+- [ ] HUD: with a policy server connected, the title card's "ext N" suffix runs into the GENERATION card subtitle.
+- [ ] Repo hygiene: local `main` still holds superseded creature/avatar drafts (discard, then fast-forward to
+      `origin/main`); `goofy-aryabhata` holds a duplicate uncommitted SpawnPatches fix; `river-levers` /
+      `river-crossings` experiments sit on e256eda and need a rebase onto `main`.
+
 ## Cut order (spec §11)
 
 P0 same individual learns + visible; reproduction; inherited/mutated

@@ -19,12 +19,183 @@ replies with no actions by construction.
 import json
 import socket
 import socketserver
+import sqlite3
 import threading
+import time
 
 from . import config, db
 from .population_manager import PopulationManager
 
 WINDOW_S = 60.0     # sim-seconds per evidence window
+LAB_LINE_MAX = 90   # the sim's SYMBIOTIC LAB panel is one short line per report
+LAB_POLL_S = 1.0    # how often the lab's own DB is checked for new rows
+LAB_SEND_S = 1.0    # at most one report per second, so the panel stays readable
+
+
+def _short(text, limit=LAB_LINE_MAX):
+    t = " ".join(str(text or "").split())
+    return t if len(t) <= limit else t[:limit - 3].rstrip() + "..."
+
+
+class LabActivity:
+    """Turn the lab's own new DB rows into one-line reports for the sim's SYMBIOTIC LAB panel.
+
+    Read-only and lock-tolerant on purpose: `python -m Lab.lab session` writes this same file while
+    a take is running, so every query is wrapped and a locked (or not yet created) database simply
+    means no report this second. Nothing here touches the simulation: the lines travel as the
+    documented {"type": "log"} side message (docs/POLICY_API.md) and are drawn by the HUD.
+    """
+
+    def __init__(self, db_path):
+        self.path = str(db_path)
+        self.con = None
+        self.queue = []
+        self.next_poll = 0.0
+        self.next_send = 0.0
+        self.primed = False        # the first poll records what is already there and reports none of it
+        self.last_meeting = 0
+        self.last_turn = 0
+        self.hypotheses = {}       # id -> status
+        self.experiments = {}      # id -> (status, verdict)
+        self.predictions = set()   # (experiment_id, agent)
+
+    # -- plumbing ---------------------------------------------------------
+    def _connect(self):
+        if self.con is not None:
+            return self.con
+        try:
+            uri = "file:" + self.path.replace("\\", "/").replace(" ", "%20") + "?mode=ro"
+            con = sqlite3.connect(uri, uri=True, timeout=2.0)
+            con.row_factory = sqlite3.Row
+            con.execute("PRAGMA busy_timeout=2000")
+            self.con = con
+        except sqlite3.Error:
+            self.con = None        # not created yet: try again on the next poll
+        return self.con
+
+    def _rows(self, sql, args=()):
+        con = self._connect()
+        if con is None:
+            return []
+        try:
+            return con.execute(sql, args).fetchall()
+        except sqlite3.Error:
+            # locked by a meeting mid-write, or a table this build does not have: skip this poll
+            try:
+                self.con.close()
+            except sqlite3.Error:
+                pass
+            self.con = None
+            return []
+
+    def _emit(self, text):
+        line = _short(text)
+        if line:
+            self.queue.append(line)
+            del self.queue[:-20]   # a long meeting must not build a backlog the panel never drains
+
+    # -- polling ----------------------------------------------------------
+    def poll(self, now=None):
+        """Read new rows into the queue. Cheap, and never raises."""
+        now = now if now is not None else time.monotonic()
+        if now < self.next_poll:
+            return
+        self.next_poll = now + LAB_POLL_S
+        first = not self.primed
+        self.primed = True
+
+        for r in self._rows("SELECT id, kind FROM meetings WHERE id > ? ORDER BY id", (self.last_meeting,)):
+            self.last_meeting = r["id"]
+            if not first:
+                self._emit("meeting %s opened (%s)" % (r["id"], r["kind"] or "session"))
+        for r in self._rows("SELECT id, meeting_id, round, agent, payload FROM transcript "
+                            "WHERE id > ? ORDER BY id", (self.last_turn,)):
+            self.last_turn = r["id"]
+            if first:
+                continue
+            line = self._turn_line(r)
+            if line:
+                self._emit(line)
+        for r in self._rows("SELECT id, claim, proposer, status FROM hypotheses"):
+            hid, status = r["id"], r["status"]
+            known = self.hypotheses.get(hid, False)
+            self.hypotheses[hid] = status
+            if first or known == status:
+                continue
+            if known is False:
+                self._emit("%s proposed by %s: %s" % (hid, r["proposer"] or "the lab", r["claim"]))
+            else:
+                self._emit("%s now %s: %s" % (hid, status, r["claim"]))
+        for r in self._rows("SELECT id, status, verdict, protocol, metric_result FROM experiments"):
+            xid = r["id"]
+            state = (r["status"], r["verdict"])
+            known = self.experiments.get(xid)
+            self.experiments[xid] = state
+            if first or known == state:
+                continue
+            self._emit(self._experiment_line(xid, r))
+        for r in self._rows("SELECT experiment_id, agent, predicted, confidence FROM predictions"):
+            key = (r["experiment_id"], r["agent"])
+            if key in self.predictions:
+                continue
+            self.predictions.add(key)
+            if first:
+                continue
+            self._emit("%s predicts %s for %s (conf %.2f)"
+                       % (r["agent"], r["predicted"], r["experiment_id"], float(r["confidence"] or 0.0)))
+
+    @staticmethod
+    def _turn_line(row):
+        rnd = (row["round"] or "").upper()
+        try:
+            payload = json.loads(row["payload"] or "null")
+        except (TypeError, ValueError):
+            payload = None
+        head = "meeting %s %s: %s" % (row["meeting_id"], rnd, row["agent"])
+        if rnd == "EVIDENCE" and isinstance(payload, list) and payload:
+            f = payload[0]
+            ids = ", ".join(f.get("evidence_ids", [])[:2])
+            return "%s cites %s (%s)" % (head, ids or "no id", f.get("text", ""))
+        if rnd in ("DISSENT", "CRUX") and isinstance(payload, dict):
+            return "%s %s" % (head, payload.get("text") or payload.get("crux") or payload.get("reason") or "")
+        if rnd == "MINUTES" and isinstance(payload, dict):
+            return "meeting %s minutes: %s" % (row["meeting_id"], payload.get("summary", ""))
+        if rnd in ("REVIEW", "CONSERVATION-REVIEW") and isinstance(payload, dict):
+            return "%s review: %s" % (head, payload.get("summary") or payload.get("objections") or "no objection")
+        return None
+
+    @staticmethod
+    def _experiment_line(xid, row):
+        status, verdict = row["status"], row["verdict"]
+        if verdict:
+            result = ""
+            try:
+                res = json.loads(row["metric_result"] or "null")
+                if isinstance(res, dict):
+                    parts = ["%s %.3g" % (k, v) for k, v in list(res.items())[:2]
+                             if isinstance(v, (int, float))]
+                    result = ", ".join(parts)
+            except (TypeError, ValueError):
+                pass
+            return "%s verdict %s%s" % (xid, str(verdict).upper(), (" (%s)" % result) if result else "")
+        try:
+            proto = json.loads(row["protocol"] or "{}")
+        except (TypeError, ValueError):
+            proto = {}
+        if isinstance(proto, dict) and proto.get("metric"):
+            return "%s %s: %s, %d seeds, threshold %g" % (
+                xid, status, proto.get("metric"), len(proto.get("seeds") or []), proto.get("threshold", 0))
+        return "%s %s" % (xid, status)
+
+    # -- sending ----------------------------------------------------------
+    def due(self, now=None):
+        """The next report to send, or None (at most one per LAB_SEND_S)."""
+        now = now if now is not None else time.monotonic()
+        self.poll(now)
+        if not self.queue or now < self.next_send:
+            return None
+        self.next_send = now + LAB_SEND_S
+        return self.queue.pop(0)
 
 
 class _Window:
@@ -106,6 +277,9 @@ class ObserverHandler(socketserver.StreamRequestHandler):
         last_team_sent = -1.0
         manager = PopulationManager() if srv.manage else None
         con = db.connect(srv.lab_db_path)     # this thread's own connection
+        # What the lab itself is doing, forwarded to the sim's SYMBIOTIC LAB panel: a separate
+        # read-only connection, polled once a second, one line at a time (LabActivity).
+        activity = LabActivity(srv.lab_db_path)
         try:
             for raw in self.rfile:
                 try:
@@ -151,6 +325,11 @@ class ObserverHandler(socketserver.StreamRequestHandler):
                     # Reply first — the sim must never wait on the lab.
                     self._send({"type": "actions", "step": msg.get("step"),
                                 "actions": actions})
+                    # Then at most one line about the lab's own work (meetings, hypotheses,
+                    # experiments, predictions): the sim draws the last few on its HUD.
+                    report = activity.due()
+                    if report:
+                        self._send({"type": "log", "text": report})
                     if window is None:
                         continue
                     if field:

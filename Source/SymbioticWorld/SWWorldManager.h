@@ -6,12 +6,37 @@
 #include "SWLogger.h"
 #include "SWTraceField.h"
 #include "SWPolicyClient.h"
+#include "HAL/PlatformTime.h"   // GetCaptionAgeSeconds(): the caption is timed on the wall clock
 #include "SWWorldManager.generated.h"
 
 class ASWAgent;
 class ASWResourcePatch;
 class ASWLeviathan;
 class ASWScientistAvatar;
+class ASWKillMark;
+
+// One predation kill, kept for the visual layer only (Look.bPredationEffects): the plume and the
+// sinking stand-in are spawned from Tick, the HUD kill feed and the minimap mark read the same rows.
+// Recorded where the death is accounted; nothing here feeds back into the simulation.
+struct FSWKillEvent
+{
+	FVector Location = FVector::ZeroVector;
+	FRotator Rotation = FRotator::ZeroRotator;
+	ESWSpecies Species = ESWSpecies::Lumen;
+	FString Label;                  // "L-0042" / "T-0007" (ASWAgent::GetLabel)
+	int32 AgentId = 0;
+	float MeshScale = 1.f;
+	float SimTime = 0.f;            // logical time of the kill (deaths.csv carries the same event)
+	double WallTime = 0.0;          // FPlatformTime::Seconds(): the HUD feed and the marker fade on the wall clock
+	bool bSpawned = false;          // the marker actor exists (spawned from Tick, never inside a substep)
+};
+
+// One "log" side message from a policy bridge (docs/POLICY_API.md), kept for the SYMBIOTIC LAB panel.
+struct FSWLabLine
+{
+	FString Text;
+	float SimTime = 0.f;
+};
 
 USTRUCT()
 struct FSWSpeciesStats
@@ -79,7 +104,17 @@ public:
 	FString ExecuteControlCommand(const FString& Line);
 	bool HasControlFile() const { return !ControlFilePath.IsEmpty(); }
 	int32 GetControlCommandsExecuted() const { return ControlCommandsExecuted; }   // accepted commands this run (HUD "ctrl")
+	int32 GetScheduledCommandCount() const { return ScheduledCommands.Num(); }     // pending "at=" commands
 	const FString& GetLatestNote() const { return LatestNote; }                    // last "note=" text, empty until one arrives
+	// Scenario title for a recorded take ("caption=<text>"): the text and how long it has been up, in WALL
+	// seconds, so a paused take keeps its title. Empty text / a negative age means nothing to draw.
+	const FString& GetCaptionText() const { return CaptionText; }
+	float GetCaptionAgeSeconds() const { return CaptionText.IsEmpty() ? -1.f : static_cast<float>(FPlatformTime::Seconds() - CaptionRaisedWall); }
+	// Recent predation kills (newest last) for the HUD kill feed and the minimap marks, and the last
+	// bridge log lines for the SYMBIOTIC LAB panel. Both are visual layers: no simulation state here.
+	const TArray<FSWKillEvent>& GetKillEvents() const { return KillEvents; }
+	const TArray<FSWLabLine>& GetLabLines() const { return LabLines; }
+	int32 GetPolicyConnectedCount() const { return PolicyClient.NumConnected(); }
 
 	// ---- Simulation services used by agents ----
 	FRandomStream& GetRng() { return Rng; }
@@ -244,10 +279,31 @@ protected:
 	TArray<FString> ControlFileSeen;                    // lines as last read: a rewrite that changes a consumed line resets the cursor
 	int32 ControlCommandsExecuted = 0;                  // accepted commands since StartRun (a reset command counts for the run it created)
 	FString LatestNote;
+	// Predation kill effects and the bridge log panel: visual bookkeeping, cleared by StartRun.
+	TArray<FSWKillEvent> KillEvents;                    // newest last, trimmed; marker actors spawn from Tick
+	TArray<FSWLabLine> LabLines;                        // last bridge "log" lines, newest last (max 6)
+	void SpawnPendingKillMarks();                       // Tick: one ASWKillMark per new kill event
+	void PushLabLine(const FString& Text);
+	FString CaptionText;                                // current "caption=" text, empty = none
+	double CaptionRaisedWall = 0.0;                     // FPlatformTime::Seconds() when it was raised (wall clock: a paused take keeps its title)
 	void InitControlFile();                             // BeginPlay: resolve the path, count and skip existing lines
 	void PollControlFile();                             // Tick: stat, read on change, execute new lines
 	bool ReadControlLines(TArray<FString>& OutLines) const;   // newline-terminated lines, untrimmed; false = file absent
 	FString RunControlCommand(const FString& Line, bool& bOutAccepted);   // the grammar; no logging
+	class ASWCameraPawn* GetCameraPawn() const;                          // the observer camera ("cam=" / "follow="), null in a headless run
+
+	// Scheduled commands: "at=<sim_time> <command>" queues one line to run when the logical clock reaches
+	// that time. Kept sorted by scheduled time (arrival order breaks ties) and fired from Tick, before the
+	// fixed-step loop, through ExecuteControlCommand, so a scheduled line logs exactly like a typed one.
+	// StartRun clears the list: a new run restarts SimTime and an old shot must never re-fire.
+	struct FSWScheduledCommand
+	{
+		float Time = 0.f;
+		FString Line;
+	};
+	TArray<FSWScheduledCommand> ScheduledCommands;
+	void RunDueScheduledCommands();                      // Tick: execute every command whose time has arrived
+	void ClearScheduledCommands(const TCHAR* Reason);    // logs how many were dropped
 	void NeutralBirthStep(float Dt);
 	void LogTick(float Dt);
 	FVector RandomArenaPoint(float Margin);

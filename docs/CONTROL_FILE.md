@@ -53,6 +53,40 @@ Keywords are case-insensitive; the line is trimmed; spaces around `=` are tolera
 | `reset seed=<int>` | set `Settings.Seed`, then restart | `ResetRun()` |
 | `mode=A|B|C|N` | switch the learning mode and restart | key **M** ends in the same `SetMode() -> ResetRun()` |
 | `note=<text>` | recorded verbatim (result `ok: note recorded (n chars)`), kept as `ASWWorldManager::GetLatestNote()` for a later HUD panel; use it to mark experiment steps in `commands.csv` | none (bookkeeping) |
+| `caption=<text>` | scenario title for a recorded take: draws the text large and centred in the lower third for `Look.CaptionSeconds` (default 6), fading out over the last 0.5 s; `caption=` alone clears it at once. The text is taken verbatim like `note=`. Held on the **wall** clock, so a paused take keeps its title, and drawn even when `Look.bShowHUD` is false | none (HUD layer: `ASWHUD::DrawCaption`) |
+| `at=<sim_time> <command>` | queue any other command for an exact logical time (`at=120 drought=on`, `at=45.5 follow=Leviathan`). Result `ok: queued for t=120.00 (3 pending): drought=on`; the queued line runs later and logs again then | `RunDueScheduledCommands()` -> `ExecuteControlCommand()` |
+| `cam=x,y,z,pitch,yaw` | place the observer camera at that world position and rotation, releasing any follow (5 finite numbers, commas) | launch flag `-SWCam`: `ASWCameraPawn::SetPose()` |
+| `follow=<target>` | chase camera; target is `Lumen` / `Tecton` (the selected organism of that species, selecting one if none is), `Leviathan` (the river predator), a scientist name or `any` (a field-team avatar, once it joins), or `none` to release | launch flags `-SWFollowSpecies` / `-SWFollowScientist`: `ASWCameraPawn::SetFollowSpec()` |
+
+### `at=`: scripted takes
+
+`at=` is how a demo take is preregistered instead of typed: append the whole shot list once, the sim fires
+each line when its **logical** clock reaches the time (the wall clock and the frame rate do not matter, so
+the same seed + shot list gives the same rows twice). Details:
+
+* Time is logical seconds, finite and `>= 0`; a time already past fires on the next frame. Rejected:
+  a non-numeric or negative time, no command after the time, and a nested `at=` (no recursion).
+* Due commands run from `Tick`, before the fixed-step loop, never inside a substep — the same placement as
+  the file poll. All commands due in one frame fire in that frame, in ascending scheduled time (equal times
+  keep the order they were queued in). Each one goes through `ExecuteControlCommand`, so it logs
+  `control: <line> -> <result>` and gets its own `commands.csv` row, exactly like a typed line; the log line
+  before it reads `control: scheduled t=120.00 fires at t=120.00 (3 still pending)`.
+* The queued text is stored verbatim (its own rules apply when it runs, so a scheduled `note=` keeps its
+  `#` characters), and a malformed queued command is only rejected when it fires.
+* `reset`, `reset seed=`, `mode=` **clear the pending list** (`control: N scheduled command(s) dropped`):
+  a new run restarts the logical clock and an old shot must never re-fire.
+* The shot list must be **appended while the sim runs** (`Tools/control.py`, or any append): lines that
+  already exist when the sim starts are ignored, like every control-file line.
+
+`cam=`, `follow=`, `caption=` and `set Look.bShowHUD=0` are camera/HUD only: they change nothing in the
+world, draw nothing from the seeded stream and leave a run byte-identical to one without them. They need a
+rendering run — in a headless `-nullrhi` run there is no observer camera and `cam=` / `follow=` are rejected,
+and nothing draws a caption. A beat is usually two scheduled lines, the title and the event:
+
+```
+at=298 caption=Drought: the river drops
+at=300 drought=on
+```
 
 Do not use `set Settings.Mode=...` or `set Settings.Seed=...` to change mode or seed: the first changes
 the learning rules mid-run without a reset (and the run id keeps the old mode name), the second only
@@ -99,7 +133,14 @@ its parent, so this is the whole population's genome after the reset).
 **`Look.*`:** read when an organism's body is built (birth, or `reset` for everyone):
 `bAuthoredCreatures`, `AuthoredLumenScale`, `AuthoredTectonScale`, `bCreatureShadows`
 (docs/CREATURE_RENDERING.md). Live: `bLumenTrails`, `TrailSampleInterval`, `TrailSamples`, `CreatureGlow`,
-`SignalGlowBoost`, `LumenGlow`, `TectonGlow`, `DroughtBlendSeconds`, `bDroughtPreview`,
+`SignalGlowBoost`, `LumenGlow`, `TectonGlow`, `DroughtBlendSeconds`, `bDroughtPreview`, `bShowCaptions`
+(default true; 0 hides the caption layer) and `CaptionSeconds` (default 6; how long a `caption=` stays up,
+read while it is on screen, so `set Look.CaptionSeconds=10` lengthens the caption that is already up),
+`bShowHUD`
+(default true; `set Look.bShowHUD=0` makes `ASWHUD::DrawHUD` return before it draws anything — title, stat
+cards, panels, minimap and name tags all disappear on the next frame, `=1` brings them back; clean framing
+for a recorded take, the sim is unaffected — **captions still draw**, because the title is the take's
+narration),
 `DroughtWaterDrop`, `bScientistAvatars` (0 removes the field-team avatars on the next frame; 1 shows them
 only while a policy server is sending `scientists` reports, docs/POLICY_API.md §5). Applied at the next
 drought transition (the environment re-applies its drought blend
@@ -122,7 +163,7 @@ executed line, accepted or rejected:
 run_id,sim_time,wall_utc,command,result
 20260906-160102_seed1_C_learning_evolution,84.30,2026-09-06T14:01:26.512Z,"drought=on","ok: drought on at t=84.3"
 20260906-160102_seed1_C_learning_evolution,90.10,2026-09-06T14:01:32.117Z,"set Lumen.ReproThreshold=85","ok: 1/1 field(s) set"
-20260906-160102_seed1_C_learning_evolution,95.00,2026-09-06T14:01:37.004Z,"sped=5","rejected: unknown command (drought | speed | pause | set | reset | mode | note)"
+20260906-160102_seed1_C_learning_evolution,95.00,2026-09-06T14:01:37.004Z,"sped=5","rejected: unknown command (drought | speed | pause | set | reset | mode | note | caption | at | cam | follow)"
 20260906-160144_seed3_C_learning_evolution,0.00,2026-09-06T14:02:08.330Z,"reset seed=3","ok: run 20260906-160102_seed1_C_learning_evolution ended at t=101.2; started 20260906-160144_seed3_C_learning_evolution (seed 3, mode C_learning_evolution)"
 ```
 
@@ -149,6 +190,7 @@ Standard library only.
 python3 Tools/control.py "drought=on"                                   # validates, appends to Saved/control.txt
 python3 Tools/control.py "set Lumen.ReproThreshold=85" "note=step 2"    # several lines, in order
 python3 Tools/control.py --file C:/elsewhere/control.txt "speed=50"     # a sim launched with --control-file
+python3 Tools/control.py "at=118 caption=Drought" "at=120 drought=on"   # a shot list for a recorded take
 python3 Tools/control.py --check "mode=X"                               # exit 2: rejected before it reaches the file
 python3 Tools/control.py --tail 10                                      # last 10 rows of the newest run's commands.csv
 ```

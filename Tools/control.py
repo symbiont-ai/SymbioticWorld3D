@@ -5,6 +5,7 @@
   python3 Tools/control.py "set Lumen.ReproThreshold=85" "note=repro sweep, step 2"
   python3 Tools/control.py --file /path/to/control.txt "speed=50"
   python3 Tools/control.py --check "mode=X"                      # validate only, write nothing (exit 2 when a line is bad)
+  python3 Tools/control.py "at=120 drought=on" "at=120 caption=Drought: the river drops" "at=130 follow=Leviathan"
   python3 Tools/control.py --tail 10                             # last 10 rows of the newest run's commands.csv
 
 The sim polls the file every Settings.ControlFilePollSec (2 s) of wall time and executes every
@@ -23,6 +24,7 @@ DEFAULT_RUNS = ROOT / "Saved" / "SymbioticWorld"
 
 ONOFF = r"(on|off|1|0|true|false)"
 SCOPES = r"(settings|lumen|tecton|genome|founder|look)"
+NUM = r"-?(\d+(\.\d*)?|\.\d+)"          # the sim's number grammar: sign + digits, no exponent
 # One regex per keyword, mirroring ASWWorldManager::RunControlCommand (case-insensitive, trimmed).
 RULES = [
     ("drought", re.compile(r"^drought\s*=\s*(on|off|toggle|1|0|true|false)$", re.I)),
@@ -31,10 +33,15 @@ RULES = [
     ("reset", re.compile(r"^reset(\s+seed\s*=\s*-?\d+)?$", re.I)),
     ("mode", re.compile(r"^mode\s*=\s*[abcn]$", re.I)),
     ("note", re.compile(r"^note\s*=.*$", re.I | re.S)),
+    ("caption", re.compile(r"^caption\s*=.*$", re.I | re.S)),
+    ("cam", re.compile(r"^cam\s*=\s*" + NUM + r"(\s*,\s*" + NUM + r"){4}$", re.I)),
+    ("follow", re.compile(r"^follow\s*=\s*\S.*$", re.I)),
 ]
 SET_ITEM = re.compile(r"^" + SCOPES + r"\.[A-Za-z_]\w*\s*=\s*\S.*$", re.I)
+AT = re.compile(r"^at\s*=\s*(" + NUM + r")(\s+(?P<rest>.*))?$", re.I | re.S)
 GRAMMAR = ("drought=on|off|toggle, speed=<float>, pause=on|off, set <Scope.Field>=<value>, "
-           "reset, reset seed=<int>, mode=A|B|C|N, note=<text>")
+           "reset, reset seed=<int>, mode=A|B|C|N, note=<text>, caption=<text>, at=<sim_time> <command>, "
+           "cam=x,y,z,pitch,yaw, follow=Lumen|Tecton|Leviathan|<scientist name>|none")
 
 
 def validate(line):
@@ -47,6 +54,22 @@ def validate(line):
     if s.startswith("#"):
         return None   # comment: the sim skips it
     low = s.lower()
+    if low == "at" or low.startswith("at=") or low.startswith("at "):
+        # at=<sim_time> <command>: the sim queues the rest of the line and runs it at that logical time.
+        m = AT.match(s)
+        if not m:
+            return "at=<sim_time> <command>, sim_time in logical seconds (e.g. at=120 drought=on)"
+        if float(m.group(1)) < 0:
+            return "at: sim_time must be >= 0"
+        rest = (m.group("rest") or "").strip()
+        if not rest:
+            return "at=<sim_time> needs a command to run"
+        if rest.startswith("#"):
+            return "at: a comment is not a command"
+        if re.match(r"^at\s*=", rest, re.I):
+            return "at= cannot schedule another at="
+        why = validate(rest)
+        return None if why is None else "at=%s: %s" % (m.group(1), why)
     if low == "set" or low.startswith("set "):
         spec = s[3:].strip()
         items = [it.strip() for it in spec.split(";")]

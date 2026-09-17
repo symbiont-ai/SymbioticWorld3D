@@ -123,6 +123,15 @@ public:
 
 	int32 GetTimeoutMs() const { return TimeoutMs; }
 
+	// Incoming "log" side messages since the last drain (docs/POLICY_API.md), for the SYMBIOTIC LAB
+	// HUD panel. Text only: nothing here reaches an organism or the seeded stream. Bounded, so a
+	// chatty bridge cannot grow this without limit; the owner drains it once per frame.
+	void DrainLogLines(TArray<FString>& Out)
+	{
+		Out = MoveTemp(PendingLogLines);
+		PendingLogLines.Reset();
+	}
+
 	// Latest "scientists" side message (visual field team, Lab observe --embody).
 	// Stamp increments on every update; LastWall is FPlatformTime::Seconds() of it.
 	const TArray<FSWScientistPing>& GetScientistPings() const { return ScientistPings; }
@@ -140,6 +149,7 @@ public:
 
 private:
 	TArray<FSWPolicyServer> Servers;
+	TArray<FString> PendingLogLines;      // "log" side messages waiting to be drained (max 16)
 	TArray<FSWScientistPing> ScientistPings;
 	uint32 ScientistStamp = 0;
 	double ScientistLastWall = 0.0;

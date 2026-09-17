@@ -10,6 +10,7 @@ Examples
   python Tools/run_sim.py --mode B --seed 7 --duration 300 --windowed # watch it
   python Tools/run_sim.py --mode C --seed 1 --duration 600 --set "Settings.PatchRegenPerSec=5;Lumen.ReproThreshold=85"
   python Tools/run_sim.py --mode C --seed 1 --duration 45 --speed 1 --windowed --shot 4,40 --no-logs
+  python Tools/run_sim.py --mode C --seed 1 --duration 300 --speed 1 --windowed --res 1920x1080 --control-file Saved/take1.txt   # recorded take (docs/CONTROL_FILE.md)
   python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --policy "10.228.152.5:9000=Lumen"   # a collaborator's Python agents drive the Lumen
   python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --policy-file Saved/policy_servers.txt   # servers added/removed by editing that file while it runs
   python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --control-file Saved/control.txt       # then: python Tools/control.py "drought=on" (docs/CONTROL_FILE.md)
@@ -18,6 +19,7 @@ Each run writes Saved/SymbioticWorld/<run_id>/ and the script prints the
 directory when the process exits. -SWDuration makes the sim quit itself.
 """
 import argparse
+import re
 import subprocess
 import sys
 import time
@@ -29,10 +31,19 @@ ENGINE = Path(r"C:\Program Files\Epic Games\UE_5.7")
 EDITOR_CMD = ENGINE / "Engine/Binaries/Win64/UnrealEditor-Cmd.exe"
 EDITOR = ENGINE / "Engine/Binaries/Win64/UnrealEditor.exe"
 SAVED = ROOT / "Saved/SymbioticWorld"
+DEFAULT_RES = "1600x900"
+
+
+def parse_res(spec):
+    """'WxH' in pixels -> (W, H). Exits on anything else (a bad -ResX silently gives a default window)."""
+    m = re.fullmatch(r"\s*(\d{3,5})\s*[xX*]\s*(\d{3,5})\s*", str(spec))
+    if not m:
+        sys.exit(f"--res: use WxH in pixels, e.g. 1920x1080 (got {spec!r})")
+    return int(m.group(1)), int(m.group(2))
 
 
 def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=None, no_logs=False, auto_select=False, cam=None, offscreen=False, stream=None,
-            policy=None, policy_timeout=None, policy_share=None, policy_file=None, control_file=None):
+            policy=None, policy_timeout=None, policy_share=None, policy_file=None, control_file=None, res=DEFAULT_RES):
     before = {p.name for p in SAVED.iterdir()} if SAVED.exists() else set()
     exe = EDITOR if windowed else EDITOR_CMD
     cmd = [str(exe), str(UPROJECT), "-game", "-log", "-unattended", "-nosound",
@@ -40,7 +51,9 @@ def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=N
     if not windowed:
         cmd += ["-nullrhi", "-NoSplash", "-stdout", "-FullStdOutLogOutput"]
     else:
-        cmd += ["-windowed", "-ResX=1600", "-ResY=900"]
+        # Window size for a rendering run: the recorded take's frame (Game Bar records this window).
+        width, height = parse_res(res)
+        cmd += ["-windowed", f"-ResX={width}", f"-ResY={height}"]
         if offscreen:
             cmd.append("-RenderOffScreen")   # no window: nothing steals the keyboard, screenshots still land
         if stream:
@@ -107,6 +120,8 @@ def main():
     ap.add_argument("--no-logs", action="store_true", help="do not write CSV logs")
     ap.add_argument("--auto-select", action="store_true", help="auto-select the youngest Lumen so screenshots show the inspector")
     ap.add_argument("--cam", default=None, help="start camera x,y,z,pitch,yaw (e.g. -3000,900,420,-8,10)")
+    ap.add_argument("--res", default=DEFAULT_RES, metavar="WxH",
+                    help=f"window size for --windowed / --offscreen runs (default {DEFAULT_RES}); Game Bar records that window")
     ap.add_argument("--offscreen", action="store_true", help="windowed run without a visible window (-RenderOffScreen); use for scripted screenshots")
     ap.add_argument("--stream", nargs="?", const="ws://127.0.0.1:8888", default=None, metavar="WS_URL",
                     help="Pixel Streaming: connect to a signalling server (default ws://127.0.0.1:8888, start it with Tools/start_stream_server.bat) so LAN browsers can watch and drive the sim")
@@ -121,6 +136,7 @@ def main():
     ap.add_argument("extra", nargs="*", help="extra engine args (put them after --)")
     args = ap.parse_args()
 
+    parse_res(args.res)   # fail before launching anything
     if not EDITOR_CMD.exists():
         sys.exit(f"engine not found at {ENGINE}")
     produced = []
@@ -128,7 +144,8 @@ def main():
         for s in args.seed:
             produced += run_one(m.upper(), s, args.duration, args.speed, args.windowed, args.extra,
                                 args.set_spec, args.shot, args.no_logs, args.auto_select, args.cam, args.offscreen, args.stream,
-                                args.policy, args.policy_timeout, args.policy_share, args.policy_file, args.control_file)
+                                args.policy, args.policy_timeout, args.policy_share, args.policy_file, args.control_file,
+                                args.res)
     if args.analyze and produced:
         subprocess.run([sys.executable, str(ROOT / "Analysis/analyze_run.py"), *map(str, produced)], cwd=str(ROOT))
 

@@ -32,6 +32,12 @@ public:
 
 	void SetFollowTarget(ASWAgent* Agent);
 	void SetFollowScientist(ASWScientistAvatar* Avatar);
+	// Scripted framing for recorded takes, driven by the live control file's "cam=" / "follow="
+	// (docs/CONTROL_FILE.md). Visual only: neither touches the sim or the seeded stream.
+	void SetPose(const FVector& Loc, const FRotator& Rot);   // place the camera, release every follow
+	// "Lumen" | "Tecton" | "Leviathan" | <scientist name> | "any" | "none"; false = empty spec.
+	// Takes the same paths as -SWFollowSpecies / -SWFollowScientist, including waiting for an avatar to join.
+	bool SetFollowSpec(const FString& Spec, FString& OutWhat);
 	ASWScientistAvatar* GetFollowedScientist() const { return FollowScientist.Get(); }
 	bool IsFollowing() const { return FollowTarget != nullptr || FollowActor.IsValid() || FollowScientist.IsValid(); }
 
