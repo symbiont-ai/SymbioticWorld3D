@@ -46,7 +46,7 @@ only once everything works. Exit conditions are what the tester checks.
 
 Open work found in the 2026-09-15 status review, fork check and Lab test prep.
 
-- [ ] **Merge WKrohg's fork branch `discourse-trajectory`** (8 commits after PR #2, no PR): OpenRouter
+- [x] **Merge WKrohg's fork branch `discourse-trajectory`** (8 commits after PR #2, no PR): OpenRouter
       backend with per-scientist `model:` in `profiles/*.yaml`; Humboldt, a 9th scientist (PI) with a ROUND 0
       agenda and veto arbitration; Fisher revise-and-resubmit before a Karla veto is final; `python -m Lab.lab
       loop` (always-on lab, `--interval`, `--consolidate-every`, failed cycles roll back); dashboard
@@ -55,7 +55,7 @@ Open work found in the 2026-09-15 status review, fork check and Lab test prep.
       `.gitignore` (keep both `Content/Characters/Mannequins/` and `Lab/saves/`). Exit: `pytest Lab/tests`,
       `python Lab/tests/test_smoke.py` and `python Lab/tests/test_openrouter.py` pass on the merged tree
       (pytest alone does not collect the two script-style tests).
-- [ ] **Humboldt vs the field team**: after the merge the roster is nine; check `Lab/embodiment.py` routing, the
+- [x] **Humboldt vs the field team**: after the merge the roster is nine; check `Lab/embodiment.py` routing, the
       sim's avatar cap and the "eight" headcount strings. Exit: `observe --embody` shows Humboldt as a body, or
       his exclusion is deliberate and documented.
 - [ ] **Harden the Claude CLI backend** (`Lab/llm.py` `ClaudeCLILLM`): profile as `--system-prompt`, `--tools ""`,
@@ -65,7 +65,7 @@ Open work found in the 2026-09-15 status review, fork check and Lab test prep.
       Humboldt on the stronger model). Exit: one probe per response kind returns schema-valid JSON; mock tests pass.
 - [ ] **Lab test on Claude models**: `session --llm claude --meetings 1` with `LAB_TURN_PACE=0` (model choice
       open). Exit: the designed experiment runs headless, verdict + Brier scores + report are written.
-- [ ] **Demo recording (block 8, revived 2026-09-17)**: scripted takes instead of the never-built `-SWDemo` rail.
+- [x] **Demo recording (block 8, revived 2026-09-17)**: scripted takes instead of the never-built `-SWDemo` rail.
       Control-file additions — `at=<sim_time> <command>` (any command at an exact sim time, pending list cleared on
       reset/mode so a new run never re-fires an old shot), `cam=x,y,z,pitch,yaw` (place the camera, release follow),
       `follow=Lumen|Tecton|Leviathan|<scientist>|none` (the existing -SWFollow paths), `Look.bShowHUD` for clean
