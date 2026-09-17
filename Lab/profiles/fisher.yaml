@@ -1,6 +1,7 @@
 name: Fisher
 role: Experimentalist
 domains: [behavior, ecology]
+model: meta-llama/llama-3.1-70b-instruct   # designs kept failing Karla's review on 8B
 temperature: 0.4
 veto_rights: false
 attends_evidence_round: false

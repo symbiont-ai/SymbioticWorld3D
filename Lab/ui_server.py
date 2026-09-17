@@ -10,7 +10,10 @@ and /figs/* (Vega's PNGs). The page polls /api/state, so it live-updates while
 a session or the sim machine is writing to the same database.
 """
 import json
+import os
+import re
 import sqlite3
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -46,9 +49,19 @@ def snapshot(db_path):
             out["generation"] = int(row["value"]) if row else 0
         except sqlite3.OperationalError:
             out["generation"] = 0
+        try:
+            row = con.execute("SELECT value FROM lab_meta WHERE key='live_collect'").fetchone()
+            out["live_collect"] = row["value"] if row else "on"
+        except sqlite3.OperationalError:
+            out["live_collect"] = "on"
     finally:
         con.close()
     out["figs"] = sorted(p.name for p in FIG_DIR.glob("*.png")) if FIG_DIR.exists() else []
+    sdir = config.LAB_DIR / "saves"
+    out["saves"] = (sorted((p.name for p in sdir.glob("live_*.json")), reverse=True)[:5]
+                    if sdir.exists() else [])
+    # World-tab stream default when dashboard and sim run on different machines
+    out["stream_url"] = os.environ.get("LAB_STREAM_URL", "")
     return out
 
 
@@ -85,6 +98,95 @@ def make_handler(db_path):
                     self._send(404, b"not found", "text/plain")
             else:
                 self._send(404, b"not found", "text/plain")
+
+        def do_POST(self):
+            # The only writes this server makes: the live-collection switch and
+            # the uncited-live-evidence reset (dashboard World-tab controls).
+            from . import db as labdb
+            path = urlparse(self.path).path
+            if path not in ("/api/live/play", "/api/live/pause",
+                            "/api/live/reset", "/api/live/save",
+                            "/api/live/load"):
+                self._send(404, b"not found", "text/plain")
+                return
+            con = labdb.connect(db_path)
+            try:
+                if path.endswith("/load"):
+                    # Restore a snapshot: rows re-inserted, existing ids kept.
+                    n = int(self.headers.get("Content-Length") or 0)
+                    try:
+                        req = json.loads(self.rfile.read(n) or b"{}")
+                    except json.JSONDecodeError:
+                        req = {}
+                    fname = Path(str(req.get("file") or "")).name  # no traversal
+                    f = config.LAB_DIR / "saves" / fname
+                    if not (fname.startswith("live_") and fname.endswith(".json")
+                            and f.exists()):
+                        self._send(404, b'{"error": "no such save"}',
+                                   "application/json")
+                        return
+                    d = json.loads(f.read_text())
+                    before = con.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
+                    for r in d.get("runs", []):
+                        con.execute("INSERT OR IGNORE INTO runs VALUES(?,?,?,?,?,?)",
+                                    (r["run_id"], r["mode"], r["seed"],
+                                     r["sim_end"], r["path"], r["ingested_at"]))
+                    for e in d.get("evidence", []):
+                        con.execute("INSERT OR IGNORE INTO evidence VALUES(?,?,?,?,?,?)",
+                                    (e["id"], e["run_id"], e["stat"], e["value"],
+                                     e["provenance"], e["created_at"]))
+                    con.commit()
+                    after = con.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
+                    out = {"file": fname, "restored": after - before,
+                           "already_present": len(d.get("evidence", [])) - (after - before)}
+                    self._send(200, json.dumps(out).encode(), "application/json")
+                    return
+                if path.endswith("/save"):
+                    # Archive the current live-collection windows to a named
+                    # snapshot under Lab/saves/ (reset can then start a fresh
+                    # collection without losing anything).
+                    n = int(self.headers.get("Content-Length") or 0)
+                    try:
+                        req = json.loads(self.rfile.read(n) or b"{}")
+                    except json.JSONDecodeError:
+                        req = {}
+                    name = re.sub(r"[^A-Za-z0-9_-]", "",
+                                  str(req.get("name") or ""))[:40]
+                    evid = [dict(r) for r in con.execute(
+                        "SELECT * FROM evidence WHERE stat LIKE 'live_%' ORDER BY id")]
+                    runs = [dict(r) for r in con.execute(
+                        "SELECT * FROM runs WHERE run_id LIKE 'live:%'")]
+                    sdir = config.LAB_DIR / "saves"
+                    sdir.mkdir(exist_ok=True)
+                    fname = (time.strftime("live_%Y%m%d_%H%M%S")
+                             + (f"_{name}" if name else "") + ".json")
+                    (sdir / fname).write_text(json.dumps(
+                        {"name": name, "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                         "runs": runs, "evidence": evid}, indent=1))
+                    out = {"file": f"Lab/saves/{fname}",
+                           "evidence": len(evid), "runs": len(runs)}
+                elif path.endswith("/reset"):
+                    # Evidence already cited by a hypothesis or stance is part
+                    # of the scientific record and survives the reset.
+                    cited = {r[0] for r in con.execute(
+                        "SELECT evidence_id FROM hypothesis_evidence")}
+                    for (txt,) in con.execute(
+                            "SELECT evidence_ids FROM stances WHERE evidence_ids != ''"):
+                        cited.update(t for t in re.split(r"[^A-Za-z0-9:_.\-]+", txt or "") if t)
+                    rows = [r[0] for r in con.execute(
+                        "SELECT id FROM evidence WHERE stat LIKE 'live_%'")]
+                    doomed = [i for i in rows if i not in cited]
+                    con.executemany("DELETE FROM evidence WHERE id=?",
+                                    [(i,) for i in doomed])
+                    out = {"deleted": len(doomed), "kept": len(rows) - len(doomed)}
+                else:
+                    state = "on" if path.endswith("/play") else "off"
+                    labdb.set_meta(con, "live_collect", state)
+                    out = {"live_collect": state}
+                con.commit()
+            finally:
+                con.close()
+            self._send(200, json.dumps(out).encode(), "application/json")
 
     return Handler
 

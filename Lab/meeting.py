@@ -15,6 +15,7 @@ one protocol slot, the docket is ranked by credibility-weighted interest
 (sum of vote weights of agents holding a non-abstain stance on the card).
 """
 import json
+import time
 
 from . import config, conservation, db, evidence, memory, scorer
 from .profiles import OBSERVERS, TURN_ORDER
@@ -26,6 +27,13 @@ class MeetingRunner:
         self.con, self.profiles, self.llm, self.log = con, profiles, llm, log
 
     def _turn(self, agent, kind, prompt, ctx):
+        # Demo pacing (config.TURN_PACE_S): scientists speak no faster than
+        # one turn per pace interval, so the dashboard shows the conversation
+        # forming rather than a finished meeting appearing at once.
+        wait = getattr(self, "_next_turn_at", 0.0) - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        self._next_turn_at = time.monotonic() + config.TURN_PACE_S
         prof = self.profiles[agent]
         try:
             return self.llm.turn(prof, kind, prompt, ctx=ctx)
@@ -43,6 +51,7 @@ class MeetingRunner:
 
         digest = self._ingest(mid)
         conservation.ensure_programs(con, mid, self.log)   # endangerment dockets
+        self._agenda_round(mid)
         findings = self._evidence_round(mid, digest)
         new_cards = self._hypotheses_round(mid, digest, findings)
         cards = memory.active_cards(con, config.MAX_ACTIVE_CARDS_PER_MEETING)
@@ -66,6 +75,32 @@ class MeetingRunner:
             self.log(f"  [docket] {row['id']} verdict={row['verdict']}")
         return evidence.evidence_digest(self.con)
 
+    def _agenda_round(self, mid):
+        """The PI opens the meeting: research priorities for the lab, anchored
+        to the registry's open questions and population-level metrics."""
+        qs = [r["text"] for r in self.con.execute(
+            "SELECT text FROM open_questions WHERE status='open' LIMIT 6")]
+        cards = [f"{c['id']} [{c['status']}]: {c['claim'][:90]}"
+                 for c in memory.active_cards(self.con, 6)]
+        prompt = ("ROUND 0 — AGENDA. As Principal Investigator, set this "
+                  "meeting's research priorities (2-3), anchored to the state "
+                  "of the registry and to population-level questions.\n"
+                  "Open questions:\n" + "\n".join(f"- {q}" for q in qs) +
+                  "\nActive cards:\n" + "\n".join(f"- {c}" for c in cards) +
+                  f"\nMetrics the lab can measure: {', '.join(METRICS[:12])} ...")
+        agenda = self._turn("Humboldt", "agenda", prompt, {"open_questions": qs})
+        db.log_turn(self.con, mid, "AGENDA", "Humboldt", agenda)
+        self._agenda = agenda
+        for p in agenda.get("priorities", [])[:3]:
+            self.log(f"  [agenda] PI priority: {p[:110]}")
+        return agenda
+
+    def _pi_focus(self):
+        a = getattr(self, "_agenda", None) or {}
+        ps = "; ".join(a.get("priorities", [])[:3])
+        return (f"\nPI's agenda this meeting: {ps} "
+                f"(focus metric {a.get('focus_metric', '-')}).") if ps else ""
+
     def _evidence_round(self, mid, digest):
         findings = []
         if not digest:
@@ -82,7 +117,8 @@ class MeetingRunner:
             quota = config.MAX_FINDINGS_PER_OBSERVER if weight >= 1.0 \
                 else config.MAX_FINDINGS_PER_OBSERVER - 1
             prompt = (f"ROUND 1 — EVIDENCE. Present up to {quota} "
-                      f"findings from your domain, each anchored to an evidence ID.\n"
+                      f"findings from your domain, each anchored to an evidence ID."
+                      f"{self._pi_focus()}\n"
                       f"Available evidence:\n{ev_text}")
             raw = self._turn(agent, "findings", prompt, {"evidence": own})
             kept = []
@@ -337,17 +373,56 @@ class MeetingRunner:
                          (exp_id, card["id"], json.dumps(proto), "proposed",
                           None, None, None, mid))
 
-        # Karla review (her veto on running a flawed protocol is checked in code)
-        review = self._turn("Karla", "review",
-                            f"Review this protocol for {card['id']} (\"{card['claim']}\"): "
-                            f"{json.dumps(proto)}. List objections; veto only for a missing "
-                            f"control or an unfalsifiable design.",
-                            {"protocol": proto, "claim": card["claim"]})
-        db.log_turn(self.con, mid, "REVIEW", "Karla", review)
+        # Karla review (her veto on running a flawed protocol is checked in
+        # code). One revise-and-resubmit: on objections Fisher revises the
+        # protocol once, addressing them, before a veto is final.
+        for attempt in range(2):
+            review = self._turn("Karla", "review",
+                                f"Review this protocol for {card['id']} (\"{card['claim']}\"): "
+                                f"{json.dumps(proto)}. Quote the arm values before calling "
+                                f"them identical. List objections; veto only for a missing "
+                                f"control or an unfalsifiable design.",
+                                {"protocol": proto, "claim": card["claim"]})
+            db.log_turn(self.con, mid, "REVIEW", "Karla", review)
+            if review.get("approve", True) or not review.get("veto_reason"):
+                break
+            if attempt == 0:
+                objections = "; ".join(review.get("objections", [])) or review["veto_reason"]
+                self.log(f"  [design] {exp_id} revise-and-resubmit: {review['veto_reason']}")
+                raw = self._turn("Fisher", "protocol",
+                                 prompt + f"\n\nKarla's review of your first draft: "
+                                 f"{objections}\nRevise the protocol to answer every "
+                                 f"objection (differing arms, a proper control).",
+                                 {"claim": card["claim"], "crux": crux or {}})
+                db.log_turn(self.con, mid, "DESIGN", "Fisher", raw)
+                revised, err = self._validate_protocol(raw, crux)
+                if err:
+                    self.log(f"  [design] Fisher's revision rejected in code: {err}")
+                    break                      # veto stands on the original
+                proto = revised
+                self.con.execute("UPDATE experiments SET protocol=? WHERE id=?",
+                                 (json.dumps(proto), exp_id))
         if not review.get("approve", True) and review.get("veto_reason"):
-            self.con.execute("UPDATE experiments SET status='vetoed' WHERE id=?", (exp_id,))
-            self.log(f"  [design] {exp_id} VETOED by Karla: {review['veto_reason']}")
-            return None
+            # PI arbitration: Humboldt weighs the veto against the cost of yet
+            # another meeting with no data. Upheld -> vetoed; overruled -> runs.
+            ruling = self._turn(
+                "Humboldt", "arbitration",
+                f"Karla vetoed {exp_id} for {card['id']} (\"{card['claim']}\") "
+                f"after Fisher's revision.\nProtocol: {json.dumps(proto)}\n"
+                f"Veto reason: {review['veto_reason']}\n"
+                f"Objections: {'; '.join(review.get('objections', []))}\n"
+                f"As PI: uphold only if running this protocol would produce "
+                f"uninterpretable data (no control, identical arms). A "
+                f"flawed-but-controlled run beats a perfect design never executed.",
+                {"claim": card["claim"], "veto_reason": review["veto_reason"]})
+            db.log_turn(self.con, mid, "ARBITRATION", "Humboldt", ruling)
+            if ruling.get("uphold", True):
+                self.con.execute("UPDATE experiments SET status='vetoed' WHERE id=?", (exp_id,))
+                self.log(f"  [design] {exp_id} VETOED by Karla, PI upheld: "
+                         f"{review['veto_reason']}")
+                return None
+            self.log(f"  [design] {exp_id} veto OVERRULED by PI: "
+                     f"{ruling.get('reason', '')[:110]}")
 
         # Preregistration: every agent predicts the outcome before the run.
         for agent in TURN_ORDER:
@@ -375,7 +450,7 @@ class MeetingRunner:
                              (exp_id, dispute["id"]))
         self.log(f"  [design] {exp_id} queued for {card['id']} "
                  f"(metric {proto['metric']}, {len(proto['seeds'])} seeds x2 arms, "
-                 f"{proto['duration']:.0f}s) with 6 preregistered predictions")
+                 f"{proto['duration']:.0f}s) with {len(TURN_ORDER) - 1} preregistered predictions")
         return exp_id
 
     # ------------------------------------------------------------------ manage
