@@ -74,6 +74,21 @@ Open work found in the 2026-09-15 status review, fork check and Lab test prep.
       evolution, Leviathan predation, the field team, drought. Exit: a shot-list control file drives one take with
       every beat, `commands.csv` shows each scheduled command at its preregistered sim time, a second take from the
       same seed + shot list lands the same rows, and the no-policy determinism pair stays byte-identical.
+- [x] **Experiment designer** (added 2026-09-17, from the 10-experiment audit): ten experiments held three
+      distinct designs and six were one drought contrast re-run, because `Lab/llm.py` `_protocol` was a
+      three-branch keyword router (every challenge claim contains "drought"), `victory.sync_questions` rewrites a
+      question's text every meeting so the same unmet condition minted a fresh card each time (H-015..H-020), the
+      design slot took the NEWEST card so the seeded conjectures H-005..H-007 starved, and a C-vs-C draft with
+      empty arms self-vetoed - which is why mode A, the predator, MutationSigma and WeightNovelty were
+      unreachable and OQ-VC-3's learning-off control could not be proposed. Fix: a design bench (one row per
+      runnable contrast: arms, preregistered metric, direction, threshold), card identity by condition rather
+      than wording, least-tested-card-first design slot with up to two experiments per card, a protocol
+      signature check that files a repeat as `duplicate` instead of running it, four seeded conjectures for the
+      mechanisms that landed after the seed list (predation floor, predation vs epsilon, novelty bonus,
+      inheritance fidelity), and mode A + the knob surface in the DESIGN prompt a real model sees.
+      Exit: a run of the docket queues >=8 distinct protocols, no two queued/done experiments share
+      arms+metric+seeds+duration, H-005..H-007 hold experiments, and the mode-A control answers OQ-VC-3.
+
 - [ ] HUD: with a policy server connected, the title card's "ext N" suffix runs into the GENERATION card subtitle.
 - [ ] Repo hygiene: local `main` still holds superseded creature/avatar drafts (discard, then fast-forward to
       `origin/main`); `goofy-aryabhata` holds a duplicate uncommitted SpawnPatches fix; `river-levers` /
