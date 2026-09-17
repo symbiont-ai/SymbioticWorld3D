@@ -54,6 +54,11 @@ def snapshot(db_path):
             out["live_collect"] = row["value"] if row else "on"
         except sqlite3.OperationalError:
             out["live_collect"] = "on"
+        try:   # the field team's duty cycle: out in the field, or at camp for a meeting (Lab/duty.py)
+            from . import duty
+            out["duty"] = duty.describe(con)
+        except (sqlite3.OperationalError, ImportError):
+            out["duty"] = None
     finally:
         con.close()
     out["figs"] = sorted(p.name for p in FIG_DIR.glob("*.png")) if FIG_DIR.exists() else []

@@ -172,16 +172,25 @@ forage-greedy Lumen policy change the selection gradient on alpha?").
   evidence: populations, genome means, rewards, traces, and the full
   behavior distribution per species (`live_*_action_*_frac`). Cheapest for
   the sim (no avatar rendering), complete information for the scientists.
-- **Embodied field team** — add `--embody`. The eight researchers walk the
-  arena as virtual bodies with a sense radius, each heading for the nearest
+- **Embodied field team** — add `--embody`. Nine bodies: the eight who go out
+  walk the arena with a sense radius, each heading for the nearest
   organism that fits their rule (`Lab/embodiment.py`), keeping to land and
-  crossing the river by jet ski only when the target is on the other side;
+  crossing the river by jet ski only when the target is on the other side, while
+  Humboldt, the PI, holds the camp and never does fieldwork;
   each observer can present
   only what they personally witnessed, and the sim can render them as labelled
   bodies (Manny/Quinn mannequins when the project has that content, else engine
   cylinders; V key / `Look.bScientistAvatars`, off by default). Costs
   render load and partial observability — use it when the point is the
   fieldwork, not the fastest science.
+  **Duty cycle** (`Lab/duty.py`): the team is either in the field or in a meeting,
+  never both. Five evidence windows (5 sim-minutes) of fieldwork, then the team
+  walks back to camp and the phase becomes `meeting-requested`; whoever runs
+  meetings (`loop`, or a `session` on the same DB) opens one, and the team goes
+  back out when it ends. If nobody picks the request up within two more windows
+  the observer returns to the field on its own. Witnessed evidence pauses at
+  camp; the instrument windows keep recording, because those are instruments,
+  not people. The phase lives in `lab_meta` and shows on the dashboard's World tab.
 
 Same discourse rules in both modes; the toggle changes what the scientists
 can see, never how claims are validated.

@@ -15,7 +15,7 @@ import json
 import os
 from pathlib import Path
 
-from . import datasci, db, evidence, evolution, memory, report, runner, seed_content
+from . import datasci, db, duty, evidence, evolution, memory, report, runner, seed_content
 from .llm import make_llm
 from .meeting import MeetingRunner
 from .profiles import load_profiles
@@ -30,7 +30,13 @@ def cmd_session(args):
         evidence.ingest_run(con, Path(d))
     mr = MeetingRunner(con, profiles, llm)
     for i in range(args.meetings):
-        mr.run(kind="generation-boundary" if i == args.meetings - 1 else "regular")
+        # The field team cannot be in the field and in a meeting at once: calling one in brings
+        # them back to camp for its duration (Lab/duty.py).
+        duty.begin_meeting(con)
+        try:
+            mr.run(kind="generation-boundary" if i == args.meetings - 1 else "regular")
+        finally:
+            duty.end_meeting(con)
         if runner.engine_available() or runner.service_client():
             runner.execute_queued(con)
         else:
@@ -49,11 +55,14 @@ def cmd_session(args):
 
 
 def cmd_loop(args):
-    """The always-on lab: meeting -> experiments -> interval -> next meeting,
+    """The always-on lab: meeting -> experiments -> wait for the field team -> next meeting,
     until stopped. Every Nth meeting is a generation boundary (consolidation,
     evolution, fresh report). Profiles reload each cycle so evolved parameters
-    and edited YAMLs take effect without a restart."""
-    import time
+    and edited YAMLs take effect without a restart.
+
+    With a live observer attached the lab follows the duty cycle (Lab/duty.py): the next meeting
+    opens when the field phase ends and the team walks back to camp, not on a wall-clock timer.
+    With nothing observing, --interval is the timer, as before."""
     con = db.connect(args.db)
     llm = make_llm(args.llm)
     seed_content.seed(con)
@@ -61,15 +70,21 @@ def cmd_loop(args):
     while True:
         k += 1
         try:
-            _loop_cycle(con, llm, args, k)
+            duty.begin_meeting(con)
+            try:
+                _loop_cycle(con, llm, args, k)
+            finally:
+                duty.end_meeting(con)   # the team goes back out even if the meeting failed
         except KeyboardInterrupt:
             raise
         except Exception as ex:                    # noqa: BLE001
             # The always-on lab outlives a bad meeting: log, rest, reconvene.
             con.rollback()
             print(f"  [loop] cycle {k} failed ({type(ex).__name__}: {ex}); "
-                  f"reconvening in {args.interval:.0f}s")
-        time.sleep(args.interval)
+                  f"reconvening after the next field phase (or {args.interval:.0f}s)")
+        # Wait for the team to come back to camp; with nothing observing, for --interval.
+        if duty.wait_for_turn(con, args.interval) == "requested":
+            print("  [loop] the field team is at camp: opening the next meeting")
 
 
 def _loop_cycle(con, llm, args, k):
@@ -92,7 +107,8 @@ def _loop_cycle(con, llm, args, k):
             annex = datasci.annex(con, f"loop cycle {k}")
             rp, tp = report.generate(con, annex_lines=annex)
             print(f"lab report: {rp}\ntranscript: {tp}")
-        print(f"  [loop] cycle {k} done; next meeting in {args.interval:.0f}s")
+        print(f"  [loop] cycle {k} done; the team is back in the field "
+              f"(next meeting when it returns to camp, or in {args.interval:.0f}s with nothing observing)")
 
 
 def cmd_ingest(args):
@@ -174,7 +190,8 @@ def main():
 
     s = sub.add_parser("loop", help="always-on lab: meeting -> experiments -> interval, forever")
     s.add_argument("--interval", type=float, default=120,
-                   help="seconds between the end of one meeting and the next (default 120)")
+                   help="fallback seconds between meetings when nothing is observing (default 120); "
+                        "with a live observer the duty cycle decides (Lab/duty.py)")
     s.add_argument("--consolidate-every", type=int, default=4,
                    help="every Nth meeting is a generation boundary (0 = never)")
     s.add_argument("--llm", choices=["ollama", "mock", "claude", "openrouter"],
@@ -215,9 +232,9 @@ def main():
                    help="drive assigned organisms with the lab's population-management "
                         "doctrine (default: observe only)")
     s.add_argument("--embody", action="store_true",
-                   help="mode toggle: eight bodies (the seven voting scientists plus Vega) walk the arena as virtual "
-                        "bodies and mint witnessed-only evidence (default: plain "
-                        "instrument observer)")
+                   help="mode toggle: nine bodies — eight in the field (the voting field scientists plus "
+                        "Vega) minting witnessed-only evidence, and Humboldt the PI at camp; the team "
+                        "walks back to camp for every meeting (default: plain instrument observer)")
     s.set_defaults(fn=cmd_observe)
 
     args = ap.parse_args()
