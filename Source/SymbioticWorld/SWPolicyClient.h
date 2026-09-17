@@ -36,8 +36,16 @@ struct FSWPolicyServer
 	TArray<uint8> RecvBuf;           // bytes received but not yet consumed (partial lines)
 
 	// State flags for once-per-change logging.
-	bool bTimingOut = false;
 	bool bEverConnected = false;
+	// Back-off (Settings.PolicyTimeoutBackoffAfter / PolicyBackoffStartSec / PolicyBackoffMaxSec):
+	// a server that misses that many replies in a row is marked "not answering" and the sim stops
+	// waiting on it; it is probed again every BackoffSec (doubling to the cap) and restored the
+	// moment any reply lands. Wall clock only; nothing here reaches the simulation.
+	int32 ConsecutiveTimeouts = 0;
+	bool bNotAnswering = false;
+	double BackoffSec = 0.0;
+	double NextProbeTime = 0.0;      // wall-clock seconds (FPlatformTime)
+	double DownSince = 0.0;
 
 	// Stats (wall clock).
 	int32 Requests = 0;              // decide requests sent
@@ -93,6 +101,17 @@ public:
 	static int32 ParseServerList(const FString& Spec, TArray<FSWPolicyServerSpec>& Out);
 
 	void SetTimeoutMs(int32 InTimeoutMs) { TimeoutMs = FMath::Clamp(InTimeoutMs, 1, 60000); }
+	// Live back-off configuration (the manager pushes the settings once per frame, never in a substep).
+	void SetBackoff(int32 AfterTimeouts, float StartSec, float MaxSec)
+	{
+		BackoffAfter = FMath::Max(AfterTimeouts, 0);
+		BackoffStartSec = FMath::Clamp(StartSec, 0.05f, 600.f);
+		BackoffMaxSec = FMath::Clamp(MaxSec, BackoffStartSec, 3600.f);
+	}
+	// False while a server is marked not answering and its next probe is not due: the caller should
+	// not even build a request for it (the decide line is the other cost of a wedged server).
+	bool WantsRequest(int32 Idx) const;
+	bool IsAnswering(int32 Idx) const { return Servers.IsValidIndex(Idx) && !Servers[Idx].bNotAnswering; }
 	// Makes the server list exactly Desired (in that order). A server already present (same host:port,
 	// case-insensitive) keeps its socket, stats and reconnect timer and only takes the new species flags;
 	// a new one starts disconnected with an immediate connect attempt on the next Tick() (same path as
@@ -154,6 +173,9 @@ private:
 	uint32 ScientistStamp = 0;
 	double ScientistLastWall = 0.0;
 	int32 TimeoutMs = 200;
+	int32 BackoffAfter = 3;           // consecutive timeouts before a server is left alone (0 = never)
+	float BackoffStartSec = 1.0f;
+	float BackoffMaxSec = 10.0f;
 	FString HelloLine;
 	static constexpr double ReconnectSeconds = 5.0;
 	static constexpr double ReportSeconds = 10.0;
@@ -168,5 +190,8 @@ private:
 	// Handles non-"actions" messages (log lines). Returns true if the line was consumed.
 	bool HandleSideMessage(FSWPolicyServer& S, const TSharedPtr<FJsonObject>& Msg);
 	void DrainSideMessages(FSWPolicyServer& S);
+	// Back-off transitions, each logged exactly once.
+	void MarkNotAnswering(FSWPolicyServer& S, double Now);
+	void MarkAnswering(FSWPolicyServer& S, double Now);
 	static bool ParseAction(const TSharedPtr<class FJsonValue>& V, int32& OutIdx);
 };

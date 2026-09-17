@@ -43,11 +43,17 @@ def parse_res(spec):
 
 
 def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=None, no_logs=False, auto_select=False, cam=None, offscreen=False, stream=None,
-            policy=None, policy_timeout=None, policy_share=None, policy_file=None, control_file=None, res=DEFAULT_RES):
+            policy=None, policy_timeout=None, policy_share=None, policy_file=None, control_file=None, res=DEFAULT_RES,
+            no_console=False):
     before = {p.name for p in SAVED.iterdir()} if SAVED.exists() else set()
     exe = EDITOR if windowed else EDITOR_CMD
-    cmd = [str(exe), str(UPROJECT), "-game", "-log", "-unattended", "-nosound",
+    cmd = [str(exe), str(UPROJECT), "-game", "-unattended", "-nosound",
            f"-SWMode={mode}", f"-SWSeed={seed}", f"-SWDuration={duration}", f"-SWSpeed={speed}"]
+    # "-log" opens the engine's console window. It is second nature while developing, but it floats
+    # over everything and lands in a screen recording, so a take can leave it out; Saved/Logs is
+    # written either way.
+    if not no_console:
+        cmd.insert(3, "-log")
     if not windowed:
         cmd += ["-nullrhi", "-NoSplash", "-stdout", "-FullStdOutLogOutput"]
     else:
@@ -123,6 +129,8 @@ def main():
     ap.add_argument("--res", default=DEFAULT_RES, metavar="WxH",
                     help=f"window size for --windowed / --offscreen runs (default {DEFAULT_RES}); Game Bar records that window")
     ap.add_argument("--offscreen", action="store_true", help="windowed run without a visible window (-RenderOffScreen); use for scripted screenshots")
+    ap.add_argument("--no-console", action="store_true",
+                    help="omit -log, so the engine's console window never floats over a recorded take (Saved/Logs still written)")
     ap.add_argument("--stream", nargs="?", const="ws://127.0.0.1:8888", default=None, metavar="WS_URL",
                     help="Pixel Streaming: connect to a signalling server (default ws://127.0.0.1:8888, start it with Tools/start_stream_server.bat) so LAN browsers can watch and drive the sim")
     ap.add_argument("--policy", default=None, metavar="SPEC",
@@ -145,7 +153,7 @@ def main():
             produced += run_one(m.upper(), s, args.duration, args.speed, args.windowed, args.extra,
                                 args.set_spec, args.shot, args.no_logs, args.auto_select, args.cam, args.offscreen, args.stream,
                                 args.policy, args.policy_timeout, args.policy_share, args.policy_file, args.control_file,
-                                args.res)
+                                args.res, args.no_console)
     if args.analyze and produced:
         subprocess.run([sys.executable, str(ROOT / "Analysis/analyze_run.py"), *map(str, produced)], cwd=str(ROOT))
 

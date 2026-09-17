@@ -39,17 +39,20 @@ namespace
 	// Vector parameter of M_Mannequin (set by MI_Manny_01_New / MI_Quinn_01) that colours the body paint.
 	const FName PaintTintParam(TEXT("Paint Tint"));
 
-	// Team tints (body paint, jet ski hull and HUD name tag) so the eight scientists read apart at a
+	// Team tints (body paint, jet ski hull and HUD name tag) so the nine scientists read apart at a
 	// glance (no species colour: cyan is Lumen's, amber is Tecton's — the team gets its own hues).
-	const FColor TeamColors[8] = {
-		FColor(240, 240, 240),   // Vesper  - white
-		FColor(255, 140, 100),   // Bastion - coral
-		FColor(180, 255, 140),   // Mendel  - leaf
-		FColor(200, 160, 255),   // Ada     - violet
-		FColor(255, 220, 120),   // Fisher  - straw
-		FColor(255, 120, 170),   // Karla   - rose
-		FColor(140, 210, 255),   // Archie  - sky
-		FColor(160, 255, 230),   // Vega    - mint
+	// The first eight are the field roster, in the order the bridge reports them; the ninth is
+	// Humboldt, the PI, who holds the camp instead of going out (Lab/duty.py).
+	const FColor TeamColors[9] = {
+		FColor(240, 240, 240),   // Vesper   - white
+		FColor(255, 140, 100),   // Bastion  - coral
+		FColor(180, 255, 140),   // Mendel   - leaf
+		FColor(200, 160, 255),   // Ada      - violet
+		FColor(255, 220, 120),   // Fisher   - straw
+		FColor(255, 120, 170),   // Karla    - rose
+		FColor(140, 210, 255),   // Archie   - sky
+		FColor(160, 255, 230),   // Vega     - mint
+		FColor(255, 178, 60),    // Humboldt - ember (the PI at camp)
 	};
 
 	constexpr float BodyHeightUu = 180.f;         // Manny at scale 1: a 1.8 m person (1 uu = 1 cm, like the valley)
@@ -115,7 +118,7 @@ void ASWScientistAvatar::Init(ASWWorldManager* InManager, const FString& InName,
 {
 	Manager = InManager;
 	ScientistName = InName;
-	TagColor = FLinearColor(TeamColors[InIndex % 8]);
+	TagColor = FLinearColor(TeamColors[InIndex % 9]);
 
 	const int32 Variant = InIndex % 2;   // even = Manny, odd = Quinn
 	const uint32 Quiet = LOAD_NoWarn | LOAD_Quiet;   // misses are reported below in plain words

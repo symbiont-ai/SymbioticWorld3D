@@ -700,6 +700,9 @@ void ASWWorldManager::Tick(float DeltaSeconds)
 	RunDueScheduledCommands();
 	if (PolicyClient.HasServers())
 	{
+		// Live back-off configuration for a server that stops replying (docs/POLICY_API.md). Set here,
+		// between frames, so "set Settings.PolicyBackoffMaxSec=30" takes effect without a restart.
+		PolicyClient.SetBackoff(Settings.PolicyTimeoutBackoffAfter, Settings.PolicyBackoffStartSec, Settings.PolicyBackoffMaxSec);
 		PolicyClient.Tick();
 		// Bridge "log" side messages (docs/POLICY_API.md): kept for the SYMBIOTIC LAB panel. Text only,
 		// visual layer, nothing reaches an organism.
@@ -1246,6 +1249,7 @@ void ASWWorldManager::AssignPolicy(ASWAgent* A)
 void ASWWorldManager::InitPolicyServers()
 {
 	PolicyClient.SetTimeoutMs(Settings.PolicyTimeoutMs);
+	PolicyClient.SetBackoff(Settings.PolicyTimeoutBackoffAfter, Settings.PolicyBackoffStartSec, Settings.PolicyBackoffMaxSec);
 	LaunchPolicySpecs.Reset();
 	if (!Settings.PolicyServers.IsEmpty())
 	{
@@ -2016,7 +2020,10 @@ void ASWWorldManager::PolicyExchange()
 	bool bAny = false;
 	for (int32 i = 0; i < NS; ++i)
 	{
-		if (Due[i].Num() == 0 || !PolicyClient.GetServer(i).bConnected) continue;
+		// WantsRequest is false while a server is marked not answering and its next probe is not due:
+		// building the decide line is the other cost of a wedged server, so skip that too. The
+		// organisms then resolve with no external action, exactly as a timeout would have left them.
+		if (Due[i].Num() == 0 || !PolicyClient.WantsRequest(i)) continue;
 		Lines[i] = BuildDecideLine(i, Due[i]);
 		bAny = true;
 	}
