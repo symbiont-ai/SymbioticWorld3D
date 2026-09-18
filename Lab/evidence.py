@@ -76,6 +76,68 @@ def compute_run_stats(run):
                  _prov(run, f"share of {sp} deaths caused by predation")),
             ]
 
+    # Tail and performance statistics on the agent snapshots.
+    #
+    # A trait whose selection is one-sided is invisible to a mean. Measured on 2026-09-18 over 16
+    # runs and 6585 Lumen: epsilon below 0.15 costs 12.6% of reproduction, epsilon above it is
+    # flat, and the population mean therefore wanders by one mutation step between seeds (caveat
+    # H-028). The tenth percentile and the low-tail share carry what the mean cannot.
+    #
+    # mean_reward is the bandit's own performance per decision. It is the one measure here that is
+    # NOT downstream of reproduction: energy statistics invert the fitness ordering, because a
+    # frequent reproducer is repeatedly knocked down by ReproCost and because the population cap
+    # blocks reproduction at the top of a cycle, leaving rich agents queued above the threshold.
+    ag = run.get("agents")
+    if ag is not None and not ag.empty and "epsilon" in ag.columns:
+        t_last = ag["sim_time"].max()
+        final = ag[ag["sim_time"] == t_last]
+        for sp in ("Lumen", "Tecton"):
+            s_ = sp.lower()
+            g = final[final["species"] == sp]
+            if len(g) >= 5:
+                out += [
+                    (f"{s_}_end_p10_epsilon", float(g["epsilon"].quantile(0.10)),
+                     _prov(run, f"{sp} 10th-percentile epsilon at end, n={len(g)}")),
+                    (f"{s_}_end_p10_alpha", float(g["alpha"].quantile(0.10)),
+                     _prov(run, f"{sp} 10th-percentile alpha at end, n={len(g)}")),
+                    (f"{s_}_end_frac_eps_low", float((g["epsilon"] < 0.15).mean()),
+                     _prov(run, f"share of {sp} below epsilon 0.15 at end, n={len(g)}")),
+                ]
+            m = ag[(ag["species"] == sp) & (ag["age"] > 20)]
+            if "reward" in m.columns and not m.empty:
+                out.append((f"{s_}_mean_reward", float(m["reward"].mean()),
+                            _prov(run, f"{sp} mean reward per decision, age>20, "
+                                       f"{len(m)} snapshots")))
+
+    # The selection gradient: within ONE run, does an individual's own genome predict how many
+    # offspring it leaves? This is the statistic an "is X under selection" question actually needs,
+    # and the only one here that survives a change in population size - a two-arm contrast of means
+    # cannot separate selection from drift, and mode N runs at a third of mode C's population, so
+    # every cross-arm mean and every per-decision average is confounded by density.
+    # Its null is exact rather than assumed: in neutral mode the manager picks parents at random,
+    # so the gradient is zero by construction.
+    bb = run.get("births")
+    if bb is not None and not bb.empty and "child_epsilon" in bb.columns:
+        for sp in ("Lumen", "Tecton"):
+            b = bb[bb["species"] == sp] if "species" in bb.columns else bb
+            if len(b) < 50:
+                continue
+            early = b[b["sim_time"] <= b["sim_time"].max() * 0.6]   # a full life in which to breed
+            if len(early) < 30:
+                continue
+            counts = b.groupby("parent_id").size()
+            kids = early.assign(offspring=early["child_id"].map(counts).fillna(0.0))
+            s_ = sp.lower()
+            for param in ("epsilon", "alpha", "social"):
+                col = f"child_{param}"
+                if col not in kids.columns:
+                    continue
+                r = kids[col].corr(kids["offspring"])
+                if r == r:      # not NaN
+                    out.append((f"{s_}_selection_r_{param}", float(r),
+                                _prov(run, f"{sp} correlation of inherited {param} with offspring "
+                                           f"count, n={len(kids)} born in the first 60%")))
+
     ll = analyze_run.lifetime_learning(run["agents"])
     if not ll.empty:
         for sp in ("Lumen", "Tecton"):

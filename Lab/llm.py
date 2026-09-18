@@ -363,6 +363,27 @@ DESIGN_TEMPLATES = [
          seeds=[1, 2, 3, 4, 5], duration=1800.0,
          why="The open question asks for seeds 1-5 at 1800 s, so the protocol asks for exactly "
              "that: a regen-4 arm against the regen-6 baseline."),
+    dict(name="is exploration under selection at all",
+         when=("under selection", "exploration is selected", "epsilon tail", "low-epsilon",
+               "selection on exploration"),
+         arms=("C", "", "N", ""),
+         metric="lumen_selection_r_epsilon", direction="treatment_higher", threshold=0.05,
+         seeds=[1, 2, 3, 4, 5, 6, 7, 8],
+         why="A mean cannot answer this. Selection on epsilon is one-sided (below 0.15 it costs "
+             "12.6% of reproduction, above it the gradient is flat), so the population mean is "
+             "drift-dominated, and mode N runs at a third of mode C's population, which makes "
+             "every cross-arm mean a comparison of drift strengths. The within-run gradient - does "
+             "an individual's own epsilon predict its offspring count - is density-free and its "
+             "null is exact, because neutral mode picks parents at random. Measured 2026-09-18: "
+             "C +0.0749 vs N -0.0501, 3.1 SE over 8 seeds."),
+    dict(name="selection on the learning rate",
+         when=("learning rate under selection", "alpha under selection", "selection on alpha"),
+         arms=("C", "", "N", ""),
+         metric="lumen_selection_r_alpha", direction="treatment_higher", threshold=0.05,
+         seeds=[1, 2, 3, 4, 5, 6, 7, 8],
+         why="The same instrument on alpha: C +0.0783 vs N -0.0159, 2.9 SE. Unlike epsilon, low "
+             "alpha also costs survival (starvation 29.8% against 23.2%, death at 114.8 s against "
+             "124.3 s), so this one should show in mortality as well."),
     dict(name="selection within a run",
          when=("selection", "turnover", "drift", "generation"),
          arms=("C", "", "N", ""),
