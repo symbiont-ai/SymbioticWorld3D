@@ -57,3 +57,13 @@ Content/Characters/Mannequins/
 Lab/saves/
 Lab/lab.sqlite-shm
 Lab/lab.sqlite-wal
+
+# Secrets: the lab reads OPENROUTER_API_KEY (and any future key) from the environment,
+# never from a file in the repo. These patterns exist so a local .env cannot be committed
+# by accident.
+.env
+.env.*
+*.env
+*.pem
+*.key
+secrets.json
