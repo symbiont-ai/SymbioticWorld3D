@@ -12,8 +12,11 @@ work done the day before.
 - [x] Empty `/Game/Maps/Valley` level exists and is the default map
 - [x] Windowed `-game` run shows floor, sun, sky, fog, cylinders (patches), spheres
       (agents) moving; HUD draws; auto-select shows the inspector (self-screenshots)
-- [ ] **Editor opens** and Play-in-Editor works; LMB selects; Tab cycles; 1/2/3 change
-      speed; P drought; M mode — needs a human at the keyboard (not verifiable headless)
+- [x] **Editor opens** and Play-in-Editor works; LMB selects; Tab cycles; 1/2/3 change
+      speed; P drought; M mode — confirmed at the keyboard by the project owner on 2026-09-18,
+      the one item in this list that no headless run or recording could verify. The editor log
+      of those sessions shows four Play-in-Editor starts and zero warnings or errors from the
+      simulation code; editor startup logs 0 project warnings since commit 89483e2.
 - [x] Headless run works: `python Tools/run_sim.py --mode B --seed 42 --duration 300`
       writes `Saved/SymbioticWorld/<run_id>/*.csv` and exits on its own
 - [x] `Analysis/analyze_run.py` reports lifetime Q drift ~0 in mode A, > 0 in mode B
