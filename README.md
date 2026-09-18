@@ -1,6 +1,6 @@
 # Symbiotic World
 
-Sundai Hack 139 entry. A persistent 3D ecosystem in Unreal Engine 5.7 with two
+[Sundai Hack 139](https://www.sundai.club/events/boston/wolfram-hack?tab=projects) entry. A persistent 3D ecosystem in Unreal Engine 5.7 with two
 populations of primitive learning agents, **Lumen** (fast cyan scouts) and
 **Tecton** (slow amber ecosystem engineers). Every individual learns online
 during its lifetime with a tabular contextual bandit; descendants inherit
