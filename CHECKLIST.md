@@ -89,7 +89,9 @@ Open work found in the 2026-09-15 status review, fork check and Lab test prep.
       Exit: a run of the docket queues >=8 distinct protocols, no two queued/done experiments share
       arms+metric+seeds+duration, H-005..H-007 hold experiments, and the mode-A control answers OQ-VC-3.
 
-- [ ] HUD: with a policy server connected, the title card's "ext N" suffix runs into the GENERATION card subtitle.
+- [x] HUD (done 2026-09-18): the "ext N/M" suffix has its own line and the title panel grows to hold it, and
+      the field team's name tags are decluttered upward instead of piling into one pixel at camp. Verified at
+      1600x900 with nine avatars and a policy bridge attached.
 - [x] Repo hygiene (done 2026-09-18): every worktree is clean and `main` is at `origin/main`. Nothing was
       discarded - main's 21 files of creature/avatar drafts are preserved on `archive/creature-drafts-2026-09-18`
       (SWCreatureMeshComponent is 75 lines there against 79 shipped), goofy-aryabhata's SpawnPatches fix was
