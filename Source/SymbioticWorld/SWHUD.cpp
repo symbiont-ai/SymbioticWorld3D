@@ -213,23 +213,32 @@ void ASWHUD::DrawCaption(const ASWWorldManager& M)
 void ASWHUD::DrawTitle(const ASWWorldManager& M)
 {
 	const FSWRunSettings& S = M.GetSettings();
-	DrawPanel(20.f, 14.f, 330.f, 70.f, ColPanel, &ColLumen, 28.f);
+	// The run line is already close to the panel's 330 px, so the external-policy and control-file
+	// suffixes get their own line and the panel grows to hold it: appended, they ran out of the
+	// panel and underneath the GENERATION stat card.
+	const bool bHasSuffix = M.HasPolicyServers() || M.GetControlCommandsExecuted() > 0;
+	DrawPanel(20.f, 14.f, 330.f, bHasSuffix ? 88.f : 70.f, ColPanel, &ColLumen, 28.f);
 	float Y = DrawLine(30.f, 20.f, TEXT("SYMBIOTIC WORLD"), ColText, 1.45f);
 	Y = DrawLine(30.f, Y - 2.f, TEXT("Evolution doesn't stop at deployment."), ColDim);
 	FString Line = FString::Printf(TEXT("mode %s   seed %d   t %.0f s   %.0fx   %.1f ms"),
 		SWModeName(S.Mode), S.Seed, M.GetSimTime(), M.GetTimeScale(), M.GetLastStepMs());
-	if (M.HasPolicyServers())
+	// Predation is NOT appended here either: it gets its own stat card.
+	Y = DrawLine(30.f, Y + 2.f, Line, ColDim);
+	if (bHasSuffix)
 	{
-		// external organisms / total (docs/POLICY_API.md); the servers' connection state is in the log
-		Line += FString::Printf(TEXT("   ext %d/%d"), M.GetExternalCount(), M.GetLivingCount());
+		FString Suffix;
+		if (M.HasPolicyServers())
+		{
+			// external organisms / total (docs/POLICY_API.md); connection state is in the log
+			Suffix = FString::Printf(TEXT("ext %d/%d"), M.GetExternalCount(), M.GetLivingCount());
+		}
+		if (M.GetControlCommandsExecuted() > 0)
+		{
+			// at least one control-file command ran this run (docs/CONTROL_FILE.md)
+			Suffix += Suffix.IsEmpty() ? TEXT("ctrl") : TEXT("   ctrl");
+		}
+		DrawLine(30.f, Y, Suffix, ColDim);
 	}
-	if (M.GetControlCommandsExecuted() > 0)
-	{
-		Line += TEXT("   ctrl");   // at least one control-file command was executed this run (docs/CONTROL_FILE.md)
-	}
-	// Predation is NOT appended here: this line is already close to the 330 px panel and
-	// the overflow ran underneath the GENERATION stat card. It gets its own card instead.
-	DrawLine(30.f, Y + 2.f, Line, ColDim);
 }
 
 void ASWHUD::DrawStatCards(const ASWWorldManager& M)
@@ -534,6 +543,8 @@ void ASWHUD::DrawScientistTags(const ASWWorldManager& M)
 	// field team is named in screen space: the scientist's colour, a chevron pointing down at the head.
 	if (!Canvas) return;
 	const float Margin = 40.f;
+	struct FTagLabel { FVector2D At; FString Name; FLinearColor C; };
+	TArray<FTagLabel> Labels;
 	for (const ASWScientistAvatar* A : M.GetScientistAvatars())
 	{
 		if (!IsValid(A) || A->IsHidden()) continue;   // hidden = stale bridge
@@ -546,8 +557,32 @@ void ASWHUD::DrawScientistTags(const ASWWorldManager& M)
 		L1.LineThickness = 2.f; L1.SetColor(C); Canvas->DrawItem(L1);
 		FCanvasLineItem L2(FVector2D(Screen.X, Screen.Y), FVector2D(Screen.X + S, Screen.Y - S));
 		L2.LineThickness = 2.f; L2.SetColor(C); Canvas->DrawItem(L2);
-		const FString& Name = A->GetScientistName();
-		DrawLine(Screen.X - 0.5f * TextWidth(Name), Screen.Y - S - LineHeight - 2.f, Name, C);
+		// The label is placed later: at camp the whole team stands in one spot, every tag projects
+		// to nearly the same pixel, and the names drew on top of each other into an unreadable pile.
+		Labels.Add({ FVector2D(Screen.X, Screen.Y - S - LineHeight - 2.f), A->GetScientistName(), C });
+	}
+
+	// Greedy declutter: nearest-to-camera (lowest on screen) keeps its slot, anything that would
+	// overlap an already-placed label is stacked upward one line at a time.
+	Labels.Sort([](const FTagLabel& L, const FTagLabel& R) { return L.At.Y > R.At.Y; });
+	struct FRect { float X0, Y0, X1, Y1; };
+	TArray<FRect> Taken;
+	for (const FTagLabel& L : Labels)
+	{
+		const float W = TextWidth(L.Name);
+		FVector2D P(L.At.X - 0.5f * W, L.At.Y);
+		for (int32 Guard = 0; Guard < 12; ++Guard)
+		{
+			const FRect Box{ P.X - 2.f, P.Y - 1.f, P.X + W + 2.f, P.Y + LineHeight + 1.f };
+			bool bOverlaps = false;
+			for (const FRect& Q : Taken)
+			{
+				if (Box.X0 < Q.X1 && Q.X0 < Box.X1 && Box.Y0 < Q.Y1 && Q.Y0 < Box.Y1) { bOverlaps = true; break; }
+			}
+			if (!bOverlaps) { Taken.Add(Box); break; }
+			P.Y -= LineHeight + 2.f;
+		}
+		DrawLine(P.X, P.Y, L.Name, L.C);
 	}
 }
 

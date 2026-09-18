@@ -1,9 +1,14 @@
 # Symbiotic Lab — the scientist team
 
-Implements `Scientist_Team_PRD.md`: a team of seven scientist agents that
+![The Symbiotic Lab field team at camp, with each scientist's role](../docs/images/lab_team.png)
+
+Implements `Scientist_Team_PRD.md`: a team of nine scientist agents that
 observe runs, argue over what the data means, turn disagreements into
 preregistered experiments run through the repo's own tools, and accumulate a
-registry of validated knowledge that persists across sessions.
+registry of validated knowledge that persists across sessions. Eight go into
+the field; Humboldt, the PI, holds the camp, and Vega is non-voting. The photo
+is not a mock-up: those are the avatars the sim draws for the team when a
+`observe --embody` bridge is connected, standing at camp during a meeting.
 
 The harness does the science, the model does the interpretation. Everything
 consequential is enforced in code, never by the model's judgment:
