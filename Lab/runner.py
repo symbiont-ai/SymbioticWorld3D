@@ -7,6 +7,7 @@ On a machine without the UE engine (this lab also runs on the Mac that only
 holds the textbook), experiments stay queued as 'awaiting-sim' and the lab
 report lists them for the sim machine to execute.
 """
+import functools
 import json
 import sys
 
@@ -30,6 +31,52 @@ METRICS = [
     "lumen_predation_frac", "tecton_predation_frac",
     "drought_fraction",
 ]
+
+
+# -SWSet scopes the sim understands (SWWorldManager::ApplySetSpec), and the struct each one
+# writes into. A field that is not in that struct is WARNED ABOUT AND IGNORED by the sim, which
+# would leave an experiment's two arms identical while its verdict was recorded as real -- so a
+# protocol naming one is rejected in code before any sim time is spent on it.
+SET_SCOPES = {"settings": "FSWRunSettings", "lumen": "FSWSpeciesParams",
+              "tecton": "FSWSpeciesParams", "genome": "FSWGenome", "look": "FSWLookSettings"}
+
+
+@functools.lru_cache(maxsize=1)
+def _struct_fields():
+    """Field name -> owning struct, read from the shared contract SWTypes.h itself."""
+    import re
+    text = (config.ROOT / "Source" / "SymbioticWorld" / "SWTypes.h").read_text(
+        encoding="utf-8", errors="ignore")
+    fields = {}
+    struct = None
+    for line in text.splitlines():
+        m = re.match(r"\s*struct\s+(?:\w+\s+)?(FSW\w+)", line)
+        if m:
+            struct = m.group(1)
+        if struct and "UPROPERTY" in line:
+            decl = line.split(")", 1)[-1].split("//")[0].split("=")[0].strip().rstrip(";").strip()
+            parts = decl.split()
+            if len(parts) >= 2:
+                fields.setdefault(struct, set()).add(parts[-1])
+    return fields
+
+
+def unknown_set_fields(spec):
+    """The `Scope.Field=value` items of a -SWSet spec that the sim would ignore."""
+    bad = []
+    for item in (spec or "").split(";"):
+        item = item.strip()
+        if not item:
+            continue
+        key = item.split("=", 1)[0].strip()
+        scope, _, name = key.rpartition(".")
+        scope = (scope or "Settings").lower()
+        if scope not in SET_SCOPES:
+            bad.append(f"{key} (no such scope)")
+            continue
+        if name not in _struct_fields().get(SET_SCOPES[scope], set()):
+            bad.append(f"{key} (no such field in SWTypes.h)")
+    return bad
 
 
 def engine_available():

@@ -137,7 +137,9 @@ def generate(con, session_label=None, annex_lines=None):
     if annex_lines:
         L += annex_lines
 
-    report_path.write_text("\n".join(L))
+    # A scientist writes what a scientist writes: this line died on a model's delta
+    # sign because Windows text mode defaults to cp1252. The lab is UTF-8 end to end.
+    report_path.write_text("\n".join(L), encoding="utf-8")
 
     # --- transcript ---
     T = [f"# Symbiotic Lab — transcript {stamp}", ""]
@@ -159,5 +161,5 @@ def generate(con, session_label=None, annex_lines=None):
         T.append(f"- m{s['meeting_id']} {s['hypothesis_id']} {s['agent']}: "
                  f"**{s['stance']}** ({s['confidence']:.2f}) — {s['reason']} "
                  f"[{', '.join(json.loads(s['evidence_ids']))}]{flag}")
-    transcript_path.write_text("\n".join(T))
+    transcript_path.write_text("\n".join(T), encoding="utf-8")
     return report_path, transcript_path

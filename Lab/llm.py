@@ -95,42 +95,99 @@ class OllamaLLM:
 
 
 class ClaudeCLILLM:
-    """Generated (non-scripted) turns through the local `claude` CLI in print
-    mode. Nothing is hardcoded: each profile is a system prompt, the schema is
-    stated in the prompt, and the same code-side validation applies (invalid
-    citations dropped, protocols clamped) — never trust the model. Model via
-    LAB_CLAUDE_MODEL (default haiku for speed/cost)."""
+    """Generated (non-scripted) turns through the local `claude` CLI in print mode.
+
+    Nothing about a scientist is hardcoded: the profile is the CLI's --system-prompt and the
+    response shape is the round's entry in SCHEMAS, handed to --json-schema so the CLI itself
+    enforces it. The same code-side validation still runs afterwards (invalid citations
+    dropped, protocols clamped, predictions coerced) -- never trust the model.
+
+    The call is deliberately hermetic, because this CLI is also what runs the repo's coding
+    agents and a scientist must not inherit their powers: --tools "" (no tool exists for a
+    meeting turn), --strict-mcp-config (no MCP server from the user's settings), and
+    --no-session-persistence (a turn is not a resumable session). The host's CLAUDE_CODE_*
+    variables are stripped from the child environment for the same reason: a lab run started
+    from inside a Claude Code session must not pick up that session's configuration.
+
+    The prompt goes on stdin, not argv: an evidence round's prompt carries the whole findings
+    list and would overrun the Windows command-line limit as an argument.
+
+    Model: the profile's `claude_model:`, else LAB_CLAUDE_MODEL, else Haiku for speed and
+    cost (Fisher, Karla and Humboldt carry a stronger one, as they do for OpenRouter).
+    LAB_CLAUDE_FALLBACK_MODEL adds --fallback-model; LAB_CLAUDE_TIMEOUT overrides the 300 s
+    per-turn timeout.
+    """
+
+    DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
     def __init__(self, model=None):
         import os
         import shutil
         self.exe = shutil.which("claude")
-        self.model = model or os.environ.get("LAB_CLAUDE_MODEL",
-                                             "claude-haiku-4-5-20251001")
+        self.model = model or os.environ.get("LAB_CLAUDE_MODEL", self.DEFAULT_MODEL)
+        self.fallback = os.environ.get("LAB_CLAUDE_FALLBACK_MODEL", "")
+        self.timeout = float(os.environ.get("LAB_CLAUDE_TIMEOUT", "300"))
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE_CODE_")}
+        self.cost_usd = 0.0        # what the session has spent, reported when it ends
+        self.calls = 0
 
     def available(self):
         return bool(self.exe)
 
-    def turn(self, profile, kind, prompt, ctx=None):
+    def model_for(self, profile):
+        return getattr(profile, "claude_model", "") or self.model
+
+    def _run(self, profile, kind, prompt):
         import subprocess
-        schema = json.dumps(SCHEMAS[kind])
-        full = (profile.system_prompt() + "\n\n" + prompt +
-                "\n\nRespond with ONLY a JSON object matching this JSON schema "
-                "(no prose, no code fences):\n" + schema)
+        cmd = [self.exe, "-p",
+               "--model", self.model_for(profile),
+               "--system-prompt", profile.system_prompt(),
+               "--json-schema", json.dumps(SCHEMAS[kind]),
+               "--output-format", "json",
+               "--tools", "",
+               "--strict-mcp-config",
+               "--no-session-persistence"]
+        if self.fallback:
+            cmd += ["--fallback-model", self.fallback]
+        # encoding is not optional here: the CLI emits UTF-8, and Windows text mode would
+        # decode it as cp1252, turning every em dash in a scientist's reasoning into mojibake
+        # on its way into the lab database.
+        p = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace",
+                           timeout=self.timeout, env=self.env)
+        if p.returncode != 0:
+            raise RuntimeError(f"claude CLI exited {p.returncode} for {kind}: "
+                               f"{(p.stderr or p.stdout).strip()[:300]}")
+        return p.stdout
+
+    def turn(self, profile, kind, prompt, ctx=None):
+        nudge = ("\n\nYour previous reply was not a JSON object matching the schema. "
+                 "Reply with that object and nothing else.")
+        last = ""
         for attempt in range(2):
-            out = subprocess.run(
-                [self.exe, "-p", full, "--model", self.model],
-                capture_output=True, text=True, timeout=300).stdout.strip()
-            if out.startswith("```"):
-                out = out.strip("`\n")
-                out = out[out.find("{"):]
+            raw = self._run(profile, kind, prompt if attempt == 0 else prompt + nudge)
             try:
-                start, end = out.index("{"), out.rindex("}") + 1
-                return json.loads(out[start:end])
-            except (ValueError, json.JSONDecodeError):
-                if attempt:
-                    raise RuntimeError(
-                        f"claude CLI returned no parseable JSON for {kind}: {out[:200]}")
+                envelope = json.loads(raw)
+            except json.JSONDecodeError:
+                last = raw.strip()[:300]
+                continue
+            self.calls += 1
+            self.cost_usd += float(envelope.get("total_cost_usd") or 0.0)
+            if envelope.get("is_error"):
+                last = str(envelope.get("result"))[:300]
+                continue
+            body = envelope.get("result", "")
+            if isinstance(body, dict):
+                return body
+            try:
+                return json.loads(body)
+            except (TypeError, json.JSONDecodeError):
+                try:                       # a stray sentence around the object
+                    text = str(body)
+                    return json.loads(text[text.index("{"):text.rindex("}") + 1])
+                except (ValueError, json.JSONDecodeError):
+                    last = str(body).strip()[:300]
+        raise RuntimeError(f"claude CLI returned no schema-valid JSON for {kind}: {last}")
 
 
 class OpenRouterLLM:

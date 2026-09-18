@@ -130,7 +130,7 @@ def make_handler(db_path):
                         self._send(404, b'{"error": "no such save"}',
                                    "application/json")
                         return
-                    d = json.loads(f.read_text())
+                    d = json.loads(f.read_text(encoding="utf-8"))
                     before = con.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
                     for r in d.get("runs", []):
                         con.execute("INSERT OR IGNORE INTO runs VALUES(?,?,?,?,?,?)",
@@ -167,7 +167,7 @@ def make_handler(db_path):
                              + (f"_{name}" if name else "") + ".json")
                     (sdir / fname).write_text(json.dumps(
                         {"name": name, "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                         "runs": runs, "evidence": evid}, indent=1))
+                         "runs": runs, "evidence": evid}, indent=1), encoding="utf-8")
                     out = {"file": f"Lab/saves/{fname}",
                            "evidence": len(evid), "runs": len(runs)}
                 elif path.endswith("/reset"):

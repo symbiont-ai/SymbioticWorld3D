@@ -20,6 +20,7 @@ class Profile:
         self.domains = d.get("domains", [])
         self.temperature = float(d.get("temperature", 0.7))
         self.model = d.get("model", "")   # per-scientist model id (OpenRouter backend)
+        self.claude_model = d.get("claude_model", "")   # same, for the claude CLI backend
         self.veto_rights = bool(d.get("veto_rights", False))
         self.non_voting = bool(d.get("non_voting", False))
         self.priors = d.get("priors", [])
@@ -51,7 +52,7 @@ def load_profiles(profile_dir=None, con=None):
     d = Path(profile_dir) if profile_dir else config.PROFILE_DIR
     out = {}
     for p in sorted(d.glob("*.yaml")):
-        prof = Profile(yaml.safe_load(p.read_text()))
+        prof = Profile(yaml.safe_load(p.read_text(encoding="utf-8")))
         out[prof.name] = prof
     missing = [n for n in TURN_ORDER if n not in out]
     if missing:

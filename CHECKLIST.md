@@ -20,7 +20,7 @@ work done the day before.
 - [x] 3 seeds × {C, N} run; comparison printed (selection vs drift) — even if
       not yet significant, the pipeline works
 - [x] Balance pass: population does not crash to 0 or pin at cap within 600 s in C
-- [ ] README build steps verified from a clean `git clone`
+- [x] README build steps verified from a clean `git clone`
 - [x] Manager Loop: `.claude/agents/implementer.md`, `.claude/agents/tester.md`, `/phase` skill
 - [x] Mode N produces births (founder age stagger); determinism: same seed → identical population.csv
 
@@ -58,12 +58,12 @@ Open work found in the 2026-09-15 status review, fork check and Lab test prep.
 - [x] **Humboldt vs the field team**: after the merge the roster is nine; check `Lab/embodiment.py` routing, the
       sim's avatar cap and the "eight" headcount strings. Exit: `observe --embody` shows Humboldt as a body, or
       his exclusion is deliberate and documented.
-- [ ] **Harden the Claude CLI backend** (`Lab/llm.py` `ClaudeCLILLM`): profile as `--system-prompt`, `--tools ""`,
+- [x] **Harden the Claude CLI backend** (`Lab/llm.py` `ClaudeCLILLM`): profile as `--system-prompt`, `--tools ""`,
       `--strict-mcp-config`, `--no-session-persistence`, `--json-schema` + `--output-format json`, prompt via
       stdin (Windows argv limit), strip the host `CLAUDE_CODE_*` env, current model ids (`claude-opus-5`,
       `claude-sonnet-5`, `claude-haiku-4-5`, no date suffix), per-scientist `claude_model:` (Fisher, Karla,
       Humboldt on the stronger model). Exit: one probe per response kind returns schema-valid JSON; mock tests pass.
-- [ ] **Lab test on Claude models**: `session --llm claude --meetings 1` with `LAB_TURN_PACE=0` (model choice
+- [x] **Lab test on Claude models**: `session --llm claude --meetings 1` with `LAB_TURN_PACE=0` (model choice
       open). Exit: the designed experiment runs headless, verdict + Brier scores + report are written.
 - [x] **Demo recording (block 8, revived 2026-09-17)**: scripted takes instead of the never-built `-SWDemo` rail.
       Control-file additions — `at=<sim_time> <command>` (any command at an exact sim time, pending list cleared on

@@ -51,6 +51,9 @@ def cmd_session(args):
     label = None
     annex = datasci.annex(con, label or "session")   # Vega: report-only, non-voting
     rp, tp = report.generate(con, annex_lines=annex)
+    spent = getattr(llm, "cost_usd", 0.0)
+    if spent:                      # hosted backends: say what the meeting cost
+        print(f"\nmodel spend: ${spent:.2f} over {getattr(llm, 'calls', 0)} calls")
     print(f"\nlab report: {rp}\ntranscript: {tp}")
 
 
@@ -142,6 +145,11 @@ def cmd_report(args):
 
 def cmd_textbook(args):
     con = db.connect(args.db)
+    # The textbook is meant to have day-one content (PRD 5, "no cold start"), but seeding
+    # happened only inside a session: on a fresh clone the first `textbook` printed an empty
+    # object, which reads as "this lab knows nothing" rather than "this lab has not met yet".
+    # seed() is idempotent, and silent here so the command still emits only JSON.
+    seed_content.seed(con, log=lambda *a, **k: None)
     print(json.dumps(memory.textbook(con), indent=2))
 
 

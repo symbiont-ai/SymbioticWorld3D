@@ -20,7 +20,7 @@ import time
 
 from . import config, conservation, db, evidence, memory, scorer
 from .profiles import OBSERVERS, TURN_ORDER
-from .runner import METRICS
+from .runner import METRICS, unknown_set_fields
 
 
 class MeetingRunner:
@@ -355,10 +355,13 @@ class MeetingRunner:
             "metric": raw.get("metric", ""),
             "threshold": abs(float(raw.get("threshold", 0.01))) or 0.01,
             "rationale": raw.get("rationale", ""),
-            # preregistered direction: the docketed crux wins; else Fisher's call
-            "direction_if_claim_true": (crux or {}).get(
-                "direction_if_claim_true",
-                raw.get("direction_if_claim_true", "treatment_higher")),
+            # Preregistered direction: the docketed crux wins, but ONLY for the crux's own
+            # metric. X-036 substituted lumen_end_n for a crux written about lumen_min_n (caveat
+            # H-025 rules min_n out for a late-run claim) and inherited the crux's direction
+            # anyway, so a result six of seven scientists correctly predicted was recorded as
+            # `opposite` and refuted the card. Karla flagged the mismatch in review; the veto
+            # gate is not for this, so it has to be right in code.
+            "direction_if_claim_true": raw.get("direction_if_claim_true", "treatment_higher"),
         }
         if proto["direction_if_claim_true"] not in ("treatment_higher", "treatment_lower"):
             proto["direction_if_claim_true"] = "treatment_higher"
@@ -366,6 +369,8 @@ class MeetingRunner:
             return None, "invalid mode"
         if len(proto["seeds"]) < 2:
             proto["seeds"] = [1, 2]
+        if crux and crux.get("metric") == proto.get("metric") and                 crux.get("direction_if_claim_true"):
+            proto["direction_if_claim_true"] = crux["direction_if_claim_true"]
         if proto["metric"] not in METRICS:
             if crux and crux.get("metric") in METRICS:
                 proto["metric"] = crux["metric"]
@@ -374,6 +379,12 @@ class MeetingRunner:
         if (proto["intervention_mode"] == proto["control_mode"]
                 and proto["intervention_set"] == proto["control_set"]):
             return None, "intervention and control arms identical"
+        # A -SWSet field the sim does not have is only a warning in its log: the run happens
+        # anyway, with that arm left at its default. An experiment like that has two identical
+        # arms while reporting a real verdict, so it must never reach the runner.
+        bad = unknown_set_fields(proto["intervention_set"]) + unknown_set_fields(proto["control_set"])
+        if bad:
+            return None, "unknown -SWSet field(s): " + ", ".join(bad)
         return proto, None
 
     MAX_EXPERIMENTS_PER_CARD = 2
@@ -422,7 +433,18 @@ class MeetingRunner:
         db.log_turn(self.con, mid, "DESIGN", "Fisher", raw)
         proto, err = self._validate_protocol(raw, crux)
         if err:
+            # One corrective attempt: a generated protocol usually fails on a knob the model
+            # invented, and naming the offending field is enough to get a runnable draft.
             self.log(f"  [design] Fisher's protocol rejected in code: {err}")
+            raw = self._turn("Fisher", "protocol", prompt +
+                             f"\n\nYour first draft was rejected in code: {err}. Every -SWSet "
+                             f"field must exist in Source/SymbioticWorld/SWTypes.h under the "
+                             f"scope it is written with. Draft the protocol again.",
+                             {"claim": card["claim"], "crux": crux or {}})
+            db.log_turn(self.con, mid, "DESIGN", "Fisher", raw)
+            proto, err = self._validate_protocol(raw, crux)
+        if err:
+            self.log(f"  [design] Fisher's second draft also rejected in code: {err}")
             return None
 
         twin = self._identical_experiment(proto)
