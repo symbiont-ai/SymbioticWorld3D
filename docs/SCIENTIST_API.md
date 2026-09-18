@@ -123,7 +123,8 @@ the latest `population.csv` row: `n`, `mean_alpha`, `sd_alpha`, `mean_epsilon`,
 `sd_epsilon`, `mean_social`, `sd_social`, `mean_env_effect`, `sd_env_effect`,
 `mean_generation`, `max_generation`, `births`, `deaths`, `resource_A`,
 `resource_B`, `drought_state`, `trace_X_mean`, `trace_Y_mean`, `ext_decisions`,
-`ext_fallbacks`. Also the current text of `Saved/policy_servers.txt`
+`ext_fallbacks`, `river_crossings`, `mean_river_dist`, `frac_in_water`, `active_bank`,
+`resource_A_pos`, `resource_A_neg` (the last six only in runs logged since 2026-09-18). Also the current text of `Saved/policy_servers.txt`
 (`policy_servers_txt`) and `Saved/control.txt` (`control_txt`, `null` when
 absent), `commands_executed` (the last 10 rows of that run's `commands.csv`
 when it has one: what the sim actually did with the control lines), and

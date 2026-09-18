@@ -181,8 +181,16 @@ def ingest_run(con, run_dir):
     if con.execute("SELECT 1 FROM runs WHERE run_id=?", (rid,)).fetchone():
         return []
     sim_end = float(run["population"]["sim_time"].max()) if not run["population"].empty else 0.0
+    mode = run["mode"]
+    pop = run["population"]
+    # A bank-cycle run (Settings.bBankCycle, population.csv active_bank != 0 once its warm-up ends) is another
+    # regime: tag it so the C-vs-N statistics and Vega's forecasts, which select runs by exact mode, never pool it
+    # with ordinary runs.
+    if "active_bank" in pop.columns and (pop["active_bank"] != 0).any():
+        mode += "+bank_cycle"
+    run["mode"] = mode   # the evidence provenance carries the tag too
     con.execute("INSERT INTO runs VALUES(?,?,?,?,?,?)",
-                (rid, run["mode"], run["seed"], sim_end, str(run_dir), db.now()))
+                (rid, mode, run["seed"], sim_end, str(run_dir), db.now()))
     eids = []
     for stat, value, prov in compute_run_stats(run):
         eids.append(db.add_evidence(con, rid, stat, value, prov))

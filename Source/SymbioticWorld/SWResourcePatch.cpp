@@ -52,10 +52,13 @@ void ASWResourcePatch::Init(int32 InType, float InCapacity, float InRegen, float
 
 void ASWResourcePatch::Step(float Dt, float RegenMultiplier, float CapacityMultiplier)
 {
-	const float EffCap = FMath::Max(1.f, Capacity * CapacityMultiplier);
+	// A multiplier of exactly 0 (the bank cycle's inactive bank at BankCycleOffCapacity 0) means no effective
+	// capacity at all: the stock decays toward 0 and drops below the forage gate. Any positive multiplier keeps
+	// the 1-unit floor the drought has always had, so every existing run is unchanged.
+	const float EffCap = CapacityMultiplier <= 0.f ? 0.f : FMath::Max(1.f, Capacity * CapacityMultiplier);
 	// Logistic regrowth: fastest when depleted, zero at capacity. Under drought
 	// the effective capacity drops, so stock above it decays toward it.
-	if (Stock < EffCap)
+	if (EffCap > 0.f && Stock < EffCap)
 	{
 		Stock += Regen * RegenMultiplier * (1.f - Stock / EffCap) * Dt;
 		Stock = FMath::Min(Stock, EffCap);
@@ -64,7 +67,7 @@ void ASWResourcePatch::Step(float Dt, float RegenMultiplier, float CapacityMulti
 	{
 		Stock = FMath::FInterpTo(Stock, EffCap, Dt, 0.5f);
 	}
-	UpdateVisual(EffCap);
+	UpdateVisual(FMath::Max(EffCap, 1.f));
 }
 
 float ASWResourcePatch::Take(float Amount)

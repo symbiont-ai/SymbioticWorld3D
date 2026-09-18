@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """FIXTURE DATA GENERATOR — for testing the Lab pipeline only.
 
-Writes synthetic run directories with the exact CSV headers SWLogger.cpp
-produces, so evidence ingestion and metric computation can be tested on a
+Writes synthetic run directories with a subset of the CSV columns SWLogger.cpp
+produces (same names; the newer trailing columns such as river_crossings and
+active_bank are omitted, and every reader selects columns by name), so
+evidence ingestion and metric computation can be tested on a
 machine without the UE sim. The numbers are drawn from simple seeded
 distributions with a built-in "ground truth" (mode C alpha drifts upward,
 mode N does not; Q tables drift when alpha > 0) — they are NOT sim output

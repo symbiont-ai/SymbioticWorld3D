@@ -271,6 +271,18 @@ void ASWHUD::DrawStatCards(const ASWWorldManager& M)
 		            bPaused ? TEXT("paused: drought") : Split, ColRed });
 	}
 
+	// Bank cycle card only while the regime is on: green like RESOURCES, because it says where regrowth is.
+	if (M.GetSettings().bBankCycle)
+	{
+		const bool bHeld = M.GetSettings().bBankCyclePauseInDrought && M.IsDrought();
+		const int32 Bank = M.GetBankCyclePhaseBank();   // 0 only during the warm-up (a drought pause shows "held")
+		const float ToSwitch = M.GetBankCycleSecondsToSwitch();
+		const FString Value = bHeld ? TEXT("held") : (Bank == 0 ? TEXT("warm-up") : (Bank > 0 ? TEXT("+Y bank") : TEXT("-Y bank")));
+		const FString Sub = bHeld ? TEXT("drought: both regrow") : (Bank == 0 ? FString::Printf(TEXT("both regrow, %.0f s"), FMath::Max(ToSwitch, 0.f))
+		                                                          : FString::Printf(TEXT("regrows, switch %.0f s"), FMath::Max(ToSwitch, 0.f)));
+		Cards.Add({ TEXT("BANK CYCLE"), Value, Sub, ColGreen });
+	}
+
 	const float CardW = 150.f, CardH = 60.f, Gap = 8.f;
 	const float Total = Cards.Num() * CardW + (Cards.Num() - 1) * Gap;
 	// Keep clear of the 330 px title panel on the left; centre when there is room.
@@ -600,10 +612,10 @@ void ASWHUD::DrawInspector(const ASWWorldManager& M, const ASWAgent& A, float X,
 	y = DrawLine(x, y, FString::Printf(TEXT("gen %d   parent %s   age %.0f / %.0f s"),
 		A.GetGeneration(), A.GetParentId() < 0 ? TEXT("founder") : *FString::Printf(TEXT("#%d"), A.GetParentId()),
 		A.GetAge(), A.GetParams().MaxAge), ColDim);
-	y = DrawLine(x, y, FString::Printf(TEXT("energy %.1f / %.0f   bin %s   decisions %d"),
+	y = DrawLine(x, y, FString::Printf(TEXT("energy %.1f / %.0f   bin %s   decisions %d   crossings %d"),
 		A.GetEnergy(), A.GetParams().MaxEnergy,
 		A.GetCurrentContext() == 0 ? TEXT("LOW") : (A.GetCurrentContext() == 1 ? TEXT("MID") : TEXT("HIGH")),
-		A.GetDecisionCount()), ColText);
+		A.GetDecisionCount(), A.GetRiverCrossings()), ColText);
 	y = DrawLine(x, y, FString::Printf(TEXT("action %s%s   last reward %+.3f   trace X %.2f  Y %.2f"),
 		SWActionName(A.GetCurrentAction()), A.WasLastExplored() ? TEXT(" (explore)") : TEXT(""), A.GetLastReward(),
 		A.GetLocalTraceX(), A.GetLocalTraceY()), ColText);

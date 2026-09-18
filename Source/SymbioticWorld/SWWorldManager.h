@@ -169,6 +169,13 @@ public:
 	int32 GetExtFallbacks(ESWSpecies S) const { return ExtFallbacks[static_cast<int32>(S)]; }
 	// Bank-to-bank crossings of the main channel by this species since the run started (ASWAgent::UpdateRiverCrossing).
 	int32 GetRiverCrossings(ESWSpecies S) const { return RiverCrossings[static_cast<int32>(S)]; }
+	// Bank cycle (Settings.bBankCycle): the bank whose patches regrow this substep (+1 / -1), 0 = both (cycle off,
+	// warm-up, or paused by a drought). Logged as population.csv active_bank.
+	int32 GetActiveBank() const { return ActiveBank; }
+	// The bank of the current phase, 0 while the cycle is off or still in its warm-up. Unlike ActiveBank it is not
+	// zeroed by a drought pause, so the HUD can tell "held" from "warm-up".
+	int32 GetBankCyclePhaseBank() const { return BankCyclePhaseBank; }
+	float GetBankCycleSecondsToSwitch() const;   // -1 when off or paused
 
 protected:
 	UPROPERTY() TArray<ASWAgent*> Agents;
@@ -242,6 +249,15 @@ protected:
 	int32 ExtDecisions[2] = { 0, 0 };   // per species: decisions taken from a server
 	int32 ExtFallbacks[2] = { 0, 0 };   // per species: server-assigned decisions the built-in bandit had to make
 	int32 RiverCrossings[2] = { 0, 0 }; // per species: bank-to-bank crossings of the main channel since StartRun
+	int32 ActiveBank = 0;               // bank cycle: bank regrowing this substep, 0 = both
+	int32 BankCycleStartStep = -1;      // StepCounter when the cycle was first seen on (-1 = off)
+	int32 BankCycleClockSteps = 0;      // unpaused substeps counted since the cycle started (the warm-up clock)
+	int32 BankCyclePhaseStep = 0;       // substeps since the current phase began (0 during warm-up)
+	int32 BankCyclePhaseBank = 0;       // bank of the current phase; 0 until the warm-up has ended
+	int32 BankCycleLatchedStart = 1;    // BankCycleStartBank as read when the cycle started
+	float BankCycleLastDt = 0.f;        // substep length the counters were last advanced with
+	float ResourceAByBank[2] = { 0.f, 0.f };   // type-A stock on the +Y / -Y bank this substep
+	void UpdateBankCycle();             // once per substep, before the patch loop
 	int32 ExternalCount = 0;
 	int32 StepCounter = 0;              // substeps since StartRun (echoed by replies to detect stale ones)
 	void AssignPolicy(ASWAgent* A);     // at birth, with the seeded stream when PolicyShare < 1
@@ -308,6 +324,8 @@ protected:
 	void RunDueScheduledCommands();                      // Tick: execute every command whose time has arrived
 	void ClearScheduledCommands(const TCHAR* Reason);    // logs how many were dropped
 	void NeutralBirthStep(float Dt);
+	// Settings.MaxLumen / MaxTecton: true while species S is at its own ceiling (living + pending newborns).
+	bool AtSpeciesCap(ESWSpecies S) const;
 	void LogTick(float Dt);
 	FVector RandomArenaPoint(float Margin);
 
