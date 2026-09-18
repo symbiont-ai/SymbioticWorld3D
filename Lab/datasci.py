@@ -21,6 +21,8 @@ import analyze_run  # noqa: E402
 
 FORECAST_HORIZON_FACTOR = 1.5   # forecast to 1.5x the run's logged duration
 FIT_TAIL = 0.5                  # fit the trend on the last half of the series
+PLOT_MAX_RUNS = 60              # a chart with one line per run stops being readable long before this
+FORECAST_BUDGET = 40            # runs fitted per annex; the rest wait for the next one
 
 
 def _fit_forecast(t, y, horizon):
@@ -34,6 +36,16 @@ def _fit_forecast(t, y, horizon):
     band = 2.0 * float(resid.std()) if len(resid) > 2 else 0.0
     pred = float(slope * horizon + intercept)
     return pred, pred - band, pred + band
+
+
+def _already_forecast(con, run_row):
+    """True when this run has been through forecast_run before. forecast_run dedupes per
+    (run_id, metric, horizon), but only AFTER load_run has parsed the run's CSVs, so re-fitting
+    every run ever ingested made the annex the slowest thing in the lab and threw the result
+    away: at 264 runs one session burned 31 minutes of CPU here and never finished. All of a
+    run's metrics are written in one pass, so any stored row means the run is done."""
+    return con.execute("SELECT 1 FROM forecasts WHERE run_id=? LIMIT 1",
+                       (run_row["run_id"],)).fetchone() is not None
 
 
 def forecast_run(con, run_row):
@@ -72,6 +84,7 @@ def update_actuals(con):
     """Fill in actuals for old forecasts when a longer run of the same mode and
     seed has since been ingested (forecasts are falsifiable too)."""
     filled = 0
+    cache = {}     # path -> loaded run; one longer run verifies many forecasts
     # NB: forecasts.id is INTEGER PRIMARY KEY, i.e. the rowid alias — "SELECT
     # rowid" would come back named "id", so select and key on id directly.
     for f in con.execute("SELECT * FROM forecasts WHERE actual IS NULL").fetchall():
@@ -83,10 +96,14 @@ def update_actuals(con):
             (src["mode"], src["seed"], f["horizon"], f["run_id"])).fetchone()
         if not longer:
             continue
-        try:
-            run = analyze_run.load_run(longer["path"])
-        except OSError:
-            continue   # run directory gone or unreadable; verify against a later one
+        if longer["path"] not in cache:
+            try:
+                cache[longer["path"]] = analyze_run.load_run(longer["path"])
+            except OSError:
+                cache[longer["path"]] = None   # gone or unreadable; verify against a later one
+        run = cache[longer["path"]]
+        if run is None:
+            continue
         species = "Lumen" if f["metric"].startswith("lumen") else "Tecton"
         p = analyze_run.population_trajectory(run["population"], species)
         if p.empty:
@@ -110,24 +127,38 @@ def _plot_runs(con, fig_dir, label):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    runs = con.execute("SELECT * FROM runs ORDER BY ingested_at").fetchall()
-    if not runs:
+    all_runs = con.execute("SELECT * FROM runs ORDER BY ingested_at").fetchall()
+    if not all_runs:
         return []
+    all_runs = [r for r in all_runs if r["path"] and Path(r["path"]).is_dir()]
+    runs = all_runs[-PLOT_MAX_RUNS:]
+    shown = (f" (latest {len(runs)} of {len(all_runs)})"
+             if len(runs) < len(all_runs) else "")
+    # One disk read per run, shared by both figures and both species: load_run parses the run's
+    # CSVs, and doing that once per figure per run is the other half of the annex blow-up.
+    traj = []
+    for r in runs:
+        try:
+            run = analyze_run.load_run(r["path"])
+        except OSError:
+            continue
+        pops = {sp: analyze_run.population_trajectory(run["population"], sp)
+                for sp in ("Lumen", "Tecton")}
+        traj.append((r, pops))
     fig_dir.mkdir(parents=True, exist_ok=True)
     images = []
 
     # 1. population trajectories, all runs
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
     for ax, (species, cmap) in zip(axes, (("Lumen", "winter"), ("Tecton", "autumn"))):
-        for i, r in enumerate(runs):
-            run = analyze_run.load_run(r["path"])
-            p = analyze_run.population_trajectory(run["population"], species)
+        for i, (r, pops) in enumerate(traj):
+            p = pops[species]
             if p.empty:
                 continue
-            color = plt.get_cmap(cmap)(0.15 + 0.7 * i / max(1, len(runs) - 1))
+            color = plt.get_cmap(cmap)(0.15 + 0.7 * i / max(1, len(traj) - 1))
             ax.plot(p["sim_time"], p["n"], color=color, lw=1.2,
                     label=f"{r['mode'][:1]} s{r['seed']}")
-        ax.set_title(f"{species} population, all ingested runs")
+        ax.set_title(f"{species} population, ingested runs{shown}")
         ax.set_xlabel("sim time (s)"); ax.set_ylabel("n")
         ax.legend(fontsize=7, ncol=2)
     fig.tight_layout()
@@ -139,17 +170,16 @@ def _plot_runs(con, fig_dir, label):
     fig, ax = plt.subplots(figsize=(7, 4.2))
     palette = {"C_learning_evolution": "#3fd1ff", "N_neutral_control": "#999999",
                "B_learning_on": "#7bd88f", "A_learning_off": "#d88f7b"}
-    for r in runs:
-        run = analyze_run.load_run(r["path"])
-        p = analyze_run.population_trajectory(run["population"], "Lumen")
+    for r, pops in traj:
+        p = pops["Lumen"]
         if p.empty:
             continue
         ax.plot(p["sim_time"], p["mean_alpha"],
                 color=palette.get(r["mode"], "#cccccc"), lw=1.2, alpha=0.85)
     for mode, c in palette.items():
-        if any(r["mode"] == mode for r in runs):
+        if any(r["mode"] == mode for r, _ in traj):
             ax.plot([], [], color=c, label=mode)
-    ax.set_title("Lumen mean alpha by mode (each line one run)")
+    ax.set_title(f"Lumen mean alpha by mode (each line one run){shown}")
     ax.set_xlabel("sim time (s)"); ax.set_ylabel("mean alpha"); ax.legend(fontsize=8)
     fig.tight_layout()
     path = fig_dir / f"vega_alpha_by_mode_{label}.png"
@@ -161,8 +191,17 @@ def _plot_runs(con, fig_dir, label):
 def annex(con, label):
     """Build the data annex: figures + forecasts. Returns markdown lines for
     the report (paths relative to Lab/reports/)."""
-    for r in con.execute("SELECT * FROM runs").fetchall():
+    # `live:` rows are policy-bridge telemetry windows, not file-backed runs: there is no
+    # directory to fit, and without this check they were re-read on every annex forever.
+    fresh = [r for r in con.execute("SELECT * FROM runs ORDER BY ingested_at DESC").fetchall()
+             if not _already_forecast(con, r) and r["path"] and Path(r["path"]).is_dir()]
+    for r in fresh[:FORECAST_BUDGET]:      # newest first: the runs a reader cares about
         forecast_run(con, r)
+    if len(fresh) > FORECAST_BUDGET:
+        # A backlog must never hold a session hostage: it drains FORECAST_BUDGET per annex, and
+        # `python -m Lab.lab report` can be run in a loop to catch up out of band.
+        print(f"  [vega] {len(fresh) - FORECAST_BUDGET} run(s) still unforecast; "
+              f"they wait for the next annex")
     filled = update_actuals(con)
 
     fig_dir = config.REPORT_DIR / "figs"
