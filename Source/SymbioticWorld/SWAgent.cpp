@@ -106,6 +106,10 @@ void ASWAgent::Init(ASWWorldManager* InManager, ESWSpecies InSpecies, const FSWS
 
 	BuildBody();
 	SnapToGround();
+	RiverCrossings = 0;
+	LastBankSide = LastSide = 0;
+	bLastInWater = bPassedCentreInWater = false;
+	UpdateRiverCrossing();   // record where it starts; only a later landfall on the other bank counts
 	SetActorRotation(ExploreDir.Rotation());
 	AuthoredPreviousLocation = GetActorLocation();
 	AuthoredPreviousRotation = GetActorQuat();
@@ -404,6 +408,7 @@ bool ASWAgent::Step(float Dt)
 
 	ApplyAction(Dt);
 	UpdateGait(Dt);
+	if (bMovedThisStep) UpdateRiverCrossing();
 
 	// Trail sampling on the logical clock so the ribbon spans the same sim distance at any time scale.
 	if (Species == ESWSpecies::Lumen && Manager->GetLook().bLumenTrails)
@@ -728,6 +733,36 @@ void ASWAgent::MoveAlong(const FVector& Dir, float Dt)
 		ExploreDir = ToCentre.GetSafeNormal().RotateAngleAxis(FMath::RadiansToDegrees(Ang), FVector::UpVector);
 	}
 	PlaceAt(Loc, Dir);
+}
+
+void ASWAgent::UpdateRiverCrossing()
+{
+	// A river crossing is bank to bank across the MAIN channel: the organism reaches dry land on the other
+	// side of the channel's centreline (SWProc::RiverCenterY) from the dry land it last stood on, having
+	// passed the centreline between two positions that were both in the water. Wading in and back out on the
+	// same bank is not a crossing; a tributary is not either (both of its banks lie on the same side of the
+	// main channel); nor is walking over ground where the centreline leaves the water (the valley ends rise).
+	// Called on Init and on every substep in which the organism moved (nothing else changes its X/Y). A pure
+	// function of position: no seeded draw, and nothing reads the count back into behaviour. Ported from
+	// branch claude/river-crossings (2026-09-14), where it measured 0-2 crossings per run in mode C.
+	const FSWLookSettings& L = Manager->GetLook();
+	const FVector Loc = GetActorLocation();
+	const float CentreY = SWProc::RiverCenterY(L, Loc.X);
+	const int8 Side = Loc.Y >= CentreY ? 1 : -1;
+	RiverDistance = FMath::Abs(Loc.Y - CentreY);   // position logging (agents.csv / population.csv)
+	const bool bInWater = SWProc::TerrainHeight(L, Loc.X, Loc.Y) <= L.WaterLevel;
+	if (bInWater && bLastInWater && LastSide != 0 && Side != LastSide)
+	{
+		bPassedCentreInWater = true;
+	}
+	if (!bInWater)
+	{
+		if (LastBankSide != 0 && Side != LastBankSide && bPassedCentreInWater) RiverCrossings++;
+		LastBankSide = Side;
+		bPassedCentreInWater = false;
+	}
+	LastSide = Side;
+	bLastInWater = bInWater;
 }
 
 void ASWAgent::UpdateGait(float Dt)

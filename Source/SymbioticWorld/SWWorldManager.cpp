@@ -374,6 +374,7 @@ void ASWWorldManager::StartRun()
 	bDrought = false;
 	NeutralBirthTimer = AgentLogTimer = PopLogTimer = StatsTimer = 0.f;
 	ExtDecisions[0] = ExtDecisions[1] = ExtFallbacks[0] = ExtFallbacks[1] = 0;
+	RiverCrossings[0] = RiverCrossings[1] = 0;
 	ExternalCount = 0;
 	StepCounter = 0;
 	ControlCommandsExecuted = 0;   // a control command that resets counts for the run it created (incremented after the reset)
@@ -839,7 +840,11 @@ void ASWWorldManager::StepWorld(float Dt)
 		ASWAgent* A = Agents[i];
 		if (!IsValid(A)) { Agents.RemoveAtSwap(i); continue; }
 		const bool bAliveBefore = A->IsAlive();
+		const int32 CrossingsBefore = A->GetRiverCrossings();
 		const bool bAlive = A->Step(Dt);
+		// Credited before the death branch below destroys the actor: a crossing completed in the substep an
+		// organism dies still counts, and matches the lifetime value deaths.csv records for it.
+		RiverCrossings[static_cast<int32>(A->GetSpecies())] += A->GetRiverCrossings() - CrossingsBefore;
 		if (bAliveBefore && !bAlive)
 		{
 			const TCHAR* Cause = A->GetEnergy() <= 0.f ? TEXT("starvation") : TEXT("age");
@@ -1203,6 +1208,20 @@ void ASWWorldManager::LogTick(float Dt)
 	{
 		PopLogTimer = 0.f;
 		RecomputeStats();
+		// Where each population stands relative to the river (logging only): mean |Y - main-channel centreline|
+		// and the share standing in the water. Their time course is what shows a population leaving the river
+		// once the founders' random scatter is over.
+		double RiverDistSum[2] = { 0.0, 0.0 };
+		int32 InWater[2] = { 0, 0 };
+		int32 Counted[2] = { 0, 0 };
+		for (const ASWAgent* A : Agents)
+		{
+			if (!IsValid(A) || !A->IsAlive()) continue;
+			const int32 Si = static_cast<int32>(A->GetSpecies());
+			RiverDistSum[Si] += A->GetRiverDistance();
+			InWater[Si] += A->IsInWater() ? 1 : 0;
+			Counted[Si]++;
+		}
 		const FSWSpeciesStats* Both[2] = { &LumenStats, &TectonStats };
 		const ESWSpecies Sp[2] = { ESWSpecies::Lumen, ESWSpecies::Tecton };
 		for (int32 i = 0; i < 2; ++i)
@@ -1211,7 +1230,10 @@ void ASWWorldManager::LogTick(float Dt)
 			Logger.LogPopulation(SimTime, Sp[i], St.N, St.MeanAlpha, St.SdAlpha, St.MeanEps, St.SdEps,
 				St.MeanSocial, St.SdSocial, St.MeanEnv, St.SdEnv, St.MeanGeneration, St.MaxGeneration, Births, Deaths,
 				ResourceTotalA, ResourceTotalB, bDrought, TraceX.Mean(), TraceY.Mean(),
-				ExtDecisions[static_cast<int32>(Sp[i])], ExtFallbacks[static_cast<int32>(Sp[i])]);
+				ExtDecisions[static_cast<int32>(Sp[i])], ExtFallbacks[static_cast<int32>(Sp[i])],
+				RiverCrossings[static_cast<int32>(Sp[i])],
+				Counted[static_cast<int32>(Sp[i])] ? float(RiverDistSum[static_cast<int32>(Sp[i])] / Counted[static_cast<int32>(Sp[i])]) : 0.f,
+				Counted[static_cast<int32>(Sp[i])] ? float(InWater[static_cast<int32>(Sp[i])]) / Counted[static_cast<int32>(Sp[i])] : 0.f);
 		}
 		Logger.Flush();
 	}
