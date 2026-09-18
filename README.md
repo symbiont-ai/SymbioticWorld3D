@@ -15,11 +15,12 @@ Contributing (Mac collaborators, coding agents, recipes for actions/percepts/spe
 ## Demo videos
 
 Both are scripted takes: a seeded run plus a shot list fired at exact logical times, so
-re-running the same seed and list reproduces the take (see "Recorded takes" below).
+re-running the same seed and list reproduces the take (see "Recorded takes" below). The loops
+below play in place; each links to its full take, which GitHub opens in its own player.
 
 ### The world — 4 min ([docs/videos/symbiotic_world_demo.mp4](docs/videos/symbiotic_world_demo.mp4))
 
-[![The world](docs/videos/symbiotic_world_demo.jpg)](docs/videos/symbiotic_world_demo.mp4)
+[![The world](docs/videos/symbiotic_world_demo.gif)](docs/videos/symbiotic_world_demo.mp4)
 
 Seed 4, mode C. The Leviathan hunting the river channel, one organism's action values
 changing with experience, then 50x while generations turn over and each inherits its
@@ -27,7 +28,7 @@ parent's learning rate mutated, and finally a drought at 1x with the HUD hidden.
 
 ### The lab — 4m44s ([docs/videos/symbiotic_lab_demo.mp4](docs/videos/symbiotic_lab_demo.mp4))
 
-[![The Symbiotic Lab](docs/videos/symbiotic_lab_demo.jpg)](docs/videos/symbiotic_lab_demo.mp4)
+[![The Symbiotic Lab](docs/videos/symbiotic_lab_demo.gif)](docs/videos/symbiotic_lab_demo.mp4)
 
 The Symbiotic Lab dashboard with the same world streaming live inside its World tab: the
 field team's duty cycle, a meeting forming in real time, an experiment's protocol with its
@@ -403,7 +404,7 @@ Lab/                 Symbiotic Lab: scientist team + meetings, live observer bri
                      [--embody]), design bench + experiment runner, rule-driven registry (the textbook),
                      duty cycle (field vs meetings), quarantined data scientist, dashboard
                      (python -m Lab.lab ui, :8765); Lab/README.md
-docs/videos/         the two demo takes (see "Demo videos"), re-encoded for the repo
+docs/videos/         the two demo takes (see "Demo videos"): an inline loop and the full take each
 ```
 
 ## Credits
