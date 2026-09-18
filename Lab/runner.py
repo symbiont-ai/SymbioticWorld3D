@@ -30,6 +30,16 @@ METRICS = [
     "lumen_deaths_starvation", "tecton_deaths_starvation",
     "lumen_predation_frac", "tecton_predation_frac",
     "drought_fraction",
+    # Tails, for traits whose selection is one-sided and therefore invisible to a mean (H-028),
+    # and reward per decision, which unlike any energy statistic is not downstream of ReproCost
+    # or the population cap.
+    "lumen_end_p10_epsilon", "tecton_end_p10_epsilon",
+    "lumen_end_p10_alpha", "tecton_end_p10_alpha",
+    "lumen_end_frac_eps_low", "tecton_end_frac_eps_low",
+    "lumen_mean_reward", "tecton_mean_reward",
+    # Within-run selection gradients. Their null is exact: neutral mode picks parents at random.
+    "lumen_selection_r_epsilon", "lumen_selection_r_alpha", "lumen_selection_r_social",
+    "tecton_selection_r_epsilon", "tecton_selection_r_alpha", "tecton_selection_r_social",
 ]
 
 
