@@ -22,9 +22,11 @@ below play in place; each links to its full take, which GitHub opens in its own 
 
 [![The world](docs/videos/symbiotic_world_demo.gif)](docs/videos/symbiotic_world_demo.mp4)
 
-Seed 4, mode C. The Leviathan hunting the river channel, one organism's action values
-changing with experience, then 50x while generations turn over and each inherits its
-parent's learning rate mutated, and finally a drought at 1x with the HUD hidden.
+Seed 4, mode C. The loop is the beat the whole project rests on: one Lumen selected, the
+inspector showing what it inherited (learning rate, exploration, social, env effect - fixed for
+this lifetime) beside a learned policy whose values move with every rewarded decision. The full
+take adds the Leviathan hunting the river channel, 50x while generations turn over and each
+inherits its parent's learning rate mutated, and a drought at 1x with the HUD hidden.
 
 ### The lab — 4m44s ([docs/videos/symbiotic_lab_demo.mp4](docs/videos/symbiotic_lab_demo.mp4))
 
@@ -337,6 +339,12 @@ python -m Lab.lab victory                           # the spec's six conditions,
 - **The data scientist is quarantined.** Vega writes figures and falsifiable trend forecasts
   for whoever reads the report, and no scientist ever sees her output.
 
+![An experiment record: protocol, measured arms, and every preregistered prediction scored](docs/images/lab_experiment_card.png)
+
+One experiment as the dashboard shows it: the claim under test, the protocol fixed in advance,
+the measured arms against the preregistered threshold, and what every scientist predicted before
+the run - with the Brier score that cost them. Ada was the only one right here.
+
 Details: `Lab/README.md`, `docs/POLICY_API.md` (the bridge), `docs/SCIENTIST_API.md` (remote runs).
 
 ## What is verified
@@ -353,6 +361,11 @@ Details: `Lab/README.md`, `docs/POLICY_API.md` (the bridge), `docs/SCIENTIST_API
 As of 2026-09-18 the six conditions in the specification's "minimum proof of challenge fit"
 (`docs/SPEC_TEXT.txt` §1) all read **met**, each closed by a preregistered experiment the
 Symbiotic Lab designed, ran and scored itself (`python -m Lab.lab victory`):
+
+![Lumen mean alpha by mode, C against N](docs/images/alpha_c_vs_n.png)
+
+Selection, not drift: each line is one run of X-001's contrast, cyan for learning + evolution
+and grey for the neutral-drift control, from the lab's own data annex.
 
 | Experiment | Contrast | Result |
 |---|---|---|
