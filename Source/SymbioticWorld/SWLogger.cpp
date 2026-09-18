@@ -34,7 +34,7 @@ void FSWRunLogger::Open(const FString& InRunId, int32 InSeed, ESWLearningMode In
 
 	FFileHelper::SaveStringToFile(TEXT("run_id,sim_time,parent_id,child_id,species,child_generation,child_alpha,child_epsilon,child_social,child_env_effect,parent_alpha,parent_epsilon,parent_social,parent_env_effect,parent_age,parent_energy\n"), *BirthsPath, FFileHelper::EEncodingOptions::ForceAnsi);
 	FFileHelper::SaveStringToFile(TEXT("run_id,sim_time,agent_id,species,generation,age,energy,cause,alpha,epsilon,social,env_effect,decisions,river_crossings,mid_crossing\n"), *DeathsPath, FFileHelper::EEncodingOptions::ForceAnsi);
-	FFileHelper::SaveStringToFile(TEXT("run_id,seed,mode,sim_time,species,n,mean_alpha,sd_alpha,mean_epsilon,sd_epsilon,mean_social,sd_social,mean_env_effect,sd_env_effect,mean_generation,max_generation,births,deaths,resource_A,resource_B,drought_state,trace_X_mean,trace_Y_mean,ext_decisions,ext_fallbacks,river_crossings,mean_river_dist,frac_in_water\n"), *PopulationPath, FFileHelper::EEncodingOptions::ForceAnsi);
+	FFileHelper::SaveStringToFile(TEXT("run_id,seed,mode,sim_time,species,n,mean_alpha,sd_alpha,mean_epsilon,sd_epsilon,mean_social,sd_social,mean_env_effect,sd_env_effect,mean_generation,max_generation,births,deaths,resource_A,resource_B,drought_state,trace_X_mean,trace_Y_mean,ext_decisions,ext_fallbacks,river_crossings,mean_river_dist,frac_in_water,active_bank,resource_A_pos,resource_A_neg\n"), *PopulationPath, FFileHelper::EEncodingOptions::ForceAnsi);
 	FFileHelper::SaveStringToFile(TEXT("run_id,sim_time,wall_utc,command,result\n"), *CommandsPath, FFileHelper::EEncodingOptions::ForceAnsi);
 
 	bOpen = true;
@@ -99,14 +99,16 @@ void FSWRunLogger::LogPopulation(float SimTime, ESWSpecies Species, int32 N,
                                  float MeanSocial, float SdSocial, float MeanEnv, float SdEnv, float MeanGen, int32 MaxGen,
                                  int32 Births, int32 Deaths, float ResourceA, float ResourceB, bool bDrought,
                                  float TraceXMean, float TraceYMean, int32 ExtDecisions, int32 ExtFallbacks, int32 RiverCrossings,
-                                 float MeanRiverDist, float FracInWater)
+                                 float MeanRiverDist, float FracInWater,
+                                 int32 ActiveBank, float ResourceAPos, float ResourceANeg)
 {
 	if (!bOpen) return;
-	PopulationBuf.Add(FString::Printf(TEXT("%s,%d,%s,%.2f,%s,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%d,%d,%d,%.1f,%.1f,%d,%.4f,%.4f,%d,%d,%d,%.1f,%.4f\n"),
+	PopulationBuf.Add(FString::Printf(TEXT("%s,%d,%s,%.2f,%s,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%d,%d,%d,%.1f,%.1f,%d,%.4f,%.4f,%d,%d,%d,%.1f,%.4f,%d,%.1f,%.1f\n"),
 		*RunId, Seed, SWModeName(Mode), SimTime, SWSpeciesName(Species), N,
 		MeanAlpha, SdAlpha, MeanEps, SdEps, MeanSocial, SdSocial, MeanEnv, SdEnv, MeanGen, MaxGen,
 		Births, Deaths, ResourceA, ResourceB, bDrought ? 1 : 0, TraceXMean, TraceYMean, ExtDecisions, ExtFallbacks, RiverCrossings,
-		MeanRiverDist, FracInWater));
+		MeanRiverDist, FracInWater,
+		ActiveBank, ResourceAPos, ResourceANeg));
 	if (PopulationBuf.Num() >= 100) Append(PopulationPath, PopulationBuf);
 }
 

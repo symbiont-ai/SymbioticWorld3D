@@ -375,6 +375,12 @@ void ASWWorldManager::StartRun()
 	NeutralBirthTimer = AgentLogTimer = PopLogTimer = StatsTimer = 0.f;
 	ExtDecisions[0] = ExtDecisions[1] = ExtFallbacks[0] = ExtFallbacks[1] = 0;
 	RiverCrossings[0] = RiverCrossings[1] = 0;
+	ActiveBank = 0;
+	BankCycleStartStep = -1;
+	BankCycleClockSteps = 0;
+	BankCyclePhaseStep = 0;
+	BankCyclePhaseBank = 0;
+	BankCycleLastDt = 0.f;
 	ExternalCount = 0;
 	StepCounter = 0;
 	ControlCommandsExecuted = 0;   // a control command that resets counts for the run it created (incremented after the reset)
@@ -577,10 +583,10 @@ void ASWWorldManager::SpawnPatches()
 				// non-unity build and the written width in a unity build, 2026-09-14).
 				const float RiverDist = SWProc::RiverDistance(Look, Candidate.X, Candidate.Y, ChannelWidth, ChannelDepth);
 				const float Ratio = RiverDist / FMath::Max(ChannelWidth, 1.f);
-				const bool bDry = SWProc::TerrainHeight(Look, Candidate.X, Candidate.Y) >= Look.WaterLevel + Look.WetlandBand;   // the floor noise puts puddles past the channel test
+				const bool bDry = SWProc::TerrainHeight(Look, Candidate.X, Candidate.Y) >= Look.WaterLevel + Settings.PatchDryMargin;   // the floor noise puts puddles past the channel test
 				const float Rank = Ratio + (bDry ? 100.f : 0.f);
 				if (Rank > FallbackRank) { FallbackRank = Rank; if (BestScore < 0.f) Loc = Candidate; }
-				if (Ratio < 1.9f || !bDry) continue;
+				if (Ratio < Settings.PatchChannelClearance || !bDry) continue;
 				float Nearest = TNumericLimits<float>::Max();
 				for (const ASWResourcePatch* Other : Patches) if (IsValid(Other)) Nearest = FMath::Min(Nearest, FVector::Dist2D(Other->GetActorLocation(), Candidate));
 				const float Score = FMath::Min(Nearest, Settings.PatchMinSpacing);
@@ -592,11 +598,79 @@ void ASWWorldManager::SpawnPatches()
 			// Regen varies per patch so the landscape is not uniform.
 			const float Regen = Settings.PatchRegenPerSec * Rng.FRandRange(0.6f, 1.4f);
 			P->Init(Type, Settings.PatchCapacity, Regen, Rng.FRandRange(0.5f, 1.0f));
+			P->SetBankSide(SWProc::BankSide(Look, Loc.X, Loc.Y));
 			Patches.Add(P);
 		}
 	};
 	SpawnType(0, Settings.ResourcePatchesA);
 	SpawnType(1, Settings.ResourcePatchesB);
+
+	// Where the food is, per bank of the main channel: the bank cycle moves regrowth between these two sets.
+	int32 OnPos[2] = { 0, 0 }, OnNeg[2] = { 0, 0 };
+	for (const ASWResourcePatch* P : Patches)
+	{
+		if (!IsValid(P)) continue;
+		(P->GetBankSide() > 0 ? OnPos : OnNeg)[FMath::Clamp(P->GetResourceType(), 0, 1)]++;
+	}
+	// Shutdown order for BankCycleRamp: within each (type, bank) set, farthest from the centreline first, nearest
+	// last. Distances are seeded positions, ties broken by spawn index: no draw.
+	for (int32 Type = 0; Type < 2; ++Type)
+	{
+		for (int32 Side = -1; Side <= 1; Side += 2)
+		{
+			TArray<TPair<float, int32>> Order;
+			for (int32 i = 0; i < Patches.Num(); ++i)
+			{
+				const ASWResourcePatch* P = Patches[i];
+				if (!IsValid(P) || P->GetResourceType() != Type || P->GetBankSide() != Side) continue;
+				const FVector PL = P->GetActorLocation();
+				Order.Emplace(FMath::Abs(PL.Y - SWProc::RiverCenterY(Look, PL.X)), i);
+			}
+			Order.Sort([](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key != B.Key ? A.Key > B.Key : A.Value < B.Value; });
+			for (int32 k = 0; k < Order.Num(); ++k)
+			{
+				Patches[Order[k].Value]->SetOffOrder(Order.Num() > 1 ? float(k) / float(Order.Num() - 1) : 0.f);
+			}
+		}
+	}
+	UE_LOG(LogSymbioticWorld, Log, TEXT("Patches: A %d on +Y / %d on -Y, B %d on +Y / %d on -Y (bank cycle %s)"),
+		OnPos[0], OnNeg[0], OnPos[1], OnNeg[1], Settings.bBankCycle ? TEXT("on") : TEXT("off"));
+	if (Settings.bBankCycle)
+	{
+		// Precondition for a migration rather than a famine: every patch the cycle can switch off needs a patch of
+		// the same type on the other bank inside the eating species' SenseRange.
+		for (int32 Type = 0; Type < 2; ++Type)
+		{
+			const bool bAffected = Settings.BankCycleScope == ESWBankCycleScope::Both
+				|| (Type == 0 && Settings.BankCycleScope == ESWBankCycleScope::ResourceA)
+				|| (Type == 1 && Settings.BankCycleScope == ESWBankCycleScope::ResourceB);
+			if (!bAffected) continue;
+			const float Sense = Type == 0 ? LumenParams.SenseRange : TectonParams.SenseRange;
+			int32 Total = 0, Seen = 0;
+			for (const ASWResourcePatch* P : Patches)
+			{
+				if (!IsValid(P) || P->GetResourceType() != Type) continue;
+				float Nearest = -1.f;
+				for (const ASWResourcePatch* Q : Patches)
+				{
+					if (!IsValid(Q) || Q->GetResourceType() != Type || Q->GetBankSide() == P->GetBankSide()) continue;
+					const float D = FVector::Dist2D(P->GetActorLocation(), Q->GetActorLocation());
+					if (Nearest < 0.f || D < Nearest) Nearest = D;
+				}
+				Total++;
+				if (Nearest >= 0.f && Nearest <= Sense) Seen++;
+			}
+			UE_LOG(LogSymbioticWorld, Log, TEXT("Bank cycle: %d/%d type-%d patches see a far-bank patch of their type within SenseRange %.0f"),
+				Seen, Total, Type, Sense);
+		}
+		// A patch switches off OffOrder x BankCycleRamp s into the phase; the one nearest the river has OffOrder 1,
+		// so with Ramp >= Period it never switches off and keeps the home bank feeding the whole phase.
+		if (Settings.BankCycleRamp >= Settings.BankCyclePeriod)
+		{
+			UE_LOG(LogSymbioticWorld, Warning, TEXT("Bank cycle: BankCycleRamp %.0f s >= BankCyclePeriod %.0f s - the patches nearest the river never switch off"),
+				Settings.BankCycleRamp, Settings.BankCyclePeriod);
+		}
+	}
 }
 
 FSWGenome ASWWorldManager::MakeFounderGenome()
@@ -661,6 +735,7 @@ bool ASWWorldManager::TryReproduce(ASWAgent* Parent)
 
 	const FSWSpeciesParams& P = Parent->GetParams();
 	if (Parent->GetEnergy() < P.ReproThreshold) return false;
+	if (AtSpeciesCap(Parent->GetSpecies())) return false;
 
 	// Parent pays the cost; child is born with it. Selection pressure comes from
 	// this cost plus the energy threshold, nothing else.
@@ -804,6 +879,80 @@ void ASWWorldManager::Tick(float DeltaSeconds)
 	}
 }
 
+void ASWWorldManager::UpdateBankCycle()
+{
+	// Integer counters advanced once per unpaused substep: phase boundaries are exact at any time scale and the run
+	// is reproducible from seed + settings. The phase is ADVANCED, never recomputed from the elapsed total, so a live
+	// change of BankCyclePeriod / BankCycleWarmup only lengthens or shortens the current phase (a period already
+	// exceeded flips on the next substep), and a live LogicalSubstep change rescales the counters so the cycle keeps
+	// its clock in logical seconds. With the settings fixed this gives the same flip steps as the pre-2026-09-18
+	// closed form (Elapsed - Warmup) / Period.
+	if (!Settings.bBankCycle)
+	{
+		ActiveBank = 0;
+		BankCycleStartStep = -1;
+		BankCycleClockSteps = 0;
+		BankCyclePhaseStep = 0;
+		BankCyclePhaseBank = 0;
+		BankCycleLastDt = 0.f;
+		return;
+	}
+	if (BankCycleStartStep < 0)
+	{
+		BankCycleStartStep = StepCounter;
+		BankCycleClockSteps = 0;
+		BankCyclePhaseStep = 0;
+		BankCyclePhaseBank = 0;
+		BankCycleLatchedStart = Settings.BankCycleStartBank >= 0 ? 1 : -1;
+	}
+	if (Settings.bBankCyclePauseInDrought && bDrought)
+	{
+		ActiveBank = 0;   // the phase holds and both banks regrow: one pressure at a time
+		return;
+	}
+	const float Dt = FMath::Max(Settings.LogicalSubstep, 0.01f);
+	if (BankCycleLastDt > 0.f && Dt != BankCycleLastDt)
+	{
+		const float Scale = BankCycleLastDt / Dt;
+		BankCycleClockSteps = FMath::RoundToInt(BankCycleClockSteps * Scale);
+		BankCyclePhaseStep = FMath::RoundToInt(BankCyclePhaseStep * Scale);
+	}
+	BankCycleLastDt = Dt;
+	const int32 PeriodSteps = FMath::Max(1, FMath::RoundToInt(FMath::Clamp(Settings.BankCyclePeriod / Dt, 1.f, 1.e9f)));
+	const int32 WarmupSteps = FMath::Max(0, FMath::RoundToInt(FMath::Clamp(Settings.BankCycleWarmup / Dt, 0.f, 1.e9f)));
+	const int32 Elapsed = BankCycleClockSteps++;   // this substep's index among the unpaused ones
+	if (BankCyclePhaseBank == 0)
+	{
+		if (Elapsed < WarmupSteps)
+		{
+			ActiveBank = 0;
+			BankCyclePhaseStep = 0;
+			return;
+		}
+		BankCyclePhaseBank = BankCycleLatchedStart;
+		BankCyclePhaseStep = 0;
+	}
+	else if (++BankCyclePhaseStep >= PeriodSteps)
+	{
+		BankCyclePhaseBank = -BankCyclePhaseBank;
+		BankCyclePhaseStep = 0;
+	}
+	ActiveBank = BankCyclePhaseBank;
+}
+
+float ASWWorldManager::GetBankCycleSecondsToSwitch() const
+{
+	if (!Settings.bBankCycle) return -1.f;
+	if (Settings.bBankCyclePauseInDrought && bDrought) return -1.f;
+	const float Dt = FMath::Max(Settings.LogicalSubstep, 0.01f);
+	const int32 PeriodSteps = FMath::Max(1, FMath::RoundToInt(FMath::Clamp(Settings.BankCyclePeriod / Dt, 1.f, 1.e9f)));
+	const int32 WarmupSteps = FMath::Max(0, FMath::RoundToInt(FMath::Clamp(Settings.BankCycleWarmup / Dt, 0.f, 1.e9f)));
+	if (BankCycleStartStep < 0) return WarmupSteps * Dt;
+	// Counted from the last substep that advanced the clock (its index is BankCycleClockSteps - 1).
+	if (BankCyclePhaseBank == 0) return FMath::Max(WarmupSteps - FMath::Max(BankCycleClockSteps - 1, 0), 0) * Dt;
+	return FMath::Max(PeriodSteps - BankCyclePhaseStep, 0) * Dt;
+}
+
 void ASWWorldManager::StepWorld(float Dt)
 {
 	SimTime += Dt;
@@ -819,19 +968,54 @@ void ASWWorldManager::StepWorld(float Dt)
 	// 1) Resources regrow. Trace Y (Tecton soil work) multiplies regrowth in its cell,
 	//    on top of (not instead of) the drought multiplier.
 	const float RegenMul = bDrought ? Settings.DroughtRegenMultiplier : 1.f;
-	const float CapMul = bDrought ? Settings.DroughtCapacityMultiplier : 1.f;
+	// Floored above 0 so a drought never reaches ASWResourcePatch::Step's zero-capacity branch (that branch is the
+	// bank cycle's switched-off bank only); with the floor a drought keeps its 1-unit minimum capacity as before.
+	const float CapMul = bDrought ? FMath::Max(Settings.DroughtCapacityMultiplier, KINDA_SMALL_NUMBER) : 1.f;
 	ResourceTotalA = ResourceTotalB = 0.f;
 	ResourceCapA = ResourceCapB = 0.f;
+	// Bank cycle: on the inactive bank the affected types do not regrow at all (the soil term included) and
+	// their capacity is scaled down so the stock decays to a residue; on the active bank regrowth is
+	// x BankCycleOnRegen. Composes with the drought multipliers.
+	UpdateBankCycle();
+	const float OffCap = FMath::Clamp(Settings.BankCycleOffCapacity, 0.f, 1.f);
+	ResourceAByBank[0] = ResourceAByBank[1] = 0.f;
 	for (ASWResourcePatch* P : Patches)
 	{
 		float LocalMul = RegenMul;
+		float LocalCap = CapMul;
+		float CycleCapFactor = 1.f;   // the RESOURCES card reads the cycle's effective capacity, never the drought's
+		bool bCycleOff = false;
 		if (Settings.bTraceFields)
 		{
 			LocalMul *= 1.f + Settings.TraceYRegenGain * FMath::Clamp(SoilAroundPatch(P->GetActorLocation()), 0.f, 1.f);
 		}
-		P->Step(Dt, LocalMul, CapMul);
-		if (P->GetResourceType() == 0) { ResourceTotalA += P->GetStock(); ResourceCapA += P->GetCapacity(); }
-		else                            { ResourceTotalB += P->GetStock(); ResourceCapB += P->GetCapacity(); }
+		if (ActiveBank != 0)
+		{
+			const bool bAffected = Settings.BankCycleScope == ESWBankCycleScope::Both
+				|| (Settings.BankCycleScope == ESWBankCycleScope::ResourceA && P->GetResourceType() == 0)
+				|| (Settings.BankCycleScope == ESWBankCycleScope::ResourceB && P->GetResourceType() == 1);
+			if (bAffected)
+			{
+				if (P->GetBankSide() != ActiveBank)
+				{
+					// Progressive shutdown: off once the phase has run OffOrder x BankCycleRamp seconds.
+					const float RampSteps = FMath::Clamp(Settings.BankCycleRamp / Dt, 0.f, 1.e9f);
+					if (float(BankCyclePhaseStep) >= P->GetOffOrder() * RampSteps)
+					{
+						LocalMul = 0.f; LocalCap *= OffCap; CycleCapFactor = OffCap; bCycleOff = true;
+					}
+				}
+				else { LocalMul *= FMath::Max(Settings.BankCycleOnRegen, 0.f); }
+			}
+		}
+		P->Step(Dt, LocalMul, LocalCap);
+		if (bCycleOff && Settings.bBankCycleHardOff) { P->Take(P->GetStock()); }
+		if (P->GetResourceType() == 0)
+		{
+			ResourceTotalA += P->GetStock(); ResourceCapA += P->GetCapacity() * CycleCapFactor;
+			ResourceAByBank[P->GetBankSide() > 0 ? 0 : 1] += P->GetStock();
+		}
+		else { ResourceTotalB += P->GetStock(); ResourceCapB += P->GetCapacity() * CycleCapFactor; }
 	}
 
 	// 2) Agents act. Iterate over a stable copy: children go to PendingSpawns.
@@ -918,6 +1102,16 @@ void ASWWorldManager::StepWorld(float Dt)
 	LogTick(Dt);
 }
 
+bool ASWWorldManager::AtSpeciesCap(ESWSpecies S) const
+{
+	const int32 Cap = S == ESWSpecies::Lumen ? Settings.MaxLumen : Settings.MaxTecton;
+	if (Cap <= 0) return false;   // no per-species ceiling: nothing counted, nothing changes
+	int32 N = 0;
+	for (const ASWAgent* A : Agents) if (IsValid(A) && A->IsAlive() && A->GetSpecies() == S) ++N;
+	for (const ASWAgent* A : PendingSpawns) if (IsValid(A) && A->GetSpecies() == S) ++N;
+	return N >= Cap;
+}
+
 void ASWWorldManager::NeutralBirthStep(float Dt)
 {
 	NeutralBirthTimer += Dt;
@@ -930,6 +1124,7 @@ void ASWWorldManager::NeutralBirthStep(float Dt)
 		for (ASWAgent* A : Agents) if (A->GetSpecies() == S && A->IsAlive()) Candidates.Add(A);
 		if (Candidates.Num() == 0 || Candidates.Num() >= Target) return;
 		if (Agents.Num() + PendingSpawns.Num() >= Settings.MaxPopulation) return;
+		if (AtSpeciesCap(S)) return;
 		// Uniformly random parent: reproduction carries no information about fitness.
 		ASWAgent* Parent = Candidates[Rng.RandRange(0, Candidates.Num() - 1)];
 		const FSWSpeciesParams& P = Parent->GetParams();
@@ -1092,6 +1287,7 @@ void ASWWorldManager::RegroundAll()
 		FVector L = P->GetActorLocation();
 		L.Z = SWProc::TerrainHeight(Look, L.X, L.Y);
 		P->SetActorLocation(L);
+		P->SetBankSide(SWProc::BankSide(Look, L.X, L.Y));
 	}
 }
 
@@ -1233,7 +1429,8 @@ void ASWWorldManager::LogTick(float Dt)
 				ExtDecisions[static_cast<int32>(Sp[i])], ExtFallbacks[static_cast<int32>(Sp[i])],
 				RiverCrossings[static_cast<int32>(Sp[i])],
 				Counted[static_cast<int32>(Sp[i])] ? float(RiverDistSum[static_cast<int32>(Sp[i])] / Counted[static_cast<int32>(Sp[i])]) : 0.f,
-				Counted[static_cast<int32>(Sp[i])] ? float(InWater[static_cast<int32>(Sp[i])]) / Counted[static_cast<int32>(Sp[i])] : 0.f);
+				Counted[static_cast<int32>(Sp[i])] ? float(InWater[static_cast<int32>(Sp[i])]) / Counted[static_cast<int32>(Sp[i])] : 0.f,
+				ActiveBank, ResourceAByBank[0], ResourceAByBank[1]);
 		}
 		Logger.Flush();
 	}

@@ -133,7 +133,12 @@ table) and quits itself at `--duration` logical seconds. Since 2026-09-06
 external policy server chooses that organism's actions) and `population.csv`
 ends with `ext_decisions,ext_fallbacks` (cumulative per species: decisions taken
 from a server / server-assigned decisions the built-in bandit had to make). Both
-are constant (`builtin`, `0,0`) in runs without `--policy`. `analyze_run.py`
+are constant (`builtin`, `0,0`) in runs without `--policy`. Since 2026-09-18 the
+river-crossing counter and positions are logged too: `agents.csv` adds
+`river_crossings,x,y,river_dist,in_water`, `deaths.csv` adds
+`river_crossings,mid_crossing`, and `population.csv` adds
+`river_crossings,mean_river_dist,frac_in_water,active_bank,resource_A_pos,resource_A_neg`
+(the last three describe the optional bank cycle; `active_bank` is 0 when it is off). `analyze_run.py`
 prints lifetime Q drift per agent, parent/child genome correlation,
 per-generation means, and a Welch test of C vs N end-of-run mean α, plus a
 summary PNG per run.

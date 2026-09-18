@@ -108,13 +108,22 @@ birth), `RewardScale`, `WeightEnergy`, `WeightNovelty`, `WeightInteraction`, `Dr
 `LeviathanTurnInterval`, `LeviathanTurnChance`, `LeviathanLoiterChance`, `bLeviathanPauseInDrought`
 (`bLeviathan` and `LeviathanCount` spawn the animals at `StartRun`: `set` then `reset`). `TraceMax`: the
 reward scaling and the minimap use the new value at once, the fields' clamp keeps the old one until the next reset.
+Added 2026-09-18: `MaxLumen`, `MaxTecton` (next birth), and the bank cycle's `bBankCycle`, `BankCyclePeriod`,
+`BankCycleWarmup`, `BankCycleScope`, `BankCycleOffCapacity`, `BankCycleOnRegen`, `BankCycleRamp`,
+`bBankCycleHardOff`, `bBankCyclePauseInDrought` (read every substep; the phase is advanced step by step, so a new
+period or warm-up only lengthens or shortens the current phase, and a `LogicalSubstep` change rescales it).
+`BankCycleStartBank` is latched when the cycle starts: set it and `bBankCycle=0`, let the sim run unpaused for at
+least one substep, send `bBankCycle=1` in a later poll (more than `ControlFilePollSec` later) - this restarts the
+warm-up - or `reset`.
 
 **`Settings.*` read only at `StartRun`, so effective at the next `reset` / `mode=`:**
 `InitialLumen`, `InitialTecton` (founders, and the neutral-control targets), `ResourcePatchesA`,
 `ResourcePatchesB`, `PatchCapacity`, **`PatchRegenPerSec`** (each patch stores its regen at spawn, so a live
 edit changes nothing until the patches are respawned), `TraceCells`, `TraceXHalfLife`, `TraceYHalfLife`
 (the trace grids are built in `StartRun`), `Seed`, `Mode`, `FounderGenome` (the `Genome.` scope),
-`FounderSpread`, `FounderAgeSpread`, `bWriteLogs`, `PatchMinSpacing` (used when patches respawn).
+`FounderSpread`, `FounderAgeSpread`, `bWriteLogs`, `PatchMinSpacing` (used when patches respawn),
+`PatchChannelClearance` and `PatchDryMargin` (patch placement, 2026-09-18; `Look.WetlandBand` now sets only wetness
+shading and groundcover/shrub density and no longer moves patches).
 `WorldHalfSize` / `WorldHalfSizeY` are mixed (clamping and spawn positions use the new value, the trace
 grids and the rendered arena keep the old one): treat them as reset-only. `Look.RiverBranches`,
 `RiverBranchWidth/Depth`, `RiverWidth/Depth/Amp/Wavelength` are terrain fields: never live (see below).

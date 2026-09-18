@@ -55,6 +55,15 @@ enum class ESWLeviathanTarget : uint8
 	Tecton UMETA(DisplayName = "Tecton only")
 };
 
+// Which resource types the bank cycle moves (Settings.bBankCycle).
+UENUM(BlueprintType)
+enum class ESWBankCycleScope : uint8
+{
+	ResourceA UMETA(DisplayName = "Resource A (Lumen food)"),
+	ResourceB UMETA(DisplayName = "Resource B (Tecton food)"),
+	Both      UMETA(DisplayName = "Both")
+};
+
 UENUM(BlueprintType)
 enum class ESWLearningMode : uint8
 {
@@ -458,6 +467,13 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) int32 InitialLumen = 40;
 	UPROPERTY(EditAnywhere) int32 InitialTecton = 16;        // 2026-09-11: 12 -> 16 so the founder cohort outlasts the later first reproduction (DESIGN.md §6b)
 	UPROPERTY(EditAnywhere) int32 MaxPopulation = 220;       // hard cap; reproduction blocked at cap
+	// Per-species ceilings, 0 = none (the default): a species' reproduction (mode N births too) is blocked while it
+	// has this many living members, newborns not yet added included - the same rule as MaxPopulation, per species.
+	// Added 2026-09-18 for the bank-cycle preset, where Tecton (up to ~125 on the relocated B patches) and the
+	// longer-lived Lumen otherwise fill the shared cap (blocking births of both) and crowd a valley the Tecton bodies
+	// are large for. Capping Tecton also cuts their soil work, which feeds Lumen regrowth.
+	UPROPERTY(EditAnywhere) int32 MaxLumen = 0;
+	UPROPERTY(EditAnywhere) int32 MaxTecton = 0;
 
 	// Arena: a rectangle centred at the origin that follows the valley (X along it, Y across it).
 	// 2026-09-11: 8000 x 5500 (160 x 110 m), 2.2x the area of the 4500 square of the hack build, so the herds
@@ -467,6 +483,42 @@ struct FSWRunSettings
 	UPROPERTY(EditAnywhere) int32 ResourcePatchesA = 34;
 	UPROPERTY(EditAnywhere) int32 ResourcePatchesB = 10;     // 2026-09-11: the Tecton ceiling (DESIGN.md §6); 16 let them reach 100+ by 1800 s
 	UPROPERTY(EditAnywhere) float PatchMinSpacing = 1100.f;  // uu; patches land at least this far apart (best of 12 seeded draws)
+	// Patch placement: a candidate must be at least PatchChannelClearance channel widths from every channel's
+	// centreline AND at least PatchDryMargin uu above Look.WaterLevel. Until 2026-09-18 (2026-09-14 on branch claude/river-levers) the margin was
+	// Look.WetlandBand (110): the valley floor sits at 0 +- 70 uu of noise, so only the rim strips ever passed
+	// and every patch landed there. The margin decides whether food can sit near the water at all. Both
+	// default to the values SpawnPatches always used, so default runs are unchanged.
+	UPROPERTY(EditAnywhere) float PatchChannelClearance = 1.9f;
+	UPROPERTY(EditAnywhere) float PatchDryMargin = 110.f;      // uu above Look.WaterLevel a patch site must be (was Look.WetlandBand)
+
+	// Bank cycle (ported 2026-09-18 from branch claude/river-levers): regrowth of the affected resource types
+	// alternates between the two banks of the main channel, so the nearest STOCKED patch is periodically across
+	// the river and the existing forage rule walks there. A regime of the world, deterministic from the substep
+	// counter (no draw); nothing is signalled to the organisms (no percept, action or reward). Off by default.
+	// On the inactive bank regrowth is exactly 0 (load-bearing: any regrowth there keeps those patches the
+	// nearest feasible target and nothing crosses) and capacity is x BankCycleOffCapacity. Crossings under the
+	// cycle are foraging following food, NOT learned behaviour. Tools/run_sim.py --preset bank-cycle.
+	// Live edits: the phase is advanced substep by substep, so changing Period / Warmup mid-run only lengthens or
+	// shortens the current phase; BankCycleStartBank is latched when the cycle starts. Known side effect: Tecton's
+	// soil reward and the soil percept still count switched-off patches as patches (SWWorldManager soil test).
+	UPROPERTY(EditAnywhere) bool bBankCycle = false;
+	UPROPERTY(EditAnywhere) float BankCyclePeriod = 600.f;      // logical s each bank stays the active one
+	UPROPERTY(EditAnywhere) float BankCycleWarmup = 300.f;      // logical s with both banks active before the first switch
+	UPROPERTY(EditAnywhere) ESWBankCycleScope BankCycleScope = ESWBankCycleScope::ResourceA;
+	UPROPERTY(EditAnywhere) float BankCycleOffCapacity = 0.1f;  // capacity multiplier on the inactive bank, clamped to [0, 1]
+	UPROPERTY(EditAnywhere) float BankCycleOnRegen = 1.f;       // regrowth multiplier on the active bank
+	UPROPERTY(EditAnywhere) int32 BankCycleStartBank = 1;      // +1 = the +Y bank goes first, -1 = the -Y bank
+	UPROPERTY(EditAnywhere) bool bBankCyclePauseInDrought = true;   // during a drought both banks regrow and the phase holds
+	// Progressive shutdown: the inactive bank's patches switch off over this many logical s after the flip,
+	// farthest from the river first, so residents drift to the water and cross in a stagger. 0 = all at once.
+	// Keep it well below BankCyclePeriod: the patch nearest the river is off only for Period - Ramp s of each phase,
+	// and with Ramp >= Period it never switches off (SpawnPatches logs a warning).
+	UPROPERTY(EditAnywhere) float BankCycleRamp = 0.f;
+	// Hard cut: an inactive-bank patch of an affected type is emptied as soon as it is switched off (and kept
+	// empty), instead of decaying toward the OffCapacity residue over ~10 s. While it decays it stays above the
+	// 0.5 forage gate, so the forage rule (nearest stocked patch) keeps residents on the home bank for those
+	// seconds. No draw; runs without the cycle are unchanged.
+	UPROPERTY(EditAnywhere) bool bBankCycleHardOff = false;
 	UPROPERTY(EditAnywhere) float PatchCapacity = 120.f;
 	UPROPERTY(EditAnywhere) float PatchRegenPerSec = 6.0f;   // logistic regrowth rate at low stock (1.6 collapses Lumen; 6 stable on seed 1, see DESIGN.md §6)
 

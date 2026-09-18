@@ -329,15 +329,18 @@ drought test needs step 2.
 2. CSV schemas (`SWLogger.cpp: FSWRunLogger::Open`):
    - `agents.csv`: `run_id,seed,mode,sim_time,generation,drought_state,agent_id,parent_id,species,age,energy,alpha,
      epsilon,social,env_effect,energy_bin,current_action,explored,reward,decisions,trace_x,trace_y,Q_<bin>_<action>
-     x21,births,deaths,pop_lumen,pop_tecton,resource_A,resource_B,policy` (one row per living agent per
-     `AgentLogInterval`).
+     x21,births,deaths,pop_lumen,pop_tecton,resource_A,resource_B,policy,river_crossings,x,y,river_dist,in_water`
+     (one row per living agent per `AgentLogInterval`; `river_dist` = |Y - main-channel centreline| in uu).
    - `births.csv`: `run_id,sim_time,parent_id,child_id,species,child_generation,child_{alpha,epsilon,social,env_effect},
      parent_{alpha,epsilon,social,env_effect},parent_age,parent_energy`.
-   - `deaths.csv`: `run_id,sim_time,agent_id,species,generation,age,energy,cause,alpha,epsilon,social,env_effect,decisions`
-     (`cause` = `starvation` | `age`).
+   - `deaths.csv`: `run_id,sim_time,agent_id,species,generation,age,energy,cause,alpha,epsilon,social,env_effect,decisions,
+     river_crossings,mid_crossing` (`cause` = `starvation` | `age`).
    - `population.csv`: `run_id,seed,mode,sim_time,species,n,mean_alpha,sd_alpha,mean_epsilon,sd_epsilon,mean_social,
      sd_social,mean_env_effect,sd_env_effect,mean_generation,max_generation,births,deaths,resource_A,resource_B,
-     drought_state,trace_X_mean,trace_Y_mean,ext_decisions,ext_fallbacks` (one row per species every 5 s).
+     drought_state,trace_X_mean,trace_Y_mean,ext_decisions,ext_fallbacks,river_crossings,mean_river_dist,
+     frac_in_water,active_bank,resource_A_pos,resource_A_neg` (one row per species every 5 s; `active_bank` = +1/-1
+     for the bank the bank cycle lets regrow, 0 = both (cycle off, warm-up or drought pause); `resource_A_pos/neg` =
+     type-A stock on the +Y / -Y bank).
 3. Write one function that takes a DataFrame and returns numbers; call it from `report_run`; print numbers, not
    verdicts. Tolerate missing columns from older runs (see `q_columns`) and keep plotting inside the existing
    try/except so a plot failure never kills the report.

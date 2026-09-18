@@ -41,6 +41,12 @@ and do not change during a lifetime.
 
 - Reproduce when `age ≥ MinReproAge` and `energy ≥ ReproThreshold`, paying
   `ReproCost` to the child. Population hard-capped at `MaxPopulation`.
+  Optional per-species ceilings `MaxLumen` / `MaxTecton` (0 = none, the
+  default; added 2026-09-18 for the bank-cycle preset) block that species'
+  reproduction, mode N births included, while it has that many living
+  members (newborns not yet added count), the same rule as `MaxPopulation`
+  per species. The check runs only when a birth is about to happen and
+  before any draw, so a cap of 0 changes nothing.
 - `G_child = clamp(G_parent + N(0, σ))` independently per parameter
   (σ = `MutationSigma`, default 0.03).
 - Learned `Q` is **not** inherited (spec's λ-inheritance is P3).
@@ -86,16 +92,226 @@ performs that comparison across seeds.
   `TerrainHeight > WaterLevel`, so an organism in a tributary senses "not on
   land" as well; only the main channel is hunted (the predator patrols
   `RiverCenterY`), so the tributaries are wet but safe.
-- Patches are placed by seeded draws that reject any channel (1.9x its width)
-  and prefer at least `PatchMinSpacing` (1100 uu) from every patch already
-  placed (best of 12 draws), so herds spread over the floor instead of
-  stacking; counts `ResourcePatchesA/B` 34 / 10 for the larger arena (B is the
-  Tecton ceiling, §6).
+- Patches are placed by seeded draws, up to 24 per patch (`SpawnPatches`). A
+  draw is accepted if it is at least `PatchChannelClearance` (1.9) channel
+  widths from every channel (main and tributaries) and at least
+  `PatchDryMargin` (110 uu) above `Look.WaterLevel`. The first accepted draw
+  at least `PatchMinSpacing` (1100 uu) from every patch already placed ends
+  the search; otherwise the accepted draw farthest from them is kept, and if
+  no draw is accepted the best-ranked one (dry first, then farthest from a
+  channel) is used. So herds spread over the floor instead of stacking.
+  Until 2026-09-18 the clearance was a constant and the margin was
+  `Look.WetlandBand`, which now only sets wetness shading and groundcover
+  and shrub density and no longer moves patches; both settings default to
+  those values. Each patch records its bank of the main channel
+  (`SWProc::BankSide`, see the bank cycle below). Counts
+  `ResourcePatchesA/B` 34 / 10 for the larger arena (B is the Tecton
+  ceiling, §6).
 - Resource patches: `Stock` with logistic regrowth
   `dS/dt = Regen · (1 − S/K)`; type A feeds Lumen, type B feeds Tecton.
+  K is the effective capacity, `max(1, Capacity x multiplier)` for a positive
+  capacity multiplier and exactly 0 for a multiplier of 0 or less (nothing
+  regrows and the stock decays to 0). Only the bank cycle's switched-off
+  bank reaches 0: since 2026-09-18 a drought's multiplier is floored just
+  above 0, so a drought keeps the 1-unit minimum. Stock above K decays
+  toward it (`FInterpTo`, speed 0.5 per logical s).
 - Drought: multiplies regen by `DroughtRegenMultiplier` and effective
   capacity by `DroughtCapacityMultiplier`; stock above the new capacity
   decays toward it.
+- **Bank cycle** (ported 2026-09-18 from branch `claude/river-levers`, where
+  it was built 2026-09-14; `Settings.bBankCycle`, off by default; SWTypes.h).
+  A regime of the world, not a new behaviour: regrowth of the affected
+  resource types alternates between the two banks of the main channel, so the
+  nearest stocked patch is periodically across the river and the existing
+  forage rule walks there. With the flag off `ActiveBank` stays 0 and every
+  cycle branch below is skipped: seed 7, mode C, 120 s still gives
+  7735/65/43/47 lines (agents/births/deaths/population.csv) and the predator
+  check (seed 4) 7543/75/49/47, the same as before the port.
+  - *Settings and clamps*: `BankCyclePeriod` 600 logical s per phase and
+    `BankCycleWarmup` 300 s, each rounded to whole substeps of
+    `LogicalSubstep` (floored at 0.01 s), the period to at least one
+    substep; `BankCycleScope` (`ESWBankCycleScope`): `ResourceA` (default,
+    Lumen food), `ResourceB` (Tecton food) or `Both`, settable by name or
+    number through `-SWSet`; `BankCycleOffCapacity` 0.1, clamped to [0, 1];
+    `BankCycleOnRegen` 1, floored at 0, no upper clamp; `BankCycleStartBank`
+    1 (>= 0: the +Y bank goes first, < 0: the -Y bank);
+    `bBankCyclePauseInDrought` true; `BankCycleRamp` 0 s, floored at 0;
+    `bBankCycleHardOff` false.
+  - *Schedule* (`ASWWorldManager::UpdateBankCycle`, once per substep before
+    the patch loop; integer counters, no draw). The first substep on which
+    the flag is on starts the clock and latches `BankCycleStartBank`; turning
+    the flag off resets both, so a live `set Settings.bBankCycle=1` starts a
+    fresh warm-up (the off must be seen by at least one unpaused substep:
+    send the `=1` in a later poll), and `StartRun` resets it for every run.
+    For
+    `BankCycleWarmup` s both banks regrow normally (`active_bank` 0); then
+    the start bank's phase begins, and each phase lasts `BankCyclePeriod` s
+    before the other bank takes over. With the defaults and no drought the
+    switches fall at 300, 900 and 1500 s of an 1800 s run. The phase is
+    advanced one substep at a time, never recomputed from the elapsed total,
+    so a live change of the period or warm-up only lengthens or shortens the
+    current phase (a period already exceeded flips on the next substep) and
+    a live `LogicalSubstep` change rescales the counters, keeping the clock
+    in logical seconds. With the settings fixed the flips fall on the same
+    substeps as the closed form (elapsed - warm-up) / period: a rerun of seed 1
+    of the passing exit test, recorded with the closed form, matched it row
+    for row. While a drought is on and
+    `bBankCyclePauseInDrought` is true the clock stops (warm-up included) and
+    `active_bank` is 0, so both banks regrow under the drought multipliers
+    alone; the phase resumes where it stopped when the drought ends (one
+    pressure at a time, like the predator). With the pause off the cycle
+    keeps running and composes with the drought multipliers.
+  - *Inactive bank*, each patch of an affected type (`StepWorld`): regrowth
+    multiplier exactly 0, which also zeroes the drought factor and the
+    Trace Y soil term, and capacity x `BankCycleOffCapacity` on top of the
+    drought's. The 0 is load-bearing (found on the river-levers branch): any
+    regrowth keeps those patches above the forage gate and the nearest
+    feasible target, and nothing crosses. `ASWResourcePatch::Step` takes the
+    effective capacity as `max(1, Capacity x multiplier)` for a positive
+    multiplier and exactly 0 for a multiplier of 0 or less, which only the
+    cycle can produce (a drought's multiplier is floored just above 0, so a
+    drought keeps its 1-unit minimum); stock above it decays toward it
+    (`FInterpTo`, speed 0.5 per logical s), and with the regrowth multiplier
+    at 0 stock below it does not regrow. At the default 0.1 a patch keeps a
+    residue of up to 12 units (`PatchCapacity` 120) out of drought. At 0 it
+    drains, but not at once: with the preset as first ported the
+    switched-off bank took about 10 s (two 5-s log rows) to empty, and for
+    those ~10 s its patches stayed above the gate.
+    `bBankCycleHardOff` empties a switched-off patch right after its `Step`,
+    on every substep while it is off (`Take` of the whole stock; the stock
+    goes to nobody), so it drops out of the forage rule at each organism's
+    next decision after the switch (a percept is rebuilt only at a decision,
+    every `DecisionInterval` 1 s); with the hard cut on,
+    `BankCycleOffCapacity` only changes the RESOURCES card. Ramp order:
+    `BankCycleRamp` > 0 switches the inactive bank's patches off one by one.
+    At spawn each (type, bank) set is ranked by |Y - `RiverCenterY(X)`|, the
+    across-valley offset from the main channel's centreline, farthest first,
+    ties by spawn index, which gives each patch an `OffOrder` in [0, 1]; a
+    patch switches off once the phase has run `OffOrder x BankCycleRamp` s
+    and regrows normally until then. The patch nearest the river is off only
+    for Period - Ramp s of each phase; with Ramp >= Period it never switches
+    off, and `SpawnPatches` logs a warning.
+  - *Active bank*: regrowth x `BankCycleOnRegen`, composed with the drought
+    and soil factors; capacity unchanged. Unaffected types, and every patch
+    during the warm-up or a held phase, step as without the cycle.
+  - *A patch's bank*: `SWProc::BankSide` (SWProcMesh.h), +1 when
+    Y >= `RiverCenterY(X)` and -1 otherwise, the same comparison as the
+    river-crossing counter's side test (`ASWAgent::UpdateRiverCrossing`).
+    Set when the patch spawns and again in `RegroundAll` when the
+    environment is built; patches do not move, so it is fixed for the run.
+    Tributaries define no bank: a patch beside one belongs to the side of
+    the main channel it stands on.
+  - *Placement*: `PatchChannelClearance` and `PatchDryMargin` (patch bullet
+    above) are not part of the cycle, but they decide whether food can sit
+    near the water at all; changing them changes which draws are accepted
+    and how many are consumed, so the patches of both types land elsewhere
+    and every later seeded draw shifts: such a run is a different world from
+    the default run of the same seed.
+  - *Precondition log* (`SpawnPatches`). Every run logs `Patches: A <n> on
+    +Y / <n> on -Y, B <n> on +Y / <n> on -Y (bank cycle on|off)`. With the
+    cycle on at `StartRun` it adds one line per affected type, `Bank cycle:
+    <seen>/<total> type-<T> patches see a far-bank patch of their type
+    within SenseRange <R>` (`<T>` is 0 for A, 1 for B): a patch counts when
+    the nearest patch of its type on the other bank is within the eating
+    species' `SenseRange` (Lumen for A, Tecton for B; 2D patch-to-patch
+    distance). That is the condition for a migration rather than a famine.
+    It is logged, not enforced, and not re-checked after a live switch-on.
+  - *Logged*: `population.csv` ends with `active_bank` (+1 / -1; 0 = both
+    regrow: cycle off, warm-up or held by a drought), `resource_A_pos` and
+    `resource_A_neg` (type-A stock on the +Y and on the -Y bank; they sum to
+    `resource_A` to within 0.1 (rounding) whatever the scope, and both species' rows carry the same
+    values). Crossings are the existing `river_crossings` column; the
+    inspector's energy line also shows the selected organism's lifetime
+    crossings. The Lab records a run whose `active_bank` is ever non-zero
+    under the mode `<mode>+bank_cycle`, so it is never pooled with ordinary
+    runs.
+  - *HUD*: a green `BANK CYCLE` stat card while the flag is on (green like
+    RESOURCES, because it says where regrowth is): "warm-up" over "both
+    regrow, N s" (to the first switch), "+Y bank" or "-Y bank" over
+    "regrows, switch N s", or "held" over "drought: both regrow". It reads
+    the phase's bank, which a drought pause does not zero, so "warm-up"
+    appears only during the warm-up. The RESOURCES card divides by the
+    cycle's effective capacity: a switched-off patch counts
+    `Capacity x BankCycleOffCapacity`, so at 0 it leaves the denominator.
+    The drought's capacity is still not applied there, so the drought
+    reading is unchanged.
+  - *Known side effect*: Tecton's soil reward and the soil percept still
+    count a switched-off patch as a patch.
+  - *Preset*: `Tools/run_sim.py --preset bank-cycle` prepends
+    `Settings.bBankCycle=1; Settings.PatchDryMargin=0;
+    Settings.PatchChannelClearance=0.6; Lumen.SenseRange=8000;
+    Settings.BankCycleOffCapacity=0; Settings.BankCycleOnRegen=2;
+    Settings.bBankCycleHardOff=1; Lumen.MaxAge=250; Settings.MaxTecton=30;
+    Settings.MaxLumen=150` to `--set`; entries apply in order, so a `--set`
+    value for the same field wins. So food may sit at the banks; a Lumen can
+    sense a far-bank patch (default `SenseRange` 1600; the precondition line
+    checks it); the switched-off bank is emptied at once; the active bank
+    regrows at twice the rate, so the food moves instead of halving; Lumen
+    `MaxAge` is 250 s instead of 150, which also widens the founders'
+    staggered starting ages; and the per-species caps (population bullet in
+    §2) keep the valley uncrowded. Period, warm-up, scope (Lumen food only),
+    start bank, drought pause and ramp stay at their defaults. No Tecton
+    life-history parameter changes, though the B patches move with the
+    placement settings.
+  - *Guardrail*: nothing is signalled to the organisms. No percept field,
+    feasibility mask, action or reward term reads the bank or the phase;
+    beyond patch setup and the patch loop only the HUD and the logger read
+    them. `forage` walks to the percept's nearest patch of the preferred
+    type with stock > 0.5 inside `SenseRange`, and after a switch that patch
+    is on the far bank once the home bank's affected patches are at or below
+    0.5 (at once with the hard cut; at the default `BankCycleOffCapacity`
+    0.1 a residue of up to 12 units stays above the gate) and a far-bank
+    patch lies within `SenseRange`. Crossings under the cycle are that rule
+    following food. They are not learned (the γ = 0 bandit's contexts are
+    energy thirds and `forage` is the same action whichever bank the patch
+    is on, §1) and not inherited (the genome is {α, ε, social, e} and `Q` is
+    not inherited, §2). Never present them as learned or inherited
+    behaviour, and run the §7 controls (mode A, and mode N for evolution
+    claims) under the same settings.
+  - *Exit test* (2026-09-18). The preset as first ported (no hard cut, Lumen
+    `MaxAge` 150) failed: mode C, seeds 1-5 x 1800 s, every seed fell below
+    20 Lumen and 2 of 5 went extinct. Starvation on the trip followed energy
+    per metre at its start; the decaying home bank held residents for
+    ~10 s; 36% of the Lumen alive at a switch were within 60 s of the
+    150 s `MaxAge`. A screen on held-out seeds 6-15 promoted two variants, the hard
+    cut + Lumen `MaxAge` 250 and the same with `Look.RiverWidth` 700; the
+    first was chosen because it leaves the river unchanged. Preregistered
+    exit test, mode C, seeds 1-5 x 1800 s: PASS. Lumen lowest
+    32/29/28/31/34 (as ported 10/0/0/4/8), Tecton lowest 16/16/14/14/16,
+    Lumen crossings per switch (`river_crossings` gained from one switch to
+    the next, or to the end of the run) 57.0/53.7/62.0/57.0/65.3 (as ported
+    15.3/11.3/22.7/24.7/16.3). It crowded the valley (Lumen up to ~170,
+    Tecton up to ~125, the shared `MaxPopulation` 220 reached on 3 of 5
+    seeds), so the preset gained `MaxTecton` 30 and `MaxLumen` 150: screened
+    on seeds 6-15 against 30/45 x 120/150, with the lowest passing total
+    preregistered as the choice, and the same exit test PASSES with them:
+    Lumen lowest 26/29/28/32/36, Tecton lowest 16/16/14/14/16 and never
+    above 30, Lumen + Tecton peak 152-180, crossings per switch
+    52.0/48.0/55.0/51.0/69.7. Capping Tecton also cuts their soil work,
+    which feeds Lumen regrowth: on the screen seed 11's Lumen low sat
+    exactly at the floor of 20. **Not yet safe beyond that horizon or in a
+    drought.** A live 7200 s run of the capped preset (seed 1, the Lab
+    bridge attached) dipped to 17 Lumen after the ninth switch with no
+    drought, and a drought toggled at 6210 s (the P key) took Lumen from 82
+    to 24 within a minute and to 1 by 6915 s, with no recovery before it
+    ended at 7180 s although the type-A stock rose to ~1800: the drought's
+    capacity cut hit the grazed active bank right after a switch, while the
+    Lumen were weak (median energy 22). The 1800 s exit test never met a
+    drought or more than three switches; the next gate is a long run (at
+    least 10 switches) with a drought.
+  - *Tecton stay out of the cycle* (2026-09-18; four preregistered screens
+    on seeds 6-15 with scope `Both`, none passed). With today's Tecton they
+    die out: at `SenseRange` 2200 no B patch sees the far bank and 9 of 10
+    seeds go extinct; at 8000 and 12000 they cross (4.6 and 6.0 crossings
+    per switch) but 6 and 5 of 10 seeds still go extinct. A stranded Tecton is a
+    median 116 s into a 260 s life, takes a median 71 s to cross, lands with
+    ~56 energy against a `ReproThreshold` of 145 and dies of age before
+    breeding: Tecton births per 300 s fall from 21-23 to 4-6 after a switch.
+    Tecton `MaxAge` 520 with 8 founders keeps both species alive on every
+    seed but crowds the valley (220 reached on 5 of 10 seeds); adding
+    `MaxTecton` 30-60 (with or without `MaxLumen` 120-150) still drops Lumen
+    to 10-18 after a switch on one seed per arm. So the preset keeps scope
+    `ResourceA`.
 - **Leviathan** (river predation, contributed 2026-09-06, off by default). A
   perturbation of the environment, not a species: no genome, no learner, no
   `ESWSpecies` entry, no new action, so the external policy protocol is

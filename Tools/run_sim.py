@@ -42,6 +42,25 @@ def parse_res(spec):
     return int(m.group(1)), int(m.group(2))
 
 
+# Named -SWSet bundles. bank-cycle = the bank-alternating regrowth regime (DESIGN.md §4, "Bank cycle") with the
+# world set up so residents of the switched-off bank can SEE food across the water: patches allowed at the banks,
+# a Lumen sense range at which most patches see a far-bank patch (the "Bank cycle: N/34 type-0 patches" log line;
+# 30-34 of 34 by seed), no off-bank residue and doubled active-bank regrowth. The first six settings are the
+# preset as built on 2026-09-14; alone they FAIL the exit test (Lumen extinct on 2 of 5 seeds): the decaying home
+# bank held residents for ~10 s and 36% of Lumen were within 60 s of MaxAge at a switch. bBankCycleHardOff and
+# Lumen.MaxAge=250 (2026-09-18) pass the preregistered exit test on seeds 1-5 x 1800 s (Lumen lowest 28, 0 extinct,
+# 59 crossings per switch), but the valley is crowded: Lumen reach ~170, Tecton ~125, and the shared MaxPopulation
+# 220 is hit on 3 of 5 seeds. MaxTecton=30 and MaxLumen=150 (per-species caps, same day) pass the same test with
+# the valley uncrowded (Lumen lowest 26, peak Lumen + Tecton 152-180, 48-70 crossings per switch). Tecton stay out
+# of the cycle (scope ResourceA): in it they die out or push Lumen below 20 (four screens). NOT yet safe beyond 1800 s or
+# in a drought: a 7200 s live run dipped to 17 Lumen and a drought took them to 1. See PROGRESS.md 2026-09-18.
+PRESETS = {
+    "bank-cycle": "Settings.bBankCycle=1;Settings.PatchDryMargin=0;Settings.PatchChannelClearance=0.6;"
+                  "Lumen.SenseRange=8000;Settings.BankCycleOffCapacity=0;Settings.BankCycleOnRegen=2;"
+                  "Settings.bBankCycleHardOff=1;Lumen.MaxAge=250;Settings.MaxTecton=30;Settings.MaxLumen=150",
+}
+
+
 def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=None, no_logs=False, auto_select=False, cam=None, offscreen=False, stream=None,
             policy=None, policy_timeout=None, policy_share=None, policy_file=None, control_file=None, res=DEFAULT_RES,
             no_console=False):
@@ -120,6 +139,8 @@ def main():
     ap.add_argument("--speed", type=float, default=200, help="time scale (headless can go high)")
     ap.add_argument("--windowed", action="store_true", help="use the rendering editor exe with a window")
     ap.add_argument("--analyze", action="store_true", help="run Analysis/analyze_run.py on the new runs")
+    ap.add_argument("--preset", choices=sorted(PRESETS), default=None,
+                    help="named -SWSet bundle, prepended to --set: " + "; ".join(f"{k} = {v}" for k, v in PRESETS.items()))
     ap.add_argument("--set", dest="set_spec", default=None,
                     help='parameter overrides, e.g. "Settings.PatchRegenPerSec=5;Lumen.ReproThreshold=85"')
     ap.add_argument("--shot", default=None, help="comma-separated sim times for self-screenshots (windowed only)")
@@ -143,6 +164,8 @@ def main():
                     help="live control file polled every 2 s while the sim runs (default Saved/control.txt under the project; empty string disables); append lines with Tools/control.py, grammar in docs/CONTROL_FILE.md")
     ap.add_argument("extra", nargs="*", help="extra engine args (put them after --)")
     args = ap.parse_args()
+    if args.preset:
+        args.set_spec = PRESETS[args.preset] + (";" + args.set_spec if args.set_spec else "")
 
     parse_res(args.res)   # fail before launching anything
     if not EDITOR_CMD.exists():

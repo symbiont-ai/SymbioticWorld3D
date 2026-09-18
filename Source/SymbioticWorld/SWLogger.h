@@ -15,6 +15,8 @@ class ASWAgent;
 // also ends with mid_crossing: 1 when the organism died in the water past the centreline, not yet ashore.
 // Positions: agents.csv ends with x,y,river_dist,in_water and population.csv with mean_river_dist,frac_in_water,
 // where river_dist is |Y - main-channel centreline| (the valley runs along X) - how far from the river it stands.
+// population.csv then ends with active_bank,resource_A_pos,resource_A_neg: the bank cycle's regrowing bank
+// (+1 / -1, 0 = both) and the type-A stock standing on each bank.
 // Columns follow Appendix A of the spec, extended with mode, context bin and
 // the explore flag so a run can be audited offline (Analysis/analyze_run.py).
 class FSWRunLogger
@@ -37,7 +39,8 @@ public:
 	                   float MeanSocial, float SdSocial, float MeanEnv, float SdEnv, float MeanGen, int32 MaxGen,
 	                   int32 Births, int32 Deaths, float ResourceA, float ResourceB, bool bDrought,
 	                   float TraceXMean, float TraceYMean, int32 ExtDecisions, int32 ExtFallbacks, int32 RiverCrossings,
-	                   float MeanRiverDist, float FracInWater);
+	                   float MeanRiverDist, float FracInWater,
+	                   int32 ActiveBank, float ResourceAPos, float ResourceANeg);
 
 	// Control-file command (docs/CONTROL_FILE.md): run_id,sim_time,wall_utc,command,result. Appended immediately
 	// (not buffered) so the audit trail survives a crash; command and result are CSV-quoted.

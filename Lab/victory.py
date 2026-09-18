@@ -41,7 +41,8 @@ def _mode_of(con, run_id, _cache={}):
     if row is None and run_id.startswith("live:"):
         row = con.execute("SELECT mode FROM runs WHERE ? LIKE run_id || ':%'",
                           (run_id,)).fetchone()
-    mode = (row["mode"][:1].upper() if row and row["mode"] else "?")
+    # a regime-tagged run (e.g. "+bank_cycle") is no mode's evidence for the spec's conditions
+    mode = (row["mode"][:1].upper() if row and row["mode"] and "+" not in row["mode"] else "?")
     _cache[run_id] = mode
     return mode
 

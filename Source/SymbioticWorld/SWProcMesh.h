@@ -38,6 +38,9 @@ namespace SWProc
 	// so agents can query it without touching the environment actor.
 	float TerrainHeight(const FSWLookSettings& L, float X, float Y);
 	float RiverCenterY(const FSWLookSettings& L, float X);
+	// Which bank of the MAIN channel a point is on: +1 for Y >= the centreline, -1 below. The one rule shared by
+	// the river-crossing counter's side test, patch placement and the bank cycle.
+	inline int32 BankSide(const FSWLookSettings& L, float X, float Y) { return Y >= RiverCenterY(L, X) ? 1 : -1; }
 	// Tributaries (Look.RiverBranches): polylines from the valley sides to confluences on the main channel.
 	struct FRiverBranch { TArray<FVector2D> Points; float Width = 300.f; };   // depth = RiverDepth x RiverBranchDepth, read live
 	const TArray<FRiverBranch>& RiverBranches(const FSWLookSettings& L);
