@@ -1,11 +1,29 @@
 # Symbiotic World
 
-[Sundai Hack 139](https://www.sundai.club/events/boston/wolfram-hack?tab=projects) entry. A persistent 3D ecosystem in Unreal Engine 5.7 with two
-populations of primitive learning agents, **Lumen** (fast cyan scouts) and
-**Tecton** (slow amber ecosystem engineers). Every individual learns online
-during its lifetime with a tabular contextual bandit; descendants inherit
-mutated learning parameters (α, ε, social) and an environmental-effect strength (e). The claim the demo has to earn:
+[Sundai Hack 139](https://www.sundai.club/events/boston/wolfram-hack?tab=projects) entry.
+
+Symbiotic World is a persistent 3D ecosystem in Unreal Engine 5.7. Two populations share one
+valley: **Lumen**, fast bioluminescent scouts that forage and signal, and **Tecton**, slow
+ecosystem engineers that rework the soil and change where food grows next. Every organism learns
+online across its own lifetime with a tabular contextual bandit, and when it reproduces its
+offspring inherits *how it learns* — step size α, exploration rate ε, sociality, and an
+environmental-effect strength e — with mutation on each parameter. Selection therefore acts on the
+learning itself rather than on any fixed policy, and a neutral-drift control mode runs the
+identical world with reproduction decoupled from fitness, so nothing counts as selection until it
+beats drift. A Leviathan patrols the river and takes what it catches. What the creatures do changes
+the world, and the world they change acts back on their descendants, generation after generation:
 *training was only generation zero.*
+
+The valley streams live to any browser on the local network, so a room can watch and drive one
+running world together, and collaborators can write agents in Python and be handed organisms to
+control. It is, before anything else, a simulation worth just watching run.
+
+Above the world sits a lab of AI scientists studying it: they register hypotheses, preregister
+their predictions, run controlled experiments against the sim's own knobs, veto each other's
+methodology, and evolve toward whoever turns out best calibrated. The split is deliberate — the
+creatures use no language models at all, because their learning should be as simple as it can be
+and still show the effect, while the research team is language models role-playing expert types,
+a second layer of complexity studying the first.
 
 Spec: `docs/SPEC_TEXT.txt` (text of the hack-day specification; concept plates in
 `docs/plates/`). Mechanism definitions: `DESIGN.md`.
