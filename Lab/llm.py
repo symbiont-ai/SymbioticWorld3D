@@ -294,9 +294,13 @@ DESIGN_TEMPLATES = [
     dict(name="predation selects exploration",
          when=("predat", "leviathan"), also=("epsilon", "avoid", "explor"),
          arms=("C", "Settings.bLeviathan=1", "C", "Settings.bLeviathan=0"),
-         metric="lumen_end_mean_epsilon", direction="treatment_higher", threshold=0.01,
+         metric="lumen_end_mean_epsilon", direction="treatment_higher", threshold=0.03,
+         seeds=[1, 2, 3, 4, 5, 6, 7, 8],
          why="A strike radius that removes foragers should price hesitation: if predation "
-             "selects at all, the surviving lineages carry higher epsilon."),
+             "selects at all, the surviving lineages carry higher epsilon. Eight seeds and a "
+             "0.03 band because of caveat H-028: end epsilon has a seed-to-seed SD near 0.03, "
+             "and the 3-seed version of exactly this contrast reported -0.0305 where 8 seeds "
+             "give +0.0054."),
     dict(name="predation sets the population floor",
          when=("predat", "leviathan"),
          arms=("C", "Settings.bLeviathan=1", "C", "Settings.bLeviathan=0"),
@@ -306,9 +310,12 @@ DESIGN_TEMPLATES = [
     dict(name="drought selects exploration",
          when=("drought",), also=("epsilon",),
          arms=("C", "Settings.PatchRegenPerSec=1.8", "C", ""),
-         metric="lumen_end_mean_epsilon", direction="treatment_higher", threshold=0.01,
+         metric="lumen_end_mean_epsilon", direction="treatment_higher", threshold=0.03,
+         seeds=[1, 2, 3, 4, 5, 6, 7, 8],
          why="0.3x of the regen-6 baseline makes resources scarce and shifting; energy-gated "
-             "reproduction should then favour the higher-epsilon genomes."),
+             "reproduction should then favour the higher-epsilon genomes. Eight seeds and a 0.03 "
+             "band (caveat H-028), and note the drought arm leaves only 7-32 survivors, so the "
+             "mean is taken over very few lineages."),
     dict(name="adaptation continues under drought",
          when=("without offline retraining", "adaptation continuing", "keeps learning"),
          arms=("C", "Settings.PatchRegenPerSec=1.8", "C", ""),
@@ -375,7 +382,9 @@ DEFAULT_DESIGN = dict(name="learning and evolution vs neutral drift",
 
 def _threshold_for(metric):
     """Band to use when a docketed crux replaces the bench row's own metric."""
-    if any(k in metric for k in ("alpha", "epsilon", "corr", "slope", "env_effect", "frac")):
+    if any(k in metric for k in ("alpha", "epsilon")):
+        return 0.03      # measured seed-to-seed SD of the end-of-run means (caveat H-028)
+    if any(k in metric for k in ("corr", "slope", "env_effect", "frac")):
         return 0.01
     return 3.0
 
