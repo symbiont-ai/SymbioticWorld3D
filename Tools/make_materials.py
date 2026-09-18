@@ -623,7 +623,10 @@ make("M_SW_TraceOverlay", trace_overlay,
      shading_model=unreal.MaterialShadingModel.MSM_UNLIT,
      two_sided=True)
 try:
-    make("M_SW_Scan", scan, used_with_instanced_static_meshes=True)
+    # used_with_nanite: the scan meshes render through Nanite once the project targets SM6, and a
+    # material without the flag makes the editor log "needed to have new flag set bUsedWithNanite"
+    # and dirty the asset on every startup until someone saves it.
+    make("M_SW_Scan", scan, used_with_instanced_static_meshes=True, used_with_nanite=True)
 except Exception as ex:  # scan textures not migrated: C++ leaves the scan meshes' own materials in place
     unreal.log_warning(f"M_SW_Scan skipped: {ex}")
 try:
