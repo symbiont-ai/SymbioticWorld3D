@@ -90,9 +90,16 @@ Open work found in the 2026-09-15 status review, fork check and Lab test prep.
       arms+metric+seeds+duration, H-005..H-007 hold experiments, and the mode-A control answers OQ-VC-3.
 
 - [ ] HUD: with a policy server connected, the title card's "ext N" suffix runs into the GENERATION card subtitle.
-- [ ] Repo hygiene: local `main` still holds superseded creature/avatar drafts (discard, then fast-forward to
-      `origin/main`); `goofy-aryabhata` holds a duplicate uncommitted SpawnPatches fix; `river-levers` /
-      `river-crossings` experiments sit on e256eda and need a rebase onto `main`.
+- [x] Repo hygiene (done 2026-09-18): every worktree is clean and `main` is at `origin/main`. Nothing was
+      discarded - main's 21 files of creature/avatar drafts are preserved on `archive/creature-drafts-2026-09-18`
+      (SWCreatureMeshComponent is 75 lines there against 79 shipped), goofy-aryabhata's SpawnPatches fix was
+      restored rather than committed twice because it is already on main verbatim as 27941a8 and its notes are
+      archived on its own branch, and the two river experiments are now commits instead of loose files
+      (`river-crossings` 00e0c39, 174 insertions; `river-levers` 245c2e7, 635 insertions). The rebase onto main is
+      DECLINED, not forgotten: both conflict (PROGRESS.md and docs/POLICY_API.md, plus SWWorldManager.cpp for
+      river-levers) on a base 28 commits old, and both experiments failed their own exit conditions - if the
+      question is worth reopening, the lab's design bench should re-derive it against current main rather than
+      replaying a stale patch.
 
 ## Cut order (spec §11)
 

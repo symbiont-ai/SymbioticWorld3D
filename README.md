@@ -18,6 +18,8 @@ The valley streams live to any browser on the local network, so a room can watch
 running world together, and collaborators can write agents in Python and be handed organisms to
 control. It is, before anything else, a simulation worth just watching run.
 
+![The Symbiotic Lab field team at camp, with each scientist's role](docs/images/lab_team.png)
+
 Above the world sits a lab of AI scientists studying it: they register hypotheses, preregister
 their predictions, run controlled experiments against the sim's own knobs, veto each other's
 methodology, and evolve toward whoever turns out best calibrated. The split is deliberate — the
@@ -323,7 +325,7 @@ experiment recipe: `docs/SCIENTIST_API.md`.
 
 ## The Symbiotic Lab
 
-`Lab/` is a team of scientist agents that studies this world the way a lab studies a field
+`Lab/` is a team of nine scientist agents that studies this world the way a lab studies a field
 site: it ingests run telemetry as citable evidence, argues over it in structured meetings,
 designs experiments against the sim's own knobs, runs them headless, scores every
 preregistered prediction, and promotes or demotes the claim in a registry.
