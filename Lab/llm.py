@@ -364,8 +364,8 @@ DESIGN_TEMPLATES = [
          why="The open question asks for seeds 1-5 at 1800 s, so the protocol asks for exactly "
              "that: a regen-4 arm against the regen-6 baseline."),
     dict(name="is exploration under selection at all",
-         when=("under selection", "exploration is selected", "epsilon tail", "low-epsilon",
-               "selection on exploration"),
+         when=("epsilon under selection", "exploration under selection", "selection gradient",
+               "epsilon tail", "low-epsilon tail"),
          arms=("C", "", "N", ""),
          metric="lumen_selection_r_epsilon", direction="treatment_higher", threshold=0.05,
          seeds=[1, 2, 3, 4, 5, 6, 7, 8],
@@ -377,7 +377,8 @@ DESIGN_TEMPLATES = [
              "null is exact, because neutral mode picks parents at random. Measured 2026-09-18: "
              "C +0.0749 vs N -0.0501, 3.1 SE over 8 seeds."),
     dict(name="selection on the learning rate",
-         when=("learning rate under selection", "alpha under selection", "selection on alpha"),
+         when=("alpha under selection", "learning rate under selection",
+               "selection gradient on alpha"),
          arms=("C", "", "N", ""),
          metric="lumen_selection_r_alpha", direction="treatment_higher", threshold=0.05,
          seeds=[1, 2, 3, 4, 5, 6, 7, 8],
