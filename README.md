@@ -12,6 +12,28 @@ Spec: `docs/SPEC_TEXT.txt` (text of the hack-day specification; concept plates i
 Build plan with exit conditions: `CHECKLIST.md`.
 Contributing (Mac collaborators, coding agents, recipes for actions/percepts/species/learners/perturbations/analysis): `docs/CONTRIBUTING.md`.
 
+## Demo videos
+
+Both are scripted takes: a seeded run plus a shot list fired at exact logical times, so
+re-running the same seed and list reproduces the take (see "Recorded takes" below).
+
+### The world — 4 min ([docs/videos/symbiotic_world_demo.mp4](docs/videos/symbiotic_world_demo.mp4))
+
+[![The world](docs/videos/symbiotic_world_demo.jpg)](docs/videos/symbiotic_world_demo.mp4)
+
+Seed 4, mode C. The Leviathan hunting the river channel, one organism's action values
+changing with experience, then 50x while generations turn over and each inherits its
+parent's learning rate mutated, and finally a drought at 1x with the HUD hidden.
+
+### The lab — 4m44s ([docs/videos/symbiotic_lab_demo.mp4](docs/videos/symbiotic_lab_demo.mp4))
+
+[![The Symbiotic Lab](docs/videos/symbiotic_lab_demo.jpg)](docs/videos/symbiotic_lab_demo.mp4)
+
+The Symbiotic Lab dashboard with the same world streaming live inside its World tab: the
+field team's duty cycle, a meeting forming in real time, an experiment's protocol with its
+measured arms and the predictions every scientist preregistered before the run, the
+registry, and Vega's charts.
+
 ## Requirements
 
 - Unreal Engine 5.7 (installed at `C:\Program Files\Epic Games\UE_5.7`)
@@ -23,8 +45,15 @@ Contributing (Mac collaborators, coding agents, recipes for actions/percepts/spe
 ## Build
 
 ```bash
-"C:/Program Files/Epic Games/UE_5.7/Engine/Build/BatchFiles/Build.bat" SymbioticWorldEditor Win64 Development -Project="%CD%/SymbioticWorld.uproject" -WaitMutex
+Tools/build.bat
 ```
+
+It wraps the engine's `Build.bat` (SymbioticWorldEditor Win64 Development) and refuses to
+run while any `UnrealEditor` / `UnrealEditor-Cmd` process exists: the module DLL is locked,
+the link fails, and replacing the DLL under a live session crashes it. Pass
+`-DisableAdaptiveUnity` when a build's codegen must match a clean checkout's exactly
+(UBT compiles git-modified files outside the unity blob, which has produced runs that
+differ from the same seed built the other way).
 
 First build ~2 min, incremental ~10 s. Then double-click `SymbioticWorld.uproject`
 or open it from the Epic launcher. The startup map is `/Game/Maps/Valley`
@@ -226,7 +255,23 @@ Grammar and which settings take effect live: `docs/CONTROL_FILE.md`.
 ## Recorded takes
 
 A demo video is a scripted take, not a live performance: start a rendering run, append the whole shot list
-to its control file, and record the window with Game Bar (Win+Alt+R).
+to its control file, and record the screen with ffmpeg. Game Bar is not usable here - it recorded nothing
+on this machine - and neither are window-targeted captures of a GPU-composited window, which come back
+black. What works is a desktop capture of a window that has been raised and pinned:
+
+```bash
+ffmpeg -f gdigrab -framerate 30 -draw_mouse 0 -offset_x 0 -offset_y 0 -video_size 2400x1600        -i desktop -t 240 -c:v h264_nvenc -preset p5 -cq 23 -pix_fmt yuv420p -an take.mp4
+```
+
+Three things cost whole takes before this was written down: `run_sim.py --no-console` (without it the
+engine's log console floats over the frame), never resizing the window after launch (the HUD lays out
+for the render size, so a forced resize crops its right column - pick `--res` to fit instead), and the
+fact that a desktop capture records whatever is in FRONT. Pinning a window `HWND_TOPMOST` is not enough,
+because Windows denies `SetForegroundWindow` to a process that is not already the foreground app; a take
+recorded four minutes of an unrelated app's title bar that way. Raise the window first (drop
+`SPI_SETFOREGROUNDLOCKTIMEOUT`, attach the foreground thread's input queue, tap Alt), then pin it, then
+refuse to record unless the window you want reads back as the foreground process - and verify the result
+from the recording itself (a frame per segment) rather than from the script's exit code.
 
 ```bash
 python Tools/run_sim.py --mode C --seed 1 --duration 400 --speed 1 --windowed --res 1920x1080 --control-file Saved/take1.txt
@@ -255,7 +300,45 @@ keeps a shared notebook. Client: `python3 Tools/scientist_client.py --host <host
 --seeds 1 2 3 --duration 600 --wait`. Endpoints, summary fields, control grammar and an
 experiment recipe: `docs/SCIENTIST_API.md`.
 
-## What is verified (2026-09-05)
+## The Symbiotic Lab
+
+`Lab/` is a team of scientist agents that studies this world the way a lab studies a field
+site: it ingests run telemetry as citable evidence, argues over it in structured meetings,
+designs experiments against the sim's own knobs, runs them headless, scores every
+preregistered prediction, and promotes or demotes the claim in a registry.
+
+```bash
+python -m Lab.lab session --llm mock --meetings 3   # meetings -> designs -> runs -> verdicts -> report
+python -m Lab.lab observe --embody --port 9000      # live bridge: the team watches, and inhabits, a running sim
+python -m Lab.lab ui                                # dashboard on :8765 (its World tab embeds the stream)
+python -m Lab.lab run-queued                        # execute experiments queued elsewhere (sim machine)
+python -m Lab.lab textbook                          # registry + open questions + proven protocols
+python -m Lab.lab victory                           # the spec's six conditions, scored from the evidence
+```
+
+- **Evidence is citable.** Every statistic a scientist mentions carries an `E-nnnn` id minted
+  from a run or a live telemetry window; nothing enters a meeting unsourced.
+- **Experiments are preregistered.** A protocol fixes its arms, seeds, duration, metric,
+  expected direction and threshold before anything runs; every agent records a prediction with
+  a confidence, and the runner scores them with a Brier score. Being wrong is logged, not
+  smoothed over: the ten experiments of 2026-09-17 scored a mean Brier of 0.719, right 37% of
+  the time.
+- **The registry is rule-driven, in code.** `conjecture -> supported` on one passing
+  experiment; `supported -> law` only on two, spanning at least two seeds, with no standing
+  veto from the appointed skeptic; `-> refuted` on an opposite result; and demotion when a
+  supported card fails. Caveat cards record the sim's documented biases and are injected into
+  every later design.
+- **The design bench.** Each claim maps to a runnable contrast - arms, metric, direction,
+  threshold - and a protocol identical to one already run is filed as a duplicate rather than
+  burning sim time on an answered question.
+- **Fieldwork and meetings are different phases.** The team cannot be in the field and in a
+  meeting at once (`Lab/duty.py`); the PI holds the camp while the others go out.
+- **The data scientist is quarantined.** Vega writes figures and falsifiable trend forecasts
+  for whoever reads the report, and no scientist ever sees her output.
+
+Details: `Lab/README.md`, `docs/POLICY_API.md` (the bridge), `docs/SCIENTIST_API.md` (remote runs).
+
+## What is verified
 
 | Claim | Evidence |
 |---|---|
@@ -266,9 +349,24 @@ experiment recipe: `docs/SCIENTIST_API.md`.
 | Reproducible | same mode + seed ⇒ byte-identical CSVs |
 | Population viable | default regen 6: Lumen 40→63 (min 40), Tecton 12→25, 12 generations / 600 s, seed 1 |
 
-Not yet verified: interactive Play-in-Editor keys (needs a human), selection on
-α distinguishable from drift (needs more seeds / longer runs after balance),
-Trace X/Y, drought tuning.
+As of 2026-09-18 the six conditions in the specification's "minimum proof of challenge fit"
+(`docs/SPEC_TEXT.txt` §1) all read **met**, each closed by a preregistered experiment the
+Symbiotic Lab designed, ran and scored itself (`python -m Lab.lab victory`):
+
+| Experiment | Contrast | Result |
+|---|---|---|
+| X-017 | mode C vs **mode A** (learning off) | median lifetime Q drift 1.629 vs **0.000** - the policy moves only where learning is on |
+| X-001 | mode C vs mode N (neutral drift) | end-of-run mean α 0.170 vs 0.090 - selection on a learning parameter, not drift |
+| X-004 | drought proxy (regen 1.8) vs baseline | population minimum 10 vs 40: a visible but survived dip, with Q drift continuing through it |
+| X-013 | wI = 0.10 vs `Settings.WeightInteraction=0` | Lumen at end 121.7 vs 112.3 - Tecton engineering net-helps Lumen |
+| X-012, X-019 | drought, and predation, vs baseline | inherited ε 0.221 and 0.237 vs 0.267 - both pressures select for **less** exploration, refuting the seeded conjectures |
+| X-015 | regen 4 vs regen 6, 5 seeds x 1800 s | population minimum 35.0 vs 35.8 - the stable band holds down to regen 4 |
+
+Every number above is a metric preregistered before its run and computed in code; the full
+history, including the failures and one honest demotion, is in `PROGRESS.md`.
+
+Not yet verified: interactive Play-in-Editor keys (needs a human), Trace X/Y beyond
+X-013's population effect, drought tuning.
 
 ## Layout
 
@@ -301,8 +399,11 @@ Tools/               run_sim.py (launcher), sweep.py (parameter sweeps), make_va
                      scientist_client.py (stdlib client + CLI for it; docs/SCIENTIST_API.md)
 .claude/             agents/implementer.md, agents/tester.md, skills/phase (Manager Loop)
 Analysis/            analyze_run.py
-Lab/                 Symbiotic Lab (WKrohg): scientist team, live observer bridge (python -m Lab.lab observe [--embody]),
-                     experiment runner, dashboard (python -m Lab.lab ui, :8765); Lab/README.md
+Lab/                 Symbiotic Lab: scientist team + meetings, live observer bridge (python -m Lab.lab observe
+                     [--embody]), design bench + experiment runner, rule-driven registry (the textbook),
+                     duty cycle (field vs meetings), quarantined data scientist, dashboard
+                     (python -m Lab.lab ui, :8765); Lab/README.md
+docs/videos/         the two demo takes (see "Demo videos"), re-encoded for the repo
 ```
 
 ## Credits
