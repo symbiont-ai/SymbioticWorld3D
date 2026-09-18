@@ -73,6 +73,10 @@ public:
 	float GetLastReward() const { return LastReward; }
 	bool WasLastExplored() const { return bLastExplored; }
 	int32 GetDecisionCount() const { return DecisionCount; }
+	int32 GetRiverCrossings() const { return RiverCrossings; }   // bank-to-bank crossings of the main channel over this life
+	bool IsMidCrossing() const { return bPassedCentreInWater; }  // in the water and past the centreline, not yet ashore
+	float GetRiverDistance() const { return RiverDistance; }     // |Y - main-channel centreline| at the last position, uu
+	bool IsInWater() const { return bLastInWater; }              // standing in the water at the last position
 	uint32 GetLastFeasibleMask() const { return LastFeasibleMask; }
 	float GetLocalTraceX() const { return Percept.TraceX; }
 	float GetLocalTraceY() const { return Percept.TraceY; }
@@ -180,6 +184,14 @@ protected:
 	bool bMovedThisStep = false;
 	float GaitPhase = 0.f;
 
+	// River crossings (logging only; see UpdateRiverCrossing)
+	int32 RiverCrossings = 0;
+	int8 LastBankSide = 0;               // side of the main channel's centreline of the last dry land stood on (0 = none yet)
+	int8 LastSide = 0;                   // side at the last evaluated position, wet or dry (0 = none yet)
+	bool bLastInWater = false;           // whether that position was in the water
+	bool bPassedCentreInWater = false;   // crossed the centreline between two in-water positions since the last dry land
+	float RiverDistance = 0.f;           // |Y - main-channel centreline| at the last evaluated position (logging only)
+
 	// Social memory
 	bool bHasSignal = false;
 	FVector SignalLoc = FVector::ZeroVector;
@@ -212,4 +224,5 @@ protected:
 	void UpdateVisual();
 	void UpdateGait(float Dt);
 	int32 CellIndex(const FVector& Loc) const;
+	void UpdateRiverCrossing();
 };

@@ -167,6 +167,8 @@ public:
 	FString GetPolicyName(const ASWAgent& A) const;                      // "builtin" or "ext:host:port" (CSV / HUD)
 	int32 GetExtDecisions(ESWSpecies S) const { return ExtDecisions[static_cast<int32>(S)]; }
 	int32 GetExtFallbacks(ESWSpecies S) const { return ExtFallbacks[static_cast<int32>(S)]; }
+	// Bank-to-bank crossings of the main channel by this species since the run started (ASWAgent::UpdateRiverCrossing).
+	int32 GetRiverCrossings(ESWSpecies S) const { return RiverCrossings[static_cast<int32>(S)]; }
 
 protected:
 	UPROPERTY() TArray<ASWAgent*> Agents;
@@ -239,6 +241,7 @@ protected:
 	FSWPolicyClient PolicyClient;
 	int32 ExtDecisions[2] = { 0, 0 };   // per species: decisions taken from a server
 	int32 ExtFallbacks[2] = { 0, 0 };   // per species: server-assigned decisions the built-in bandit had to make
+	int32 RiverCrossings[2] = { 0, 0 }; // per species: bank-to-bank crossings of the main channel since StartRun
 	int32 ExternalCount = 0;
 	int32 StepCounter = 0;              // substeps since StartRun (echoed by replies to detect stale ones)
 	void AssignPolicy(ASWAgent* A);     // at birth, with the seeded stream when PolicyShare < 1
