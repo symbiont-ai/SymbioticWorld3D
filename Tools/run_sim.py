@@ -84,7 +84,7 @@ def run_one(mode, seed, duration, speed, windowed, extra, set_spec=None, shots=N
         if stream:
             # Pixel Streaming 2: the sim connects to the signalling server as the streamer; viewers open its player page in a browser.
             cmd += [f"-PixelStreamingURL={stream}", "-PixelStreamingID=SymbioticWorld",
-                    # The sim has no sound; the per-viewer audio tracks are pure risk in the media layer (see README, streaming).
+                    # The sim has no sound; the per-viewer audio tracks are pure risk in the media layer (docs/STREAMING.md).
                     "-ini:Game:[/Script/PixelStreaming2Settings.PixelStreaming2PluginSettings]:WebRTCDisableTransmitAudio=True",
                     "-ini:Game:[/Script/PixelStreaming2Settings.PixelStreaming2PluginSettings]:WebRTCDisableReceiveAudio=True"]
     if set_spec:

@@ -38,6 +38,8 @@ python -m Lab.lab session --meetings 3 --llm openrouter  # hosted models (OPENRO
 python -m Lab.lab session --meetings 3 --llm mock        # no model needed
 python -m Lab.lab ingest Saved/SymbioticWorld/<run_id>   # feed it existing runs
 python -m Lab.lab run-queued                             # sim machine: execute experiments
+python -m Lab.lab observe --embody --port 9000           # live bridge: the team watches, and inhabits, a running sim
+python -m Lab.lab ui                                     # dashboard on :8765 (its World tab embeds the stream)
 python -m Lab.lab report                                 # regenerate outputs
 python -m Lab.lab textbook                               # print the inherited object
 python -m Lab.lab victory                                # score the spec's six victory conditions

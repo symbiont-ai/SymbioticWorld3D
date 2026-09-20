@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Symbiotic World: selection on how organisms learn, in a persistent 3D ecosystem"
+abstract: >-
+  A persistent 3D ecosystem in Unreal Engine 5.7 in which every organism learns online across its
+  own lifetime with a tabular contextual bandit, and offspring inherit how it learns — step size,
+  exploration rate, sociality and an environmental-effect strength — with mutation, so selection
+  acts on the learning itself. A neutral-drift control mode runs the identical world with
+  reproduction decoupled from fitness. Above the simulation sits the Symbiotic Lab, a team of
+  language-model scientist agents that registers hypotheses, preregisters predictions, runs
+  controlled experiments against the simulation's own parameters and scores itself.
+type: software
+authors:
+  - family-names: Icke
+    given-names: Ilknur
+  - name: WKrohg
+  - family-names: Guggilla
+    given-names: Kalyani
+repository-code: "https://github.com/symbiont-ai/SymbioticWorld3D"
+url: "https://github.com/symbiont-ai/SymbioticWorld3D"
+license: MIT
+date-released: "2026-09-18"
+keywords:
+  - artificial life
+  - ecosystem simulation
+  - reinforcement learning
+  - contextual bandit
+  - evolution of learning
+  - agent-based model
+  - Unreal Engine
+  - LLM agents

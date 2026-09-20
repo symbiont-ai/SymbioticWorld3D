@@ -6,9 +6,56 @@ feasibility gate, energy, reproduction, death, the trace fields, the CSV logs, a
 organism's own tabular contextual bandit (which keeps receiving every reward, so an
 organism can be switched back to built-in at any time without losing anything).
 
-Reference server: `Tools/policy_server.py` (stdlib only, Python 3.9+, macOS/Linux/Windows).
-Self-test without the sim: `Tools/policy_client_check.py`. Offline replay of a recorded session:
-`Tools/policy_replay.py` (section "Offline development on a Mac" below).
+Reference server, self-test and offline replay are all in the quickstart below.
+
+## Quickstart: bring your own agent (Python, any OS, nothing to install)
+
+Collaborators on the same wifi write their own agents in Python and have them
+control organisms inside the one world running on the Windows host. No Unreal, no
+pip installs: `Tools/policy_server.py` is standard library only (Python 3.9+, runs on
+macOS). The sim connects to *their* machine, sends each organism's percept, feasibility
+mask and its own bandit table once per decision, and acts on the reply; anything late
+or infeasible falls back to the organism's built-in bandit and is counted. To go beyond
+this API and change the sim itself (C++ the host builds for you): `docs/CONTRIBUTING.md`.
+
+On the Mac (4 commands):
+
+```bash
+git clone <this repo> && cd Symbiotic_Word_3D          # or just copy Tools/policy_server.py
+python3 Tools/policy_server.py --agent my --port 9000   # edit MyAgent.act() in that file; see the agent list below
+python3 Tools/policy_client_check.py --port 9000        # optional self-test from a second terminal
+ipconfig getifaddr en0                                  # macOS; Linux: hostname -I - tell the host this IP
+```
+
+Example agents in `Tools/policy_server.py` (`--agent`):
+
+* `random`: uniform over the feasible actions, the floor to beat.
+* `bandit`: the sim's own tabular contextual bandit (γ = 0) re-implemented in Python, α/ε from the genome.
+* `heuristic`: fixed rules on the percept (forage when food is known and energy is not HIGH, avoid other-species neighbours when LOW, rest when LOW with nothing known, else explore).
+* `tracefollower`: Lumen follow up a strong Trace X gradient, Tecton modify (Trace Y) on land at HIGH energy, else forage/explore.
+* `my`: yours.
+
+No Unreal on your machine? `python3 Tools/policy_server.py --record run.jsonl` logs every
+exchange, `python3 Tools/policy_replay.py --agent my --file docs/samples/decide_sample.jsonl`
+replays a recording against your class offline (mask violations, action distribution,
+timing), and the repo ships a 300-exchange sample: "Offline development on a Mac" below.
+
+On the host, while the sim runs (no restart): add one line per server to
+`Saved/policy_servers.txt` and save (details in "Adding servers while the sim runs" below;
+template `Tools/policy_servers.example.txt`). `Tools/policy_probe.py` finds the
+servers on the wifi and can append them for you:
+
+```bash
+python Tools/policy_probe.py --write Saved/policy_servers.txt   # scans the host's own /24 for port 9000, appends "host:port=Both" lines
+python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --windowed                     # the default file is watched automatically
+python Tools/run_sim.py --mode C --seed 7 --duration 600 --speed 20 --windowed --policy "10.228.152.5:9000=Lumen|10.228.152.7:9000=Tecton"   # launch-time alternative
+```
+
+Species per server: `Lumen`, `Tecton` or `Both`; several servers share one world. The
+HUD title shows `ext N/M` (organisms currently bound to a server / total), the inspector shows
+`policy: external host:port`, and the UE log prints connect / hello / timeout lines
+once per state change plus a round-trip summary every 10 s. Allow `UnrealEditor.exe`
+through Windows Firewall on private networks if the host cannot reach a Mac.
 
 ## Roles and transport
 

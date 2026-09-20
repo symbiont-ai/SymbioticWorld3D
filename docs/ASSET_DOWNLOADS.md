@@ -107,6 +107,22 @@ Packs marked 5.0–5.5 load fine in 5.7 and are resaved.
 - Enable the engine **Water** plugin (river/lake bodies with proper
   reflections and caustics) instead of my flat water plane.
 
+## The licensed assets this repository does not contain
+
+Neither the Electric Dreams environment set nor the authored creature bodies are committed, so a
+fresh clone renders procedural-only and says so in the log. To bring either in:
+
+- **Electric Dreams (Epic Games; Quixel Megascans; RealityScan), under the Unreal Engine EULA /
+  Epic Content Licence, Unreal projects only.** Install the sample from the Epic launcher, then run
+  `Tools/migrate_ed.py` with the role list in `AssetSources/ed_manifest.json`. Until that has run,
+  `M_SW_TerrainED`, `M_SW_Sandstone` and `M_SW_Scan` render with default textures. Method and the
+  role list: `docs/ED_ASSET_REVIEW.md`.
+- **Poly Haven scans (CC0).** Fetched, not committed: `Tools/fetch_polyhaven.py`, then
+  `Tools/import_assets.py`.
+- **The authored Lumen and Tecton bodies.** Imported from the `SymbioticCreatures` package by
+  `Tools/import_symbiotic_creatures.py`, into `Content/Characters/Symbiotic` (untracked on purpose,
+  not git-ignored). Details: `docs/CREATURE_RENDERING.md`.
+
 ## Licences to credit in the demo
 
 CC0: Poly Haven, Quaternius, Kenney (no credit required, we credit anyway).

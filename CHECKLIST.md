@@ -23,7 +23,7 @@ work done the day before.
 - [x] 3 seeds × {C, N} run; comparison printed (selection vs drift) — even if
       not yet significant, the pipeline works
 - [x] Balance pass: population does not crash to 0 or pin at cap within 600 s in C
-- [x] README build steps verified from a clean `git clone`
+- [x] `docs/RUNNING.md` build steps verified from a clean `git clone`
 - [x] Manager Loop: `.claude/agents/implementer.md`, `.claude/agents/tester.md`, `/phase` skill
 - [x] Mode N produces births (founder age stagger); determinism: same seed → identical population.csv
 
